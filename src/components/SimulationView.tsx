@@ -354,6 +354,33 @@ const BuildingModel = ({ room, width, height, depth }: { room: Room, width: numb
         </group>
       </group>
     );
+  } else if (type === 'security') {
+    return (
+      <group>
+        {/* Security Booth - small compact building */}
+        <Box args={[width, height * 1.1, depth]} position={[0, height * 0.05, 0]} castShadow receiveShadow>
+          <meshStandardMaterial color="#1e293b" metalness={0.5} roughness={0.4} />
+        </Box>
+        {/* Glass window strip */}
+        <Box args={[width * 0.85, height * 0.4, 0.08]} position={[0, height * 0.15, depth/2 + 0.04]}>
+          <meshStandardMaterial color="#38bdf8" transparent opacity={0.7} metalness={0.9} roughness={0.1} />
+        </Box>
+        {/* Overhang / shade visor */}
+        <Box args={[width * 1.15, 0.1, depth * 0.7]} position={[0, height * 0.6, depth * 0.1]} castShadow>
+          <meshStandardMaterial color="#0f172a" />
+        </Box>
+        {/* Warning light on top */}
+        <Sphere args={[0.15, 8, 8]} position={[0, height * 0.75, 0]}>
+          <meshStandardMaterial color="#f59e0b" emissive="#f59e0b" emissiveIntensity={2} />
+        </Sphere>
+        {/* Security sign */}
+        <Html position={[0, height * 0.35, depth/2 + 0.1]} center transform>
+          <div className="text-[8px] font-black text-yellow-400 tracking-widest bg-black/90 px-1 py-0.5 rounded border border-yellow-500/50 whitespace-nowrap">
+            🛡 SECURITY
+          </div>
+        </Html>
+      </group>
+    );
   } else if (type === 'utility') {
     return (
       <group>
