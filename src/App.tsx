@@ -36,7 +36,6 @@ function App() {
   const [currentMission, setCurrentMission] = useState<MissionHistoryItem | null>(null);
 
   const [initialMapData, setInitialMapData] = useState<any>(null);
-  const isMobile = typeof window !== 'undefined' && window.innerWidth < 768;
   const safeGetSession = (key: string) => {
     try { return sessionStorage.getItem(key); } catch(e) { return null; }
   };
@@ -48,7 +47,6 @@ function App() {
   });
   const [showRobotFeatures, setShowRobotFeatures] = useState(false);
   const [pendingEmergency, setPendingEmergency] = useState<{x: number, y: number} | null>(null);
-  const [showEmergencyPrompt, setShowEmergencyPrompt] = useState(false);
   const [localIp, setLocalIp] = useState('');
   const [isOn, setIsOn] = useState(false);
   const [showQR, setShowQR] = useState(false);
@@ -73,12 +71,6 @@ function App() {
     setShowIntro(false);
     setTimeout(() => setIntroRendered(false), 2000);
   };
-
-  useEffect(() => {
-    if (pendingEmergency) {
-      addEmergencyAlert(`CRITICAL: Emergency reported at ${targetRoom.name}`);
-    }
-  }, [pendingEmergency]);
 
   useEffect(() => {
     // Fetch initial map data on mount so Control Center is always visible

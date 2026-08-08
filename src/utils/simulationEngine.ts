@@ -80,12 +80,12 @@ export async function calculateLongPathAsync(start: GridPoint, end: GridPoint, o
 // For now, they return empty array to force migration (or we could keep the old logic).
 // Let's keep the old logic as a fallback if needed, but since we want to migrate,
 // we will just remove the old logic to ensure no UI blocking occurs.
-export function calculatePath(start: GridPoint, end: GridPoint, obstacles: GridPoint[], mapData: MapData, requireRoads: boolean = true): GridPoint[] {
+export function calculatePath(_start: GridPoint, _end: GridPoint, _obstacles: GridPoint[], _mapData: MapData, _requireRoads: boolean = true): GridPoint[] {
   console.warn("calculatePath is deprecated. Use calculatePathAsync instead.");
   return [];
 }
 
-export function calculateLongPath(start: GridPoint, end: GridPoint, obstacles: GridPoint[], mapData: MapData, requireRoads: boolean = true): GridPoint[] {
+export function calculateLongPath(_start: GridPoint, _end: GridPoint, _obstacles: GridPoint[], _mapData: MapData, _requireRoads: boolean = true): GridPoint[] {
   console.warn("calculateLongPath is deprecated. Use calculateLongPathAsync instead.");
   return [];
 }
