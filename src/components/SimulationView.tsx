@@ -336,7 +336,7 @@ const BlockersRender = ({ blockers, gridSize, roads }: { blockers: GridPoint[], 
 
 const Butterflies = () => {
   const groupRef = useRef<THREE.Group>(null);
-  useFrame(({ clock }) => {
+  useFrame(() => {
     if (groupRef.current) {
       // Stopped movement for Butterflies
       // const t = clock.getElapsedTime();
@@ -1047,8 +1047,6 @@ const NaturalLandscape = ({ isNight, gridSize }: { isNight: boolean; gridSize: G
   const gz = gridSize.y;
   const half_x = gx / 2;
   const half_z = gz / 2;
-  // Outer belt extends 3x the campus in each direction
-  const belt = gx * 1.5;
 
   // Deterministic tree positions in the outer green belt
   const trees = useMemo(() => {
@@ -2650,9 +2648,9 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
             </div>
           </div>
         </div>
+        </div>
         )}
       </div>
-    </div>
     </div>
   );
 };
