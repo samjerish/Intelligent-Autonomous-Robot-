@@ -1631,61 +1631,6 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
       }
       isRecalculating.current = false;
     }
-    } else {
-      let pullOverTile: GridPoint | null = null;
-      const neighbors = [
-          { x: currentLoc.x, y: currentLoc.y - 1, f: currentLoc.f },
-          { x: currentLoc.x, y: currentLoc.y + 1, f: currentLoc.f },
-          { x: currentLoc.x - 1, y: currentLoc.y, f: currentLoc.f },
-          { x: currentLoc.x + 1, y: currentLoc.y, f: currentLoc.f }
-      ];
-      
-      const isRoad = (nx: number, ny: number, nf: number) => 
-         mapData.roads && mapData.roads.some(r => r.x === nx && r.y === ny && r.f === nf);
-         
-      const isValid = (nx: number, ny: number, nf: number) => 
-         nx >= 0 && nx < (mapData.gridSize?.x || 100) && 
-         ny >= 0 && ny < (mapData.gridSize?.y || 100) && 
-         nf >= 0 && nf < (mapData.gridSize?.f || 1) &&
-         !allObstacles.some(o => o.x === nx && o.y === ny && o.f === nf);
-
-      for (const n of neighbors) {
-         if (isValid(n.x, n.y, n.f) && !isRoad(n.x, n.y, n.f)) {
-            pullOverTile = n; break;
-         }
-      }
-      
-      if (!pullOverTile) {
-         for (const n of neighbors) {
-            if (isValid(n.x, n.y, n.f)) {
-               pullOverTile = n; break;
-            }
-         }
-      }
-
-      if (pullOverTile) {
-        addExplanation(`Path blocked! Yielding to traffic by stepping aside...`);
-        if (robotState !== 'evading_obstacle' && robotState !== 'charging' && robotState !== 'emergency_response') {
-            originalMissionRef.current = { path: [...path], index: currentPosIndex };
-        }
-        setPath([currentLoc, pullOverTile]);
-        setCurrentPosIndex(0);
-        setRobotState('evading_obstacle');
-        setIsPlaying(true);
-        isRecalculating.current = false;
-      } else {
-        addExplanation(`Completely boxed in. Waiting for traffic to clear...`);
-        if (robotState !== 'evading_obstacle' && robotState !== 'charging' && robotState !== 'emergency_response') {
-            originalMissionRef.current = { path: [...path], index: currentPosIndex };
-        }
-        setRobotState('evading_obstacle');
-        setIsPlaying(false);
-        setTimeout(() => {
-          isRecalculating.current = false;
-          setIsPlaying(true); // retry loop
-        }, 3000);
-      }
-    }
   };
 
 
