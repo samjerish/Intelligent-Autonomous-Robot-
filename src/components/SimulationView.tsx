@@ -1200,7 +1200,7 @@ const EnvironmentMap = React.memo(({ mapData, isNight, isTargeting, onMapClick }
 
       {/* Extended outer ground base (Land fully) */}
       <Plane
-        args={[gridSize.x * 20, gridSize.y * 20]}
+        args={[gridSize.x * 1.5, gridSize.y * 1.5]}
         rotation={[-Math.PI / 2, 0, 0]}
         position={[0, -0.02, 0]}
       >
