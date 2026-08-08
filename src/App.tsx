@@ -462,9 +462,9 @@ function App() {
 
       {/* EMERGENCY APPROVAL MODAL */}
       {pendingEmergency && (
-        <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/80 backdrop-blur-md md:inset-auto md:bottom-6 md:left-6 md:bg-transparent md:backdrop-blur-none md:flex-none md:items-start md:justify-start">
-          <div className="bg-[#111] border-2 border-red-500 p-8 rounded-2xl shadow-[0_0_50px_rgba(239,68,68,0.3)] flex flex-col items-center text-center gap-6 w-[90%] max-w-sm animate-in zoom-in duration-300 md:bg-[#111]/90 md:backdrop-blur-xl md:border md:border-red-500/50 md:p-5 md:w-auto md:max-w-xs md:items-start md:text-left md:gap-3 md:shadow-[0_0_30px_rgba(239,68,68,0.2)] md:animate-in md:slide-in-from-bottom-10">
-            <div className="flex flex-col md:flex-row items-center md:items-center gap-4 md:gap-3">
+        <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/80 backdrop-blur-md md:inset-auto md:bottom-6 md:left-1/2 md:-translate-x-1/2 md:bg-transparent md:backdrop-blur-none md:flex-none md:items-center md:justify-center">
+          <div className="bg-[#111] border-2 border-red-500 p-8 rounded-2xl shadow-[0_0_50px_rgba(239,68,68,0.3)] flex flex-col items-center text-center gap-6 w-[90%] max-w-sm animate-in zoom-in duration-300 md:bg-[#111]/90 md:backdrop-blur-xl md:border md:border-red-500/50 md:p-5 md:w-auto md:max-w-xs md:items-center md:text-center md:gap-3 md:shadow-[0_0_30px_rgba(239,68,68,0.2)] md:animate-in md:slide-in-from-bottom-10">
+            <div className="flex flex-col md:flex-col items-center md:items-center gap-4 md:gap-3">
               <div className="w-16 h-16 md:w-10 md:h-10 bg-red-500/20 rounded-full flex items-center justify-center text-red-500 border border-red-500/50 flex-shrink-0">
                 <svg xmlns="http://www.w3.org/2000/svg" className="w-8 h-8 md:w-5 md:h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>
               </div>

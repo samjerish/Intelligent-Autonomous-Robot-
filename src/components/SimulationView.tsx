@@ -1737,7 +1737,7 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
           const targetRoom = mapData?.rooms?.find(r => r.name.toLowerCase().includes(roomName));
           if (targetRoom) {
             reply = `Emergency side-task accepted. Proceeding to ${targetRoom.name} and will return here shortly.`;
-            dispatchLocalMission(targetRoom.door || targetRoom.start, userMsg);
+            dispatchLocalMission(targetRoom.door || targetRoom.start, userMsg, true);
           } else {
             reply = `I could not find a location matching "${roomName}".`;
           }
@@ -2301,7 +2301,7 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
     }
   };
 
-  const dispatchLocalMission = (targetPos: GridPoint, missionText: string) => {
+  const dispatchLocalMission = (targetPos: GridPoint, missionText: string, isEmergencyOverride: boolean = false) => {
     if (!isOn) {
       addExplanation("Cannot dispatch mission: Robot is powered OFF.");
       return;
@@ -2310,7 +2310,7 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
       addExplanation("Cannot dispatch mission: Robot is currently charging and must reach 100%.");
       return;
     }
-    if (robotState === 'mission' || robotState === 'emergency_response') {
+    if (!isEmergencyOverride && (robotState === 'mission' || robotState === 'emergency_response' || robotState === 'emergency_to_ctr' || robotState === 'ctr_to_emergency')) {
       addExplanation("Cannot dispatch: Robot must complete its current active task first.");
       return;
     }
@@ -2323,21 +2323,21 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
     setTimeout(() => {
       const currentLoc = path.length > 0 && currentPosIndex < path.length ? path[currentPosIndex] : mapData.start;
       
-      if (robotStateRef.current === 'emergency_response') {
-         const emergencyLoc = path.length > 0 ? path[path.length - 1] : mapData.start;
+      if (robotStateRef.current === 'emergency_response' || robotStateRef.current === 'emergency_to_ctr' || robotStateRef.current === 'ctr_to_emergency') {
          const forwardPath = calculatePath(currentLoc, targetPos, [...(mapData.obstacles || []), ...userBlockers], mapData);
-         const returnPath = calculatePath(targetPos, emergencyLoc, [...(mapData.obstacles || []), ...userBlockers], mapData);
          
-         if (forwardPath.length > 0 && returnPath.length > 0) {
-           const roundTripPath = [...forwardPath, forwardPath[forwardPath.length - 1], ...returnPath.slice(1)];
-           setPath(roundTripPath);
+         if (forwardPath.length > 0) {
+           setPath(forwardPath);
            setCurrentPosIndex(0);
+           setRobotState('emergency_to_ctr');
            setIsPlaying(true);
            if (emergencyTimeoutRef.current) {
              clearTimeout(emergencyTimeoutRef.current);
              emergencyTimeoutRef.current = null;
            }
            window.dispatchEvent(new CustomEvent('local_emergency_request', { detail: null }));
+         } else {
+           addExplanation(`Unable to calculate route to target.`);
          }
       } else {
          const shortPath = calculatePath(currentLoc, targetPos, [...(mapData.obstacles || []), ...userBlockers], mapData);
