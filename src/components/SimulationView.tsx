@@ -555,8 +555,8 @@ const BuildingModel = ({ room, width, height, depth }: { room: Room, width: numb
         <Box args={[width, 0.2, depth]} position={[0, -height/2 + 0.1, 0]} receiveShadow>
           <meshStandardMaterial color="#22c55e" />
         </Box>
-        {/* Many trees for Eco Park */}
-        {[...Array(nameLow.includes('eco') ? 15 : 4)].map((_, i) => {
+        {/* Many trees for Eco Park - useMemo so they don't jump around on re-renders */}
+        {useMemo(() => [...Array(nameLow.includes('eco') ? 15 : 4)].map((_, i) => {
           const tx = (Math.random() - 0.5) * width * 0.8;
           const tz = (Math.random() - 0.5) * depth * 0.8;
           return (
@@ -569,7 +569,7 @@ const BuildingModel = ({ room, width, height, depth }: { room: Room, width: numb
               </Cylinder>
             </group>
           );
-        })}
+        }), [width, depth, nameLow])}
         {/* Butterflies */}
         <Butterflies />
       </group>
@@ -673,10 +673,10 @@ export const DetailedRobot = ({ isMoving, showFeatures = false, activeFeature = 
     clock.current += delta;
     const t = clock.current;
 
-    if (bodyRef.current) bodyRef.current.position.y = isMoving ? Math.sin(t * 8) * 0.04 : 0;
-    if (headRef.current) headRef.current.rotation.y = isMoving ? Math.sin(t * 2) * 0.3 : Math.sin(t * 0.8) * 0.25;
-    if (leftArmRef.current) leftArmRef.current.rotation.x = isMoving ? Math.sin(t * 8) * 0.4 : 0;
-    if (rightArmRef.current) rightArmRef.current.rotation.x = isMoving ? -Math.sin(t * 8) * 0.4 : 0;
+    if (bodyRef.current) bodyRef.current.position.y = 0;
+    if (headRef.current) headRef.current.rotation.y = 0;
+    if (leftArmRef.current) leftArmRef.current.rotation.x = 0;
+    if (rightArmRef.current) rightArmRef.current.rotation.x = 0;
 
     const ws = isMoving ? 8 : 0.5;
     if (leftWheelRef.current) leftWheelRef.current.rotation.x += delta * ws;
@@ -1199,16 +1199,6 @@ const EnvironmentMap = ({ mapData, isNight, isTargeting, onMapClick }: { mapData
         onPointerOut={() => { if (isTargeting) document.body.style.cursor = 'auto'; }}
       >
         <meshStandardMaterial color={isNight ? '#14532d' : '#4ade80'} roughness={0.9} />
-      </Plane>
-
-      {/* Extended outer ground base */}
-      <Plane
-        args={[gridSize.x * 6, gridSize.y * 6]}
-        rotation={[-Math.PI / 2, 0, 0]}
-        position={[0, -0.01, 0]}
-        receiveShadow
-      >
-        <meshStandardMaterial color={isNight ? '#052e16' : '#16a34a'} roughness={1} />
       </Plane>
 
       {/* Natural surrounding landscape (mountains, rocks, rivers, sea, trees) */}
@@ -2283,7 +2273,7 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
             target={[0, 2, 0]}
             maxPolarAngle={Math.PI / 2.15}
             minDistance={20}
-            maxDistance={gridSize.y * 1.35}
+            maxDistance={gridSize.y * 2.0}
           />
           
           <EnvironmentMap 
