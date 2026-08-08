@@ -1031,7 +1031,7 @@ export const DetailedRobot = ({ isMoving, showFeatures = false, activeFeature = 
 
 const Robot = ({
   path, currentIndex, isPlaying, gridSize, isMapView, speed, dynamicObstaclesRef,
-  onReachNode, onMissionComplete, onObstacleDetected, robotPosRef, robotRotRef
+  onReachNode, onMissionComplete, onObstacleDetected, robotPosRef, robotRotRef, isEmergency = false
 }: {
   path: GridPoint[];
   currentIndex: number;
@@ -1456,7 +1456,7 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
   useEffect(() => {
     const isEmergency = robotState === 'emergency_response' || robotState === 'emergency_to_ctr' || robotState === 'ctr_to_emergency';
     if (isEmergency) {
-      let intervalId: NodeJS.Timeout;
+      let intervalId: ReturnType<typeof setInterval>;
       let audioCtx: AudioContext | null = null;
       let oscillator: OscillatorNode | null = null;
       
