@@ -187,8 +187,40 @@ const getGridPointFromVector3 = (point: THREE.Vector3, gridSize: GridPoint): Gri
   return { x: clampedX, y: clampedZ, f: 0 };
 };
 
-const RoadsRender = ({ roads, gridSize }: { roads: GridPoint[], gridSize: GridPoint }) => {
+const RoadsRender = React.memo(({ roads, gridSize }: { roads: GridPoint[], gridSize: GridPoint }) => {
   if (!roads || roads.length === 0) return null;
+
+  const lines = React.useMemo(() => {
+    const l: { pos: GridPoint, rot: number }[] = [];
+    const roadSet = new Set(roads.map(r => `${r.x},${r.y}`));
+    
+    roads.forEach(road => {
+      let minX = road.x;
+      let maxX = road.x;
+      while (roadSet.has(`${minX - 1},${road.y}`)) minX--;
+      while (roadSet.has(`${maxX + 1},${road.y}`)) maxX++;
+      const width = maxX - minX + 1;
+      const isCenterX = road.x === Math.floor((minX + maxX) / 2);
+      
+      let minY = road.y;
+      let maxY = road.y;
+      while (roadSet.has(`${road.x},${minY - 1}`)) minY--;
+      while (roadSet.has(`${road.x},${maxY + 1}`)) maxY++;
+      const height = maxY - minY + 1;
+      const isCenterY = road.y === Math.floor((minY + maxY) / 2);
+      
+      if (width > height && width >= 4 && isCenterY) {
+         l.push({ pos: road, rot: 0 }); 
+      } else if (height > width && height >= 4 && isCenterX) {
+         l.push({ pos: road, rot: Math.PI / 2 });
+      } else if (width < 4 && height < 4) {
+         if (isCenterY) l.push({ pos: road, rot: 0 });
+         else if (isCenterX) l.push({ pos: road, rot: Math.PI / 2 });
+      }
+    });
+    return l;
+  }, [roads]);
+
   return (
     <group>
       <Instances limit={roads.length} receiveShadow>
@@ -201,21 +233,17 @@ const RoadsRender = ({ roads, gridSize }: { roads: GridPoint[], gridSize: GridPo
       </Instances>
       
       {/* Two-way center lines */}
-      <Instances limit={roads.length} receiveShadow>
-        <boxGeometry args={[CELL_SIZE * 0.6, 0.01, 0.05]} />
+      <Instances limit={lines.length > 0 ? lines.length : 1} receiveShadow>
+        <boxGeometry args={[CELL_SIZE, 0.01, 0.08]} />
         <meshStandardMaterial color="#ffffff" emissive="#ffffff" emissiveIntensity={0.8} />
-        {roads.map((road, i) => {
-          const [x, y, z] = getGridPosition(road, gridSize, 0.055);
-          // Determine if road is horizontal (East-West) or vertical (North-South)
-          // X-axis is East-West in 3D, which corresponds to X in grid.
-          const isHorizontal = roads.some(r => r.y === road.y && (r.x === road.x + 1 || r.x === road.x - 1));
-          const rotationY = isHorizontal ? 0 : Math.PI / 2;
-          return <Instance key={`line-${i}`} position={[x, y, z]} rotation={[0, rotationY, 0]} />;
+        {lines.map((line, i) => {
+          const [x, y, z] = getGridPosition(line.pos, gridSize, 0.055);
+          return <Instance key={`line-${i}`} position={[x, y, z]} rotation={[0, line.rot, 0]} />;
         })}
       </Instances>
     </group>
   );
-};
+});
 
 const TrafficBarricade = ({ position, rotationY, length = 1 }: { position: [number, number, number], rotationY: number, length?: number }) => {
   const lightRef1 = useRef<THREE.Mesh>(null);

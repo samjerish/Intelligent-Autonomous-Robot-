@@ -51,10 +51,27 @@ export async function calculateLongPathAsync(start: GridPoint, end: GridPoint, o
   const w = getWorker();
   if (!w) return [];
 
+  let targetEnd = end;
+  if (requireRoads && mapData.roads && mapData.roads.length > 0) {
+    const isEndOnRoad = mapData.roads.some(r => r.x === end.x && r.y === end.y && r.f === end.f);
+    if (!isEndOnRoad) {
+      let nearest = mapData.roads[0];
+      let minDist = Infinity;
+      for (const r of mapData.roads) {
+        const d = Math.abs(r.x - end.x) + Math.abs(r.y - end.y);
+        if (d < minDist) {
+          minDist = d;
+          nearest = r;
+        }
+      }
+      targetEnd = nearest;
+    }
+  }
+
   return new Promise((resolve, reject) => {
     const id = messageId++;
     pendingRequests.set(id, { resolve, reject });
-    w.postMessage({ id, type: 'calculateLongPath', start, end, obstacles, mapData, requireRoads });
+    w.postMessage({ id, type: 'calculateLongPath', start, end: targetEnd, obstacles, mapData, requireRoads });
   });
 }
 
