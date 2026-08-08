@@ -2008,13 +2008,13 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
     }
     
     if (!mapData) return;
-    if (robotState === 'mission' || robotState === 'emergency_response' || robotState === 'charging' || robotState === 'returning_home') return;
+    if (robotState === 'emergency_response' || robotState === 'charging' || robotState === 'emergency_to_ctr' || robotState === 'ctr_to_emergency') return;
     
     addExplanation(`EMERGENCY CALL: Diverting immediately to (${targetPos.x}, ${targetPos.y})!`);
     setIsPlaying(false);
     isRecalculating.current = true;
     
-    if (robotState === 'patrol') {
+    if (robotState === 'patrol' || robotState === 'mission' || robotState === 'returning_home') {
       originalMissionRef.current = { path: [...path], index: currentPosIndex };
     }
     
@@ -2234,17 +2234,20 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
       }
     } else if (robotState === 'emergency_to_ctr') {
        if (emergencyLocationRef.current && mapData) {
-          addExplanation(`Mission target reached. Returning to emergency location to await authorization...`);
+          addExplanation(`Mission target reached. Waiting 2.5 seconds before returning to emergency location...`);
+          setIsPlaying(false);
           const currentLoc = path[path.length - 1] || mapData.start;
           const cToEPath = calculatePath(currentLoc, emergencyLocationRef.current, [...(mapData.obstacles || []), ...userBlockers], mapData);
-          if (cToEPath.length > 0) {
-             setPath(cToEPath);
-             setCurrentPosIndex(0);
-             setRobotState('ctr_to_emergency');
-             setIsPlaying(true);
-          } else {
-             handleEmergencyComplete();
-          }
+          setTimeout(() => {
+            if (cToEPath.length > 0) {
+               setPath(cToEPath);
+               setCurrentPosIndex(0);
+               setRobotState('ctr_to_emergency');
+               setIsPlaying(true);
+            } else {
+               handleEmergencyComplete();
+            }
+          }, 2500);
        } else {
           handleEmergencyComplete();
        }
