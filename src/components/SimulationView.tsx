@@ -1014,200 +1014,182 @@ const PathLine = ({ path, currentIndex, gridSize, isMapView, color = "#00ffff", 
   );
 };
 
-// --- SkyDome: renders sky sphere, sun/moon, and stars ---
-const SkyDome = ({ isNight, gridSize }: { isNight: boolean; gridSize: GridPoint }) => {
-  const radius = Math.max(gridSize.x, gridSize.y) * 1.2;
-  const starsRef = useRef<THREE.Points>(null);
+// --- Natural Landscape ---
+// Placed only OUTSIDE the campus boundary (outer belt).
+// Contains: sea, rivers, mountains, rocks, trees.
+const NaturalLandscape = ({ isNight, gridSize }: { isNight: boolean; gridSize: GridPoint }) => {
+  const gx = gridSize.x;
+  const gz = gridSize.y;
+  const half_x = gx / 2;
+  const half_z = gz / 2;
+  // Outer belt extends 3x the campus in each direction
+  const belt = gx * 1.5;
 
-  // Slowly rotate star field
-  useFrame((_state, delta) => {
-    if (starsRef.current && isNight) {
-      starsRef.current.rotation.y += delta * 0.01;
+  // Deterministic tree positions in the outer green belt
+  const trees = useMemo(() => {
+    const list: { x: number; z: number; scale: number }[] = [];
+    const step = 3.5;
+    const outerLimit_x = gx * 1.5 / 2;
+    const outerLimit_z = gz * 1.5 / 2;
+
+    for (let xi = -outerLimit_x; xi <= outerLimit_x; xi += step) {
+      for (let zi = -outerLimit_z; zi < -half_z; zi += step)
+        list.push({ x: xi, z: zi, scale: 0.75 + ((Math.abs(xi * zi * 3) % 5) * 0.07) });
+      for (let zi = half_z + step; zi <= outerLimit_z; zi += step)
+        list.push({ x: xi, z: zi, scale: 0.75 + ((Math.abs(xi * zi * 5) % 5) * 0.07) });
     }
-  });
-
-  // Generate star positions
-  const starPositions = useMemo(() => {
-    const count = 600;
-    const pos = new Float32Array(count * 3);
-    for (let i = 0; i < count; i++) {
-      const theta = Math.random() * Math.PI * 2;
-      const phi = Math.random() * Math.PI * 0.5; // upper hemisphere only
-      pos[i * 3]     = radius * 0.95 * Math.sin(phi) * Math.cos(theta);
-      pos[i * 3 + 1] = radius * 0.95 * Math.cos(phi);
-      pos[i * 3 + 2] = radius * 0.95 * Math.sin(phi) * Math.sin(theta);
+    for (let zi = -half_z; zi <= half_z; zi += step) {
+      for (let xi = -outerLimit_x; xi < -half_x; xi += step)
+        list.push({ x: xi, z: zi, scale: 0.75 + ((Math.abs(xi * zi * 7) % 5) * 0.07) });
+      for (let xi = half_x + step; xi <= outerLimit_x; xi += step)
+        list.push({ x: xi, z: zi, scale: 0.75 + ((Math.abs(xi * zi * 11) % 5) * 0.07) });
     }
-    return pos;
-  }, [radius]);
+    return list;
+  }, [gx, gz, half_x, half_z]);
 
-  const skyColor   = isNight ? '#0a0f2c' : '#87ceeb';
-  const horizColor = isNight ? '#111827' : '#c9e8f5';
+  // Mountain positions — behind the campus on all four sides, further out
+  const mountains = useMemo(() => {
+    const mts: { x: number; z: number; rx: number; rz: number; h: number; seed: number }[] = [];
+    const far = half_x * 1.4;
+    const farZ = half_z * 1.4;
+    // South range
+    for (let xi = -half_x * 1.2; xi <= half_x * 1.2; xi += gx * 0.18) {
+      mts.push({ x: xi, z: -farZ - (xi % 7) * 1.5, rx: gx * 0.1, rz: gx * 0.1, h: 18 + (Math.abs(xi * 3) % 12), seed: xi });
+    }
+    // North range
+    for (let xi = -half_x * 1.2; xi <= half_x * 1.2; xi += gx * 0.18) {
+      mts.push({ x: xi, z: farZ + (xi % 5) * 1.5, rx: gx * 0.1, rz: gx * 0.1, h: 16 + (Math.abs(xi * 5) % 14), seed: xi + 1 });
+    }
+    // West range
+    for (let zi = -half_z * 1.2; zi <= half_z * 1.2; zi += gz * 0.2) {
+      mts.push({ x: -far - (zi % 6) * 1.5, z: zi, rx: gz * 0.09, rz: gz * 0.09, h: 14 + (Math.abs(zi * 7) % 10), seed: zi + 2 });
+    }
+    // East range
+    for (let zi = -half_z * 1.2; zi <= half_z * 1.2; zi += gz * 0.2) {
+      mts.push({ x: far + (zi % 4) * 1.5, z: zi, rx: gz * 0.09, rz: gz * 0.09, h: 15 + (Math.abs(zi * 9) % 11), seed: zi + 3 });
+    }
+    return mts;
+  }, [gx, gz, half_x, half_z]);
+
+  // Rocks scattered in the outer belt
+  const rocks = useMemo(() => {
+    const rs: { x: number; z: number; sx: number; sy: number; sz: number }[] = [];
+    const positions = [
+      { x: -half_x * 1.1, z: half_z * 0.3 },
+      { x: half_x * 1.15, z: -half_z * 0.4 },
+      { x: -half_x * 0.8, z: -half_z * 1.1 },
+      { x: half_x * 0.7, z: half_z * 1.1 },
+      { x: -half_x * 1.2, z: -half_z * 0.9 },
+      { x: half_x * 1.1, z: half_z * 0.8 },
+      { x: -half_x * 0.3, z: -half_z * 1.2 },
+      { x: half_x * 0.4, z: -half_z * 1.15 },
+      { x: half_x * 0.1, z: half_z * 1.2 },
+      { x: -half_x * 0.5, z: half_z * 1.1 },
+    ];
+    positions.forEach(({ x, z }, i) => {
+      const base = 2.5 + (i % 4) * 1.2;
+      rs.push({ x, z, sx: base * 1.1, sy: base * 0.7, sz: base });
+      // Cluster a few smaller rocks nearby
+      rs.push({ x: x + 3, z: z + 2, sx: base * 0.5, sy: base * 0.4, sz: base * 0.5 });
+      rs.push({ x: x - 2, z: z - 3, sx: base * 0.4, sy: base * 0.3, sz: base * 0.4 });
+    });
+    return rs;
+  }, [half_x, half_z]);
+
+  const snowColor = isNight ? '#c4c4d0' : '#f0f4ff';
+  const mountainColor = isNight ? '#374151' : '#6b7280';
+  const rockColor = isNight ? '#292524' : '#57534e';
+  const seaColor = isNight ? '#1e3a5f' : '#1d4ed8';
+  const riverColor = isNight ? '#1e40af' : '#3b82f6';
 
   return (
     <group>
-      {/* Sky sphere */}
-      <mesh>
-        <sphereGeometry args={[radius, 32, 16]} />
-        <meshBasicMaterial color={skyColor} side={THREE.BackSide} />
+      {/* --- SEA: large water plane, sits below ground level on far sides --- */}
+      <mesh position={[0, -2.5, -gz * 1.9]} rotation={[-Math.PI / 2, 0, 0]}>
+        <planeGeometry args={[gx * 5, gz * 1.5]} />
+        <meshStandardMaterial color={seaColor} roughness={0.05} metalness={0.4} transparent opacity={0.88} />
+      </mesh>
+      {/* Sea foam / shore */}
+      <mesh position={[0, -1.5, -half_z * 1.35]} rotation={[-Math.PI / 2, 0, 0]}>
+        <planeGeometry args={[gx * 2.5, gz * 0.15]} />
+        <meshStandardMaterial color="#bfdbfe" roughness={0.5} transparent opacity={0.6} />
       </mesh>
 
-      {/* Horizon haze band */}
-      <mesh>
-        <cylinderGeometry args={[radius * 0.999, radius * 0.999, radius * 0.15, 32, 1, true]} />
-        <meshBasicMaterial color={horizColor} side={THREE.BackSide} transparent opacity={0.8} />
+      {/* --- RIVERS: two sinuous blue strips in the outer belt --- */}
+      {/* West river flowing south */}
+      <mesh position={[-half_x * 1.15, 0.03, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+        <planeGeometry args={[3.5, gz * 0.9]} />
+        <meshStandardMaterial color={riverColor} roughness={0.05} metalness={0.3} transparent opacity={0.8} />
+      </mesh>
+      {/* East river flowing south */}
+      <mesh position={[half_x * 1.18, 0.03, gz * 0.1]} rotation={[-Math.PI / 2, 0, 0]}>
+        <planeGeometry args={[3, gz * 0.7]} />
+        <meshStandardMaterial color={riverColor} roughness={0.05} metalness={0.3} transparent opacity={0.8} />
       </mesh>
 
-      {/* Sun (day) */}
-      {!isNight && (
-        <mesh position={[radius * 0.6, radius * 0.65, -radius * 0.4]}>
-          <sphereGeometry args={[radius * 0.06, 16, 16]} />
-          <meshBasicMaterial color="#fff7aa" />
-        </mesh>
-      )}
-
-      {/* Moon (night) */}
-      {isNight && (
-        <group position={[radius * -0.5, radius * 0.7, -radius * 0.3]}>
-          <mesh>
-            <sphereGeometry args={[radius * 0.055, 16, 16]} />
-            <meshBasicMaterial color="#d4d4d8" />
+      {/* --- MOUNTAINS --- */}
+      {mountains.map((m, i) => (
+        <group key={`mt-${i}`} position={[m.x, 0, m.z]}>
+          {/* Main peak */}
+          <mesh castShadow>
+            <coneGeometry args={[m.rx, m.h, 7, 1]} />
+            <meshStandardMaterial color={mountainColor} roughness={0.85} />
           </mesh>
-          {/* Moon crater detail */}
-          <mesh position={[radius * 0.02, radius * 0.02, radius * 0.05]}>
-            <sphereGeometry args={[radius * 0.015, 8, 8]} />
-            <meshBasicMaterial color="#a1a1aa" />
+          {/* Snow cap */}
+          <mesh position={[0, m.h * 0.35, 0]} castShadow>
+            <coneGeometry args={[m.rx * 0.35, m.h * 0.3, 7, 1]} />
+            <meshStandardMaterial color={snowColor} roughness={0.5} />
           </mesh>
         </group>
-      )}
+      ))}
 
-      {/* Stars (night) */}
-      {isNight && (
-        <points ref={starsRef}>
-          <bufferGeometry>
-            <bufferAttribute attach="attributes-position" args={[starPositions, 3]} />
-          </bufferGeometry>
-          <pointsMaterial color="#ffffff" size={0.35} sizeAttenuation />
-        </points>
-      )}
+      {/* --- ROCKS --- */}
+      {rocks.map((r, i) => (
+        <mesh key={`rock-${i}`} position={[r.x, r.sy * 0.4, r.z]} scale={[r.sx, r.sy, r.sz]} castShadow>
+          <sphereGeometry args={[1, 6, 4]} />
+          <meshStandardMaterial color={rockColor} roughness={0.95} metalness={0.05} />
+        </mesh>
+      ))}
+
+      {/* --- TREES (outer belt only, no road/building overlap) --- */}
+      {trees.map((t, i) => (
+        <ForestTree key={`tree-${i}`} x={t.x} z={t.z} scale={t.scale} isNight={isNight} />
+      ))}
     </group>
   );
 };
 
-// --- Forest Tree helper ---
-const ForestTree = ({ x, z, scale = 1 }: { x: number; z: number; scale?: number }) => (
-  <group position={[x, 0, z]} scale={scale}>
-    {/* Trunk */}
-    <Cylinder args={[0.12, 0.16, 0.9, 6]} position={[0, 0.45, 0]} castShadow>
-      <meshStandardMaterial color="#7c4b1e" roughness={0.9} />
-    </Cylinder>
-    {/* Canopy bottom */}
-    <Cylinder args={[0, 0.75, 1.2, 6]} position={[0, 1.4, 0]} castShadow>
-      <meshStandardMaterial color="#15803d" roughness={0.8} />
-    </Cylinder>
-    {/* Canopy mid */}
-    <Cylinder args={[0, 0.6, 1.0, 6]} position={[0, 2.1, 0]} castShadow>
-      <meshStandardMaterial color="#16a34a" roughness={0.8} />
-    </Cylinder>
-    {/* Canopy top */}
-    <Cylinder args={[0, 0.4, 0.8, 6]} position={[0, 2.7, 0]} castShadow>
-      <meshStandardMaterial color="#4ade80" roughness={0.8} />
-    </Cylinder>
-  </group>
-);
-
-// --- River strip helper ---
-const RiverStrip = ({ x, z, length, isHorizontal }: { x: number; z: number; length: number; isHorizontal: boolean }) => (
-  <mesh
-    position={[x, 0.02, z]}
-    rotation={[-Math.PI / 2, 0, isHorizontal ? 0 : Math.PI / 2]}
-    receiveShadow
-  >
-    <planeGeometry args={isHorizontal ? [length, 1.2] : [length, 1.2]} />
-    <meshStandardMaterial color="#3b82f6" roughness={0.1} metalness={0.3} transparent opacity={0.75} />
-  </mesh>
-);
-
-const EnvironmentMap = ({ mapData, isTargeting, onMapClick }: { mapData: MapData, isTargeting?: boolean, onMapClick?: (p: THREE.Vector3) => void }) => {
+const EnvironmentMap = ({ mapData, isNight, isTargeting, onMapClick }: { mapData: MapData, isNight: boolean, isTargeting?: boolean, onMapClick?: (p: THREE.Vector3) => void }) => {
   const { gridSize } = mapData;
-
-  // Trees placed ONLY in the outer green belt (beyond campus boundary).
-  // half_x / half_z is the campus edge — trees start there and go outward.
-  // This guarantees zero overlap with roads or buildings inside the campus.
-  const trees = useMemo(() => {
-    const list: { x: number; z: number; scale: number }[] = [];
-    const gx = gridSize.x;
-    const gz = gridSize.y;
-    const half_x = gx / 2;
-    const half_z = gz / 2;
-    const outerLimit_x = gx * 1.5 / 2;
-    const outerLimit_z = gz * 1.5 / 2;
-    const step = 3.5;
-
-    // South belt (z < -half_z)
-    for (let xi = -outerLimit_x; xi <= outerLimit_x; xi += step) {
-      for (let zi = -outerLimit_z; zi < -half_z; zi += step) {
-        list.push({ x: xi, z: zi, scale: 0.75 + ((Math.abs(xi * zi * 3) % 5) * 0.07) });
-      }
-    }
-    // North belt (z > half_z)
-    for (let xi = -outerLimit_x; xi <= outerLimit_x; xi += step) {
-      for (let zi = half_z + step; zi <= outerLimit_z; zi += step) {
-        list.push({ x: xi, z: zi, scale: 0.75 + ((Math.abs(xi * zi * 5) % 5) * 0.07) });
-      }
-    }
-    // West belt (x < -half_x), middle rows only
-    for (let zi = -half_z; zi <= half_z; zi += step) {
-      for (let xi = -outerLimit_x; xi < -half_x; xi += step) {
-        list.push({ x: xi, z: zi, scale: 0.75 + ((Math.abs(xi * zi * 7) % 5) * 0.07) });
-      }
-    }
-    // East belt (x > half_x), middle rows only
-    for (let zi = -half_z; zi <= half_z; zi += step) {
-      for (let xi = half_x + step; xi <= outerLimit_x; xi += step) {
-        list.push({ x: xi, z: zi, scale: 0.75 + ((Math.abs(xi * zi * 11) % 5) * 0.07) });
-      }
-    }
-    return list;
-  }, [gridSize]);
-
   return (
     <group>
-      {/* Grass ground */}
-      <Plane 
-        args={[gridSize.x, gridSize.y]} 
-        rotation={[-Math.PI / 2, 0, 0]} 
-        position={[0, 0, 0]} 
+      {/* Campus grass ground — clickable for targeting */}
+      <Plane
+        args={[gridSize.x, gridSize.y]}
+        rotation={[-Math.PI / 2, 0, 0]}
+        position={[0, 0, 0]}
         receiveShadow
         onClick={(e) => {
-          if (isTargeting && onMapClick) {
-            e.stopPropagation();
-            onMapClick(e.point);
-          }
+          if (isTargeting && onMapClick) { e.stopPropagation(); onMapClick(e.point); }
         }}
-        onPointerOver={() => {
-          if (isTargeting) document.body.style.cursor = 'crosshair';
-        }}
-        onPointerOut={() => {
-          if (isTargeting) document.body.style.cursor = 'auto';
-        }}
+        onPointerOver={() => { if (isTargeting) document.body.style.cursor = 'crosshair'; }}
+        onPointerOut={() => { if (isTargeting) document.body.style.cursor = 'auto'; }}
       >
-        <meshStandardMaterial color="#4ade80" roughness={0.9} />
+        <meshStandardMaterial color={isNight ? '#14532d' : '#4ade80'} roughness={0.9} />
       </Plane>
 
-      {/* Extended ground border so no black shows */}
+      {/* Extended outer ground base */}
       <Plane
-        args={[gridSize.x * 3, gridSize.y * 3]}
+        args={[gridSize.x * 6, gridSize.y * 6]}
         rotation={[-Math.PI / 2, 0, 0]}
         position={[0, -0.01, 0]}
         receiveShadow
       >
-        <meshStandardMaterial color="#16a34a" roughness={1} />
+        <meshStandardMaterial color={isNight ? '#052e16' : '#16a34a'} roughness={1} />
       </Plane>
 
-      {/* Trees — outer green belt only, no overlap with roads/buildings */}
-      {trees.map((t, i) => (
-        <ForestTree key={i} x={t.x} z={t.z} scale={t.scale} />
-      ))}
+      {/* Natural surrounding landscape (mountains, rocks, rivers, sea, trees) */}
+      <NaturalLandscape isNight={isNight} gridSize={gridSize} />
     </group>
   );
 };
@@ -1236,7 +1218,12 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
   const [triggerReset, setTriggerReset] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [showReasoningLog, setShowReasoningLog] = useState(false);
-  const [isNight, setIsNight] = useState(false);
+
+  // Auto day/night from real local time (day = 6:00–18:00)
+  const isNight = useMemo(() => {
+    const h = new Date().getHours();
+    return h < 6 || h >= 18;
+  }, []);
   
   const [aiExplanations, setAiExplanations] = useState<string[]>([]);
   const [selectedRoom, setSelectedRoom] = useState<Room | null>(null);
@@ -2197,19 +2184,6 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
             >
               {isFullscreen ? <Minimize className="w-4 h-4" /> : <Maximize className="w-4 h-4" />}
             </button>
-
-            {/* Day / Night Toggle */}
-            <button
-              onClick={() => setIsNight(!isNight)}
-              className={`px-3 py-1.5 rounded-md text-xs font-bold shadow-lg transition-colors flex items-center gap-1.5 border ${
-                isNight
-                  ? 'bg-indigo-900 text-yellow-300 border-indigo-600 hover:bg-indigo-800'
-                  : 'bg-sky-400 text-white border-sky-300 hover:bg-sky-500'
-              }`}
-              title={isNight ? 'Switch to Day' : 'Switch to Night'}
-            >
-              {isNight ? '🌙 Night' : '☀️ Day'}
-            </button>
           </div>
           
           {/* Reasoning Log Option */}
@@ -2240,21 +2214,21 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
           </div>
         </div>
         <Canvas shadows gl={{ antialias: true }} dpr={[1, 2]}>
-          {/* Sky colour attached directly to scene */}
+          {/* Sky background from real time */}
           <color attach="background" args={[isNight ? '#05081a' : '#87ceeb']} />
-          {/* Camera */}
+          {/* Camera — zoomed out to fit entire model + surrounding landscape */}
           {isMapView ? (
-            <OrthographicCamera makeDefault position={[0, 100, 0]} zoom={6} near={0.1} far={1000} />
+            <OrthographicCamera makeDefault position={[0, 100, 0]} zoom={4} near={0.1} far={2000} />
           ) : (
-            <PerspectiveCamera makeDefault position={[0, gridSize.y * 0.55, gridSize.y * 0.85]} fov={55} />
+            <PerspectiveCamera makeDefault position={[0, gridSize.y * 0.9, gridSize.y * 1.35]} fov={60} near={0.5} far={2000} />
           )}
           {/* Sky Dome */}
           {!isMapView && <SkyDome isNight={isNight} gridSize={gridSize} />}
           {/* Lighting — adapts to day/night */}
-          <ambientLight intensity={isNight ? 0.15 : 0.7} color={isNight ? '#c7d2fe' : '#ffffff'} />
+          <ambientLight intensity={isNight ? 0.12 : 0.7} color={isNight ? '#c7d2fe' : '#ffffff'} />
           <directionalLight
-            position={isNight ? [-20, 30, -20] : [20, 30, 20]}
-            intensity={isNight ? 0.3 : 1.8}
+            position={isNight ? [-30, 40, -30] : [30, 50, 30]}
+            intensity={isNight ? 0.25 : 2.0}
             color={isNight ? '#9ca3c8' : '#fff5d0'}
             castShadow
             shadow-mapSize={[2048, 2048]}
@@ -2284,12 +2258,15 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
             enabled={!isFollowing}
             enableDamping
             dampingFactor={0.05}
-            target={[0, 0.5, 0]}
-            maxPolarAngle={Math.PI / 2 - 0.05}
+            target={[0, 2, 0]}
+            maxPolarAngle={Math.PI / 2.15}
+            minDistance={20}
+            maxDistance={gridSize.y * 3}
           />
           
           <EnvironmentMap 
-            mapData={mapData} 
+            mapData={mapData}
+            isNight={isNight}
             isTargeting={isEmergencyTargeting || isPlacingBlocker} 
             onMapClick={(p) => {
               const gridP = getGridPointFromVector3(p, gridSize);
