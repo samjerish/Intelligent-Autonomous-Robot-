@@ -1123,6 +1123,7 @@ const NaturalLandscape = ({ isNight, gridSize }: { isNight: boolean; gridSize: G
   const mountainColor = isNight ? '#374151' : '#6b7280';
   const rockColor = isNight ? '#292524' : '#57534e';
   const waterColor = isNight ? '#1e40af' : '#60a5fa';
+  const riverColor = isNight ? '#1e40af' : '#3b82f6';
 
   return (
     <group>
