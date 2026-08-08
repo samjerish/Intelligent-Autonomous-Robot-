@@ -37,37 +37,43 @@ export type RobotState = 'idle' | 'mission' | 'patrol' | 'charging' | 'emergency
 
 const CameraController = ({ isFollowing, robotPosRef, controlsRef, triggerReset, onResetDone, gridSize, isMapView }: any) => {
   const { camera } = useThree();
-  useFrame(() => {
+  // Smoothed look-target to prevent jitter when following
+  const smoothTarget = useRef(new THREE.Vector3(0, 0.5, 0));
+
+  useFrame((_state, delta) => {
     if (triggerReset) {
       if (controlsRef.current) {
-        controlsRef.current.target.set(0, 0.5, 0);
+        controlsRef.current.target.set(0, 2, 0);
       }
       if (isMapView) {
         camera.position.set(0, 100, 0);
         if ((camera as THREE.OrthographicCamera).zoom !== undefined) {
-          (camera as THREE.OrthographicCamera).zoom = 6;
+          (camera as THREE.OrthographicCamera).zoom = 4;
         }
       } else {
-        camera.position.set(0, gridSize.y * 0.55, gridSize.y * 0.85);
+        camera.position.set(0, gridSize.y * 0.9, gridSize.y * 1.35);
       }
       camera.updateProjectionMatrix();
       if (onResetDone) onResetDone();
     }
-    
+
     if (isFollowing && robotPosRef.current) {
-      // Use a fixed isometric offset for a smooth, readable follow view
-      const offset = new THREE.Vector3(0, 15, 20);
-      const targetCamPos = new THREE.Vector3().copy(robotPosRef.current).add(offset);
-      
-      // Smoothly move camera
-      camera.position.lerp(targetCamPos, 0.1);
-      
-      // Force camera to look exactly at the robot to keep it centered
-      camera.lookAt(robotPosRef.current);
-      
-      // Sync orbit controls target so it doesn't snap when unfollowing
+      // Fixed isometric offset — same height & distance as recentre view
+      const offset = new THREE.Vector3(0, gridSize.y * 0.6, gridSize.y * 0.55);
+      const desiredPos = new THREE.Vector3().copy(robotPosRef.current).add(offset);
+
+      // Very smooth position lerp (lower alpha = less shake)
+      const lerpAlpha = 1 - Math.pow(0.02, delta);
+      camera.position.lerp(desiredPos, lerpAlpha);
+
+      // Smooth the look-at target independently to avoid snap/jitter
+      smoothTarget.current.lerp(robotPosRef.current, lerpAlpha);
+      camera.lookAt(smoothTarget.current);
+
+      // Sync orbit controls target smoothly
       if (controlsRef.current) {
-        controlsRef.current.target.copy(robotPosRef.current);
+        controlsRef.current.target.lerp(robotPosRef.current, lerpAlpha);
+        controlsRef.current.update();
       }
     }
   });
@@ -1237,6 +1243,7 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
   const [triggerReset, setTriggerReset] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [showReasoningLog, setShowReasoningLog] = useState(false);
+  const [isCCMinimized, setIsCCMinimized] = useState(false);
 
   // Auto day/night from real local time (day = 6:00–18:00)
   const isNight = useMemo(() => {
@@ -2274,11 +2281,11 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
             ref={controlsRef}
             enabled={!isFollowing}
             enableDamping
-            dampingFactor={0.05}
+            dampingFactor={0.08}
             target={[0, 2, 0]}
             maxPolarAngle={Math.PI / 2.15}
             minDistance={20}
-            maxDistance={gridSize.y * 3}
+            maxDistance={gridSize.y * 1.35}
           />
           
           <EnvironmentMap 
@@ -2447,21 +2454,36 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
 
 
       {/* ── Control Panel (Floating Overlay) ── */}
-      <div className="absolute right-4 top-4 bottom-4 w-[360px] bg-black/70 backdrop-blur-xl border border-white/10 rounded-2xl hidden md:flex flex-col z-[100] overflow-hidden shadow-2xl text-gray-200 pointer-events-auto">
+      <div className={`absolute right-4 top-4 bottom-4 bg-black/70 backdrop-blur-xl border border-white/10 rounded-2xl hidden md:flex flex-col z-[100] shadow-2xl text-gray-200 pointer-events-auto transition-all duration-300 ${isCCMinimized ? 'w-14 overflow-hidden' : 'w-[360px] overflow-hidden'}`}>
         <div className="p-4 border-b border-white/10 bg-black/40 flex-none flex justify-between items-center">
-          <h3 className="font-bold text-sm flex items-center gap-2 text-white">
-            <Activity className="w-4 h-4 text-brand" />
-            Control Center
-          </h3>
-          <button 
-            onClick={() => setIsCTROpen(!isCTROpen)}
-            className="p-1.5 rounded-md bg-white/5 hover:bg-brand/20 border border-white/10 text-brand-light transition-colors"
-            title="Open Console"
-          >
-            <Bot className="w-4 h-4" />
-          </button>
+          {!isCCMinimized && (
+            <h3 className="font-bold text-sm flex items-center gap-2 text-white">
+              <Activity className="w-4 h-4 text-brand" />
+              Control Center
+            </h3>
+          )}
+          <div className={`flex gap-2 ${isCCMinimized ? 'w-full justify-center' : ''}`}>
+            {!isCCMinimized && (
+              <button 
+                onClick={() => setIsCTROpen(!isCTROpen)}
+                className="p-1.5 rounded-md bg-white/5 hover:bg-brand/20 border border-white/10 text-brand-light transition-colors"
+                title="Open Console"
+              >
+                <Bot className="w-4 h-4" />
+              </button>
+            )}
+            <button
+              onClick={() => setIsCCMinimized(!isCCMinimized)}
+              className="p-1.5 rounded-md bg-white/5 hover:bg-white/20 border border-white/10 text-gray-300 transition-colors"
+              title={isCCMinimized ? 'Expand Control Center' : 'Minimize Control Center'}
+            >
+              {isCCMinimized ? <Maximize className="w-4 h-4" /> : <Minimize className="w-4 h-4" />}
+            </button>
+          </div>
         </div>
 
+        {/* Body — hidden when minimized */}
+        {!isCCMinimized && (
         <div className="flex-1 overflow-y-auto">
         <div className="p-4 border-b border-white/10">
           <div className="flex items-center justify-between mb-3">
