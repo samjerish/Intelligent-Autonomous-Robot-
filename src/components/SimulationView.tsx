@@ -887,7 +887,7 @@ const Robot = ({
   dynamicObstaclesRef: React.MutableRefObject<DynamicObstacle[]>;
   onReachNode: (idx: number) => void;
   onMissionComplete: () => void;
-  onObstacleDetected: (obsPos: GridPoint) => void;
+  onObstacleDetected: (blockedPoints: GridPoint[]) => void;
   robotPosRef: React.MutableRefObject<THREE.Vector3 | null>;
   robotRotRef: React.MutableRefObject<number>;
 }) => {
@@ -928,7 +928,7 @@ const Robot = ({
           const obsTarget = obs.path[Math.min(obs.currentIndex, obs.path.length - 1)];
           for (const p of upcomingPath) {
             if ((p.x === obs.pos.x && p.y === obs.pos.y) || (p.x === obsTarget.x && p.y === obsTarget.y)) {
-              onObstacleDetected(obs.pos);
+              onObstacleDetected([obs.pos, obsTarget]);
               return; // Pause movement this frame
             }
           }
@@ -1714,11 +1714,11 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
     };
   }, [mapData, isOn, robotState, path, currentPosIndex]);
 
-  const handleObstacleDetected = (obsPos: GridPoint) => {
+  const handleObstacleDetected = (blockedPoints: GridPoint[]) => {
     if (isRecalculating.current) return;
     isRecalculating.current = true;
     
-    addExplanation(`CRITICAL: Dynamic Obstacle detected at (${obsPos.x}, ${obsPos.y}). Rerouting instantly...`);
+    addExplanation(`CRITICAL: Dynamic Obstacle detected at (${blockedPoints[0].x}, ${blockedPoints[0].y}). Rerouting instantly...`);
     
     if (!mapData) {
        isRecalculating.current = false;
@@ -1728,7 +1728,7 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
     const targetLoc = path[path.length - 1];
     
     // We treat the specific position of the dynamic obstacle as a hard blockage for this local recalculation
-    const allObstacles = [...(mapData.obstacles || []), ...userBlockers, obsPos];
+    const allObstacles = [...(mapData.obstacles || []), ...userBlockers, ...blockedPoints];
     
     let intermediateTarget = null;
     for (let i = currentPosIndex; i < path.length - 1; i++) {
