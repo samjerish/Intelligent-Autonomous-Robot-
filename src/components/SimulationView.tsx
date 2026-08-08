@@ -1540,58 +1540,97 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
   const handleObstacleDetected = (blockedPoints: GridPoint[]) => {
     if (isRecalculating.current) return;
     isRecalculating.current = true;
-    
-    addExplanation(`CRITICAL: Dynamic Obstacle detected at (${blockedPoints[0].x}, ${blockedPoints[0].y}). Rerouting instantly...`);
-    
-    if (!mapData) {
-       isRecalculating.current = false;
-       return;
-    }
+
+    if (!mapData) { isRecalculating.current = false; return; }
+
     const currentLoc = path[currentPosIndex];
     const targetLoc = path[path.length - 1];
-    
-    // We treat the specific position of the dynamic obstacle as a hard blockage for this local recalculation
     const allObstacles = [...(mapData.obstacles || []), ...userBlockers, ...blockedPoints];
-    
-    let intermediateTarget = null;
-    for (let i = currentPosIndex; i < path.length - 1; i++) {
-      if (path[i].x === path[i+1].x && path[i].y === path[i+1].y && path[i].f === path[i+1].f) {
-        intermediateTarget = path[i];
-        break;
-      }
-    }
-    
-    let newPath: GridPoint[] = [];
-    if (intermediateTarget) {
-      const fPath = calculatePath(currentLoc, intermediateTarget, allObstacles, mapData);
-      const rPath = calculatePath(intermediateTarget, targetLoc, allObstacles, mapData);
-      if (fPath.length > 0 && rPath.length > 0) {
-        newPath = [...fPath, ...rPath.slice(1)];
-      }
+
+    const isRoad = (nx: number, ny: number) =>
+      mapData.roads && mapData.roads.some(r => r.x === nx && r.y === ny && r.f === currentLoc.f);
+
+    const isClear = (nx: number, ny: number) =>
+      nx >= 0 && ny >= 0 &&
+      nx < (mapData.gridSize?.x || 120) &&
+      ny < (mapData.gridSize?.y || 100) &&
+      !allObstacles.some(o => o.x === nx && o.y === ny && o.f === currentLoc.f) &&
+      isRoad(nx, ny);
+
+    // Determine movement direction (toward next path node)
+    const nextNode = path[Math.min(currentPosIndex + 1, path.length - 1)];
+    const dx = nextNode.x - currentLoc.x;
+    const dy = nextNode.y - currentLoc.y;
+
+    // Perpendicular sidestep candidates (left and right of travel direction)
+    let sideOptions: Array<{x: number, y: number}> = [];
+    if (dx !== 0) {
+      // Moving horizontally — sidestep in y
+      sideOptions = [
+        { x: currentLoc.x, y: currentLoc.y - 1 },
+        { x: currentLoc.x, y: currentLoc.y + 1 },
+        { x: currentLoc.x, y: currentLoc.y - 2 },
+        { x: currentLoc.x, y: currentLoc.y + 2 },
+      ];
+    } else if (dy !== 0) {
+      // Moving vertically — sidestep in x
+      sideOptions = [
+        { x: currentLoc.x - 1, y: currentLoc.y },
+        { x: currentLoc.x + 1, y: currentLoc.y },
+        { x: currentLoc.x - 2, y: currentLoc.y },
+        { x: currentLoc.x + 2, y: currentLoc.y },
+      ];
     } else {
-      newPath = calculatePath(currentLoc, targetLoc, allObstacles, mapData);
+      // Diagonal fallback
+      sideOptions = [
+        { x: currentLoc.x - 1, y: currentLoc.y },
+        { x: currentLoc.x + 1, y: currentLoc.y },
+        { x: currentLoc.x, y: currentLoc.y - 1 },
+        { x: currentLoc.x, y: currentLoc.y + 1 },
+      ];
     }
-    
-    if (newPath.length === 0) {
-      if (intermediateTarget) {
-         const fPath = calculateLongPath(currentLoc, intermediateTarget, allObstacles, mapData);
-         const rPath = calculateLongPath(intermediateTarget, targetLoc, allObstacles, mapData);
-         if (fPath.length > 0 && rPath.length > 0) {
-           newPath = [...fPath, ...rPath.slice(1)];
-         }
-      } else {
-         newPath = calculateLongPath(currentLoc, targetLoc, allObstacles, mapData);
-      }
+
+    // Try each sidestep — pick first clear road tile
+    const sideTile = sideOptions.find(s => isClear(s.x, s.y));
+
+    if (sideTile) {
+      // INSTANT inline diversion: sidestep → resume from sidestepped position onward
+      const sideNode: GridPoint = { x: sideTile.x, y: sideTile.y, f: currentLoc.f };
+      const resumePath = path.slice(currentPosIndex);
+      const newPath: GridPoint[] = [currentLoc, sideNode, ...resumePath];
+      setPath(newPath);
+      setCurrentPosIndex(0);
+      setIsPlaying(true);
+      // Release lock immediately — no delay
+      isRecalculating.current = false;
+      return;
     }
-    
+
+    // Fallback: full A* only if inline sidestep is impossible
+    addExplanation(`CRITICAL: Dynamic Obstacle detected at (${blockedPoints[0].x}, ${blockedPoints[0].y}). Rerouting...`);
+    let newPath: GridPoint[] = calculatePath(currentLoc, targetLoc, allObstacles, mapData);
+    if (newPath.length === 0) newPath = calculateLongPath(currentLoc, targetLoc, allObstacles, mapData);
+
     if (newPath.length > 0) {
       setPath(newPath);
       setCurrentPosIndex(0);
       setIsPlaying(true);
-      addExplanation(`Successfully found alternative route avoiding obstacle! Resuming mission.`);
-      setTimeout(() => {
-        isRecalculating.current = false;
-      }, 1500);
+      addExplanation(`Found alternative route. Resuming mission.`);
+      setTimeout(() => { isRecalculating.current = false; }, 800);
+    } else {
+      addExplanation(`Yielding to traffic...`);
+      const pullOver = sideOptions.find(s =>
+        s.x >= 0 && s.y >= 0 &&
+        !allObstacles.some(o => o.x === s.x && o.y === s.y && o.f === currentLoc.f)
+      );
+      if (pullOver) {
+        setPath([currentLoc, { x: pullOver.x, y: pullOver.y, f: currentLoc.f }]);
+        setCurrentPosIndex(0);
+        setRobotState('evading_obstacle');
+        setIsPlaying(true);
+      }
+      isRecalculating.current = false;
+    }
     } else {
       let pullOverTile: GridPoint | null = null;
       const neighbors = [
