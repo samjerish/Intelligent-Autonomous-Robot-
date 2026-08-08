@@ -1743,7 +1743,7 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
       const fPath = calculatePath(currentLoc, intermediateTarget, allObstacles, mapData);
       const rPath = calculatePath(intermediateTarget, targetLoc, allObstacles, mapData);
       if (fPath.length > 0 && rPath.length > 0) {
-        newPath = [...fPath, fPath[fPath.length - 1], ...rPath.slice(1)];
+        newPath = [...fPath, ...rPath.slice(1)];
       }
     } else {
       newPath = calculatePath(currentLoc, targetLoc, allObstacles, mapData);
@@ -1754,7 +1754,7 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
          const fPath = calculateLongPath(currentLoc, intermediateTarget, allObstacles, mapData);
          const rPath = calculateLongPath(intermediateTarget, targetLoc, allObstacles, mapData);
          if (fPath.length > 0 && rPath.length > 0) {
-           newPath = [...fPath, fPath[fPath.length - 1], ...rPath.slice(1)];
+           newPath = [...fPath, ...rPath.slice(1)];
          }
       } else {
          newPath = calculateLongPath(currentLoc, targetLoc, allObstacles, mapData);
