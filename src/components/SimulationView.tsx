@@ -496,7 +496,6 @@ const BuildingModel = ({ room, width, height, depth }: { room: Room, width: numb
           </Box>
           {/* Curved Roof */}
           <Cylinder args={[depth/2, depth/2, width, 16, 1, false, 0, Math.PI]} position={[0, height/2, 0]} rotation={[0, 0, -Math.PI/2]} castShadow>
-          <Cylinder args={[d/2, d/2, w, 16, 1, false, 0, Math.PI]} position={[0, height/2, 0]} rotation={[0, 0, -Math.PI/2]} castShadow>
              <meshStandardMaterial color="#cbd5e1" metalness={0.4} />
           </Cylinder>
         </group>
@@ -504,10 +503,10 @@ const BuildingModel = ({ room, width, height, depth }: { room: Room, width: numb
     } else {
       return (
         <group>
-          <Box args={[w, 0.2, d]} position={[0, -height/2 + 0.1, 0]} receiveShadow>
+          <Box args={[width, 0.2, depth]} position={[0, -height/2 + 0.1, 0]} receiveShadow>
             <meshStandardMaterial color="#4ade80" />
           </Box>
-          <group position={[-w/4 + 1, -height/2 + 0.2, 0]}>
+          <group position={[-width/4 + 1, -height/2 + 0.2, 0]}>
             <Box args={[0.1, 1.2, 0.1]} position={[-1, 0.5, 0]}><meshStandardMaterial color="#94a3b8" /></Box>
             <Box args={[0.1, 1.2, 0.1]} position={[1, 0.5, 0]}><meshStandardMaterial color="#94a3b8" /></Box>
             <Box args={[2.2, 0.1, 0.1]} position={[0, 1.1, 0]}><meshStandardMaterial color="#94a3b8" /></Box>
@@ -516,21 +515,21 @@ const BuildingModel = ({ room, width, height, depth }: { room: Room, width: numb
             <Box args={[0.6, 0.05, 0.3]} position={[-0.5, 0.2, 0]}><meshStandardMaterial color="#ef4444" /></Box>
             <Box args={[0.6, 0.05, 0.3]} position={[0.5, 0.2, 0]}><meshStandardMaterial color="#3b82f6" /></Box>
           </group>
-          <Box args={[2, 0.1, 2]} position={[w/4, -height/2 + 0.15, -d/4]}>
+          <Box args={[2, 0.1, 2]} position={[width/4, -height/2 + 0.15, -depth/4]}>
             <meshStandardMaterial color="#fcd34d" />
           </Box>
-          <Box args={[2.2, 0.2, 2.2]} position={[w/4, -height/2 + 0.1, -d/4]}>
+          <Box args={[2.2, 0.2, 2.2]} position={[width/4, -height/2 + 0.1, -depth/4]}>
             <meshStandardMaterial color="#f59e0b" />
           </Box>
-          <group position={[w/4, -height/2 + 0.2, d/4]}>
+          <group position={[width/4, -height/2 + 0.2, depth/4]}>
              <Box args={[0.8, 1.5, 0.8]} position={[0, 0.75, -1]}><meshStandardMaterial color="#3b82f6" /></Box>
              <Box args={[0.6, 2, 0.1]} position={[0, 0.5, 0]} rotation={[-Math.PI/4, 0, 0]}><meshStandardMaterial color="#ef4444" /></Box>
           </group>
-          <group position={[-w/4, -height/2 + 0.2, d/3]}>
+          <group position={[-width/4, -height/2 + 0.2, depth/3]}>
             <Cylinder args={[0.1, 0.1, 1]} position={[0, 0.5, 0]}><meshStandardMaterial color="#78350f" /></Cylinder>
             <Sphere args={[0.8, 8, 8]} position={[0, 1.2, 0]}><meshStandardMaterial color="#16a34a" /></Sphere>
           </group>
-          <group position={[w/3, -height/2 + 0.2, d/3]}>
+          <group position={[width/3, -height/2 + 0.2, depth/3]}>
             <Cylinder args={[0.1, 0.1, 1.2]} position={[0, 0.6, 0]}><meshStandardMaterial color="#78350f" /></Cylinder>
             <Sphere args={[0.9, 8, 8]} position={[0, 1.4, 0]}><meshStandardMaterial color="#16a34a" /></Sphere>
           </group>
