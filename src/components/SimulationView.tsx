@@ -1377,6 +1377,27 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
   
   const [aiExplanations, setAiExplanations] = useState<string[]>([]);
   const [selectedRoom, setSelectedRoom] = useState<Room | null>(null);
+
+  const handleRoomClick = async (room: Room) => {
+    setSelectedRoom(room);
+    if (!mapData) return;
+    if (robotState === 'idle' || robotState === 'patrol') {
+      const target = room.door || room.start;
+      addExplanation(`User selected ${room.name}. Navigating immediately.`);
+      const currentLoc = path.length > 0 ? path[Math.min(currentPosIndex, path.length - 1)] : mapData.start;
+      const newPath = await calculatePathAsync(currentLoc, target, [...(mapData.obstacles || []), ...userBlockers], mapData);
+      
+      if (newPath.length > 0) {
+        setPath(newPath);
+        setCurrentPosIndex(0);
+        setRobotState('mission');
+        setIsPlaying(true);
+        setIsIdleMode(false);
+      } else {
+        addExplanation(`Cannot find path to ${room.name}.`);
+      }
+    }
+  };
   const [isEmergencyTargeting, setIsEmergencyTargeting] = useState(false);
   const [isCrowdTargeting, setIsCrowdTargeting] = useState(false);
   const [crowdLocation, setCrowdLocation] = useState<GridPoint | null>(null);
@@ -2762,7 +2783,7 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
             const x = (room.start.x + room.end.x) / 2 - gridSize.x / 2;
             const z = (room.start.y + room.end.y) / 2 - gridSize.y / 2;
             return (
-              <group key={room.id} position={[x, height / 2, z]} onClick={(e) => { e.stopPropagation(); setSelectedRoom(room); }}>
+              <group key={room.id} position={[x, height / 2, z]} onClick={(e) => { e.stopPropagation(); handleRoomClick(room); }}>
                 <BuildingModel room={room} width={width} height={height} depth={depth} />
                 <Html position={[0, height / 2 + 1.5, 0]} center style={{ pointerEvents: 'none' }}>
                   <div className="text-[10px] font-bold text-white bg-black/80 px-2 py-1 rounded shadow-lg whitespace-nowrap">
@@ -3086,7 +3107,7 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
               {rooms?.map(room => (
                 <button 
                   key={room.id}
-                  onClick={() => setSelectedRoom(room)}
+                  onClick={() => handleRoomClick(room)}
                   className={`w-full text-left px-3 py-2 rounded border transition-colors text-xs flex justify-between items-center ${selectedRoom?.id === room.id ? 'bg-brand/20 border-brand text-white' : 'bg-white/5 hover:bg-white/10 border-white/5 text-gray-300'}`}
                 >
                   <span className="truncate mr-2">{room.name}</span>
