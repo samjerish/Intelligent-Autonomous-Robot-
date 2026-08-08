@@ -1636,6 +1636,8 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
         const targetRoom = mapData?.rooms?.find(r => r.name.toLowerCase().includes(roomName));
         if (robotState === 'charging') {
           reply = `I am currently charging. Cannot respond to emergency.`;
+        } else if (robotState === 'mission' || robotState === 'emergency_response') {
+          reply = `I must complete my current task first before accepting new emergencies.`;
         } else if (targetRoom) {
           reply = `EMERGENCY ACCEPTED. Dispatched to ${targetRoom.name} immediately.`;
           handleEmergencyCall(targetRoom.door || targetRoom.start);
@@ -1823,13 +1825,13 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
     }
     
     if (!mapData) return;
-    if (robotState === 'emergency_response' || robotState === 'charging' || robotState === 'returning_home') return;
+    if (robotState === 'mission' || robotState === 'emergency_response' || robotState === 'charging' || robotState === 'returning_home') return;
     
     addExplanation(`EMERGENCY CALL: Diverting immediately to (${targetPos.x}, ${targetPos.y})!`);
     setIsPlaying(false);
     isRecalculating.current = true;
     
-    if (robotState === 'mission' || robotState === 'patrol') {
+    if (robotState === 'patrol') {
       originalMissionRef.current = { path: [...path], index: currentPosIndex };
     }
     
