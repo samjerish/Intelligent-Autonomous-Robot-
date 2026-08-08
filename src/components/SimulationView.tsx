@@ -1130,41 +1130,43 @@ const RiverStrip = ({ x, z, length, isHorizontal }: { x: number; z: number; leng
 const EnvironmentMap = ({ mapData, isTargeting, onMapClick }: { mapData: MapData, isTargeting?: boolean, onMapClick?: (p: THREE.Vector3) => void }) => {
   const { gridSize } = mapData;
 
-  // Deterministic tree positions scattered around the campus edges
+  // Trees placed ONLY in the outer green belt (beyond campus boundary).
+  // half_x / half_z is the campus edge — trees start there and go outward.
+  // This guarantees zero overlap with roads or buildings inside the campus.
   const trees = useMemo(() => {
     const list: { x: number; z: number; scale: number }[] = [];
     const gx = gridSize.x;
     const gz = gridSize.y;
-    // Border tree ring
-    const step = 4;
-    for (let xi = -gx / 2 + 1; xi < gx / 2; xi += step) {
-      list.push({ x: xi, z: -gz / 2 + 1.5, scale: 0.7 + ((Math.abs(xi) * 7) % 5) * 0.08 });
-      list.push({ x: xi, z:  gz / 2 - 1.5, scale: 0.7 + ((Math.abs(xi) * 5) % 5) * 0.08 });
-    }
-    for (let zi = -gz / 2 + 1; zi < gz / 2; zi += step) {
-      list.push({ x: -gx / 2 + 1.5, z: zi, scale: 0.7 + ((Math.abs(zi) * 3) % 5) * 0.08 });
-      list.push({ x:  gx / 2 - 1.5, z: zi, scale: 0.7 + ((Math.abs(zi) * 9) % 5) * 0.08 });
-    }
-    // Interior cluster patches (deterministic offsets)
-    const patches = [
-      { cx: -gx * 0.3, cz: -gz * 0.3 },
-      { cx:  gx * 0.3, cz: -gz * 0.3 },
-      { cx: -gx * 0.3, cz:  gz * 0.3 },
-      { cx:  gx * 0.3, cz:  gz * 0.3 },
-      { cx:  0,        cz: -gz * 0.35 },
-      { cx:  0,        cz:  gz * 0.35 },
-    ];
-    patches.forEach(({ cx, cz }, pi) => {
-      for (let i = 0; i < 6; i++) {
-        const angle = (i / 6) * Math.PI * 2 + pi * 0.4;
-        const r = 3 + (i * pi * 7) % 4;
-        list.push({
-          x: cx + Math.cos(angle) * r,
-          z: cz + Math.sin(angle) * r,
-          scale: 0.75 + (i % 3) * 0.1,
-        });
+    const half_x = gx / 2;
+    const half_z = gz / 2;
+    const outerLimit_x = gx * 1.5 / 2;
+    const outerLimit_z = gz * 1.5 / 2;
+    const step = 3.5;
+
+    // South belt (z < -half_z)
+    for (let xi = -outerLimit_x; xi <= outerLimit_x; xi += step) {
+      for (let zi = -outerLimit_z; zi < -half_z; zi += step) {
+        list.push({ x: xi, z: zi, scale: 0.75 + ((Math.abs(xi * zi * 3) % 5) * 0.07) });
       }
-    });
+    }
+    // North belt (z > half_z)
+    for (let xi = -outerLimit_x; xi <= outerLimit_x; xi += step) {
+      for (let zi = half_z + step; zi <= outerLimit_z; zi += step) {
+        list.push({ x: xi, z: zi, scale: 0.75 + ((Math.abs(xi * zi * 5) % 5) * 0.07) });
+      }
+    }
+    // West belt (x < -half_x), middle rows only
+    for (let zi = -half_z; zi <= half_z; zi += step) {
+      for (let xi = -outerLimit_x; xi < -half_x; xi += step) {
+        list.push({ x: xi, z: zi, scale: 0.75 + ((Math.abs(xi * zi * 7) % 5) * 0.07) });
+      }
+    }
+    // East belt (x > half_x), middle rows only
+    for (let zi = -half_z; zi <= half_z; zi += step) {
+      for (let xi = half_x + step; xi <= outerLimit_x; xi += step) {
+        list.push({ x: xi, z: zi, scale: 0.75 + ((Math.abs(xi * zi * 11) % 5) * 0.07) });
+      }
+    }
     return list;
   }, [gridSize]);
 
@@ -1202,11 +1204,7 @@ const EnvironmentMap = ({ mapData, isTargeting, onMapClick }: { mapData: MapData
         <meshStandardMaterial color="#16a34a" roughness={1} />
       </Plane>
 
-      {/* Rivers */}
-      <RiverStrip x={-gridSize.x * 0.22} z={0} length={gridSize.y * 0.7} isHorizontal={false} />
-      <RiverStrip x={0} z={gridSize.y * 0.28} length={gridSize.x * 0.5} isHorizontal />
-
-      {/* Trees */}
+      {/* Trees — outer green belt only, no overlap with roads/buildings */}
       {trees.map((t, i) => (
         <ForestTree key={i} x={t.x} z={t.z} scale={t.scale} />
       ))}
