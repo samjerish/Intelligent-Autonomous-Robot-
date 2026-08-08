@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState, useMemo } from 'react';
 import type { MapData, GridPoint, Room } from '../types';
-import { calculatePathAsync, calculateLongPathAsync } from '../utils/simulationEngine';
-import { Play, RotateCcw, Activity, ShieldAlert, Crosshair, Maximize, Minimize, Bot, Power, Send, Construction, Pause, Users } from 'lucide-react';
+import { calculatePath, calculateLongPath } from '../utils/simulationEngine';
+import { Play, RotateCcw, Activity, ShieldAlert, Crosshair, Maximize, Minimize, Bot, Power, Send, Construction, Pause } from 'lucide-react';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import {
   OrbitControls,
@@ -32,7 +32,7 @@ export type DynamicObstacle = {
   isMoving: boolean;
 };
 
-export type RobotState = 'idle' | 'mission' | 'patrol' | 'charging' | 'emergency_response' | 'crowd_response' | 'waiting_for_police' | 'evading_obstacle' | 'returning_home' | 'off';
+export type RobotState = 'idle' | 'mission' | 'patrol' | 'charging' | 'emergency_response' | 'evading_obstacle' | 'returning_home' | 'off';
 
 
 const CameraController = ({ isFollowing, robotPosRef, controlsRef, triggerReset, onResetDone, gridSize, isMapView }: any) => {
@@ -155,9 +155,9 @@ const MovingEntity = ({ obstacle, gridSize, isMapView, robotPosRef, allObstacles
         </group>
       ) : (
         <group>
-          <Cylinder args={[0.15, 0.15, 0.6, 12]} position={[0, 0.3, 0]} castShadow>
+          <Box args={[0.3, 0.6, 0.3]} position={[0, 0.3, 0]} castShadow>
             <meshStandardMaterial color="#10b981" />
-          </Cylinder>
+          </Box>
           <Sphere args={[0.15, 12, 12]} position={[0, 0.75, 0]} castShadow>
             <meshStandardMaterial color="#fcd34d" />
           </Sphere>
@@ -187,63 +187,19 @@ const getGridPointFromVector3 = (point: THREE.Vector3, gridSize: GridPoint): Gri
   return { x: clampedX, y: clampedZ, f: 0 };
 };
 
-const RoadsRender = React.memo(({ roads, gridSize }: { roads: GridPoint[], gridSize: GridPoint }) => {
+const RoadsRender = ({ roads, gridSize }: { roads: GridPoint[], gridSize: GridPoint }) => {
   if (!roads || roads.length === 0) return null;
-
-  const lines = React.useMemo(() => {
-    const l: { pos: GridPoint, rot: number }[] = [];
-    const roadSet = new Set(roads.map(r => `${r.x},${r.y}`));
-    
-    roads.forEach(road => {
-      let minX = road.x;
-      let maxX = road.x;
-      while (roadSet.has(`${minX - 1},${road.y}`)) minX--;
-      while (roadSet.has(`${maxX + 1},${road.y}`)) maxX++;
-      const width = maxX - minX + 1;
-      const isCenterX = road.x === Math.floor((minX + maxX) / 2);
-      
-      let minY = road.y;
-      let maxY = road.y;
-      while (roadSet.has(`${road.x},${minY - 1}`)) minY--;
-      while (roadSet.has(`${road.x},${maxY + 1}`)) maxY++;
-      const height = maxY - minY + 1;
-      const isCenterY = road.y === Math.floor((minY + maxY) / 2);
-      
-      if (width > height && width >= 4 && isCenterY) {
-         l.push({ pos: road, rot: 0 }); 
-      } else if (height > width && height >= 4 && isCenterX) {
-         l.push({ pos: road, rot: Math.PI / 2 });
-      } else if (width < 4 && height < 4) {
-         if (isCenterY) l.push({ pos: road, rot: 0 });
-         else if (isCenterX) l.push({ pos: road, rot: Math.PI / 2 });
-      }
-    });
-    return l;
-  }, [roads]);
-
   return (
-    <group>
-      <Instances limit={roads.length} receiveShadow>
-        <boxGeometry args={[CELL_SIZE + 0.05, 0.05, CELL_SIZE + 0.05]} />
-        <meshStandardMaterial color="#64748b" opacity={0.9} transparent />
-        {roads.map((road, i) => {
-          const [x, y, z] = getGridPosition(road, gridSize, 0.025);
-          return <Instance key={i} position={[x, y, z]} />;
-        })}
-      </Instances>
-      
-      {/* Two-way center lines */}
-      <Instances limit={lines.length > 0 ? lines.length : 1} receiveShadow>
-        <boxGeometry args={[CELL_SIZE, 0.01, 0.08]} />
-        <meshStandardMaterial color="#ffffff" emissive="#ffffff" emissiveIntensity={0.8} />
-        {lines.map((line, i) => {
-          const [x, y, z] = getGridPosition(line.pos, gridSize, 0.055);
-          return <Instance key={`line-${i}`} position={[x, y, z]} rotation={[0, line.rot, 0]} />;
-        })}
-      </Instances>
-    </group>
+    <Instances limit={roads.length} receiveShadow>
+      <boxGeometry args={[CELL_SIZE, 0.05, CELL_SIZE]} />
+      <meshStandardMaterial color="#64748b" opacity={0.9} transparent />
+      {roads.map((road, i) => {
+        const [x, y, z] = getGridPosition(road, gridSize, 0.025);
+        return <Instance key={i} position={[x, y, z]} />;
+      })}
+    </Instances>
   );
-});
+};
 
 const TrafficBarricade = ({ position, rotationY, length = 1 }: { position: [number, number, number], rotationY: number, length?: number }) => {
   const lightRef1 = useRef<THREE.Mesh>(null);
@@ -372,50 +328,9 @@ const BlockersRender = ({ blockers, gridSize, roads }: { blockers: GridPoint[], 
   );
 };
 
-const Butterflies = () => {
-  const groupRef = useRef<THREE.Group>(null);
-  useFrame(({ clock }) => {
-    if (groupRef.current) {
-      // Stopped movement for Butterflies
-      // const t = clock.getElapsedTime();
-      // groupRef.current.children.forEach((child, i) => {
-      //   child.position.y = Math.sin(t * 3 + i * 2) * 0.5 + 1.5;
-      //   child.position.x = Math.cos(t * 1.5 + i) * 3;
-      //   child.position.z = Math.sin(t * 1.8 + i * 1.5) * 3;
-      // });
-    }
-  });
-  
-  return (
-    <group ref={groupRef}>
-      {[...Array(15)].map((_, i) => (
-        <Box key={i} args={[0.05, 0.05, 0.05]}>
-          <meshBasicMaterial color={i % 2 === 0 ? "#fcd34d" : "#60a5fa"} />
-        </Box>
-      ))}
-    </group>
-  );
-};
-
 const BuildingModel = ({ room, width, height, depth }: { room: Room, width: number, height: number, depth: number }) => {
   const type = room.type || "unknown";
-  const nameLow = room.name.toLowerCase();
   const baseColor = room.color || "#e2e8f0";
-  
-  const parkTrees = React.useMemo(() => {
-    const isEco = room.name.toLowerCase().includes('eco');
-    const count = isEco ? 15 : 4;
-    const arr = [];
-    // Pseudo-random deterministic placement based on name to keep it fixed
-    for (let i = 0; i < count; i++) {
-      const seeded1 = Math.abs(Math.sin((room.name.length * 10 + i) * 12.345));
-      const seeded2 = Math.abs(Math.cos(i * 45.678 + room.name.length));
-      const tx = (seeded1 - 0.5) * width * 0.8;
-      const tz = (seeded2 - 0.5) * depth * 0.8;
-      arr.push({tx, tz});
-    }
-    return arr;
-  }, [room.name, width, depth]);
   
   if (type === 'medical') {
     return (
@@ -473,17 +388,17 @@ const BuildingModel = ({ room, width, height, depth }: { room: Room, width: numb
   } else if (type === 'library') {
     return (
       <group>
-        <Box args={[width, height * 1.8, depth]} position={[0, height * 0.4, 0]} castShadow receiveShadow>
+        <Box args={[width, height * 0.8, depth]} position={[0, -height * 0.1, 0]} castShadow receiveShadow>
           <meshStandardMaterial color="#e2e8f0" />
         </Box>
         {/* Greek style columns */}
         {[-width/2 + 0.5, 0, width/2 - 0.5].map((x, i) => (
-          <Cylinder key={i} args={[0.2, 0.2, height * 1.8]} position={[x, height * 0.4, depth/2 + 0.1]} castShadow>
+          <Cylinder key={i} args={[0.2, 0.2, height * 0.8]} position={[x, -height * 0.1, depth/2 + 0.1]} castShadow>
             <meshStandardMaterial color="#ffffff" />
           </Cylinder>
         ))}
         {/* Pediment */}
-        <Cylinder args={[width/2, width/2, depth + 0.5, 3]} position={[0, height * 1.4, 0]} rotation={[width > depth ? 0 : Math.PI / 2, 0, Math.PI / 2]} castShadow>
+        <Cylinder args={[width/2, width/2, depth + 0.5, 3]} position={[0, height * 0.4, 0]} rotation={[width > depth ? 0 : Math.PI / 2, 0, Math.PI / 2]} castShadow>
            <meshStandardMaterial color="#94a3b8" />
         </Cylinder>
       </group>
@@ -494,135 +409,51 @@ const BuildingModel = ({ room, width, height, depth }: { room: Room, width: numb
         <Box args={[width, height * 0.5, depth]} position={[0, -height * 0.25, 0]} castShadow receiveShadow>
           <meshStandardMaterial color="#cbd5e1" />
         </Box>
-        {/* Full Dome Roof */}
-        <Sphere args={[Math.min(width, depth)/2, 32, 16, 0, Math.PI * 2, 0, Math.PI / 2]} position={[0, 0, 0]} castShadow>
+        {/* Dome Roof */}
+        <Cylinder args={[width/2, width/2, depth, 32, 1, false, 0, Math.PI]} position={[0, 0, 0]} rotation={[Math.PI / 2, 0, -Math.PI / 2]} castShadow>
           <meshStandardMaterial color="#94a3b8" metalness={0.5} roughness={0.2} />
-        </Sphere>
+        </Cylinder>
       </group>
     );
   } else if (type === 'sports') {
-    if (nameLow.includes('pool')) {
-      return (
-        <group>
-          {/* Deck */}
-          <Box args={[width, 0.2, depth]} position={[0, -height/2 + 0.1, 0]} receiveShadow>
-            <meshStandardMaterial color="#cbd5e1" />
-          </Box>
-          {/* Water */}
-          <Box args={[width * 0.8, 0.15, depth * 0.8]} position={[0, -height/2 + 0.15, 0]} receiveShadow>
-            <meshStandardMaterial color="#0ea5e9" opacity={0.7} transparent metalness={0.8} roughness={0.1} />
-          </Box>
-        </group>
-      );
-    } else if (nameLow.includes('tennis')) {
-      return (
-        <group>
-          {/* Court */}
-          <Box args={[width, 0.1, depth]} position={[0, -height/2 + 0.05, 0]} receiveShadow>
-            <meshStandardMaterial color="#166534" />
-          </Box>
-          {/* Net */}
-          <Box args={[width * 0.8, 0.4, 0.05]} position={[0, -height/2 + 0.25, 0]} castShadow>
-            <meshStandardMaterial color="#f8fafc" opacity={0.8} transparent />
-          </Box>
-        </group>
-      );
-    } else if (nameLow.includes('cricket')) {
-      return (
-        <group>
-          {/* Grass */}
-          <Box args={[width, 0.1, depth]} position={[0, -height/2 + 0.05, 0]} receiveShadow>
-            <meshStandardMaterial color="#22c55e" />
-          </Box>
-          {/* Pitch */}
-          <Box args={[width * 0.2, 0.15, depth * 0.8]} position={[0, -height/2 + 0.08, 0]} receiveShadow>
-            <meshStandardMaterial color="#d4a373" />
-          </Box>
-          {/* Nets */}
-          <Box args={[width * 0.3, 1.5, depth * 0.9]} position={[0, -height/2 + 0.8, 0]}>
-             <meshStandardMaterial color="#94a3b8" wireframe />
-          </Box>
-          {/* Stumps */}
-          {[-0.1, 0, 0.1].map((ox, i) => (
-             <Cylinder key={'s1'+i} args={[0.02, 0.02, 0.4]} position={[ox, -height/2 + 0.2, depth * 0.35]}>
-               <meshStandardMaterial color="#ffffff" />
-             </Cylinder>
-          ))}
-          {[-0.1, 0, 0.1].map((ox, i) => (
-             <Cylinder key={'s2'+i} args={[0.02, 0.02, 0.4]} position={[ox, -height/2 + 0.2, -depth * 0.35]}>
-               <meshStandardMaterial color="#ffffff" />
-             </Cylinder>
-          ))}
-        </group>
-      );
-    } else if (nameLow.includes('hockey')) {
-      return (
-        <group>
-          {/* Turf */}
-          <Box args={[width, 0.1, depth]} position={[0, -height/2 + 0.05, 0]} receiveShadow>
-            <meshStandardMaterial color="#15803d" />
-          </Box>
-          {/* Goals */}
-          <Box args={[width * 0.2, 0.8, 0.2]} position={[0, -height/2 + 0.45, depth/2 - 0.5]}>
-             <meshStandardMaterial color="#ffffff" wireframe />
-          </Box>
-          <Box args={[width * 0.2, 0.8, 0.2]} position={[0, -height/2 + 0.45, -depth/2 + 0.5]}>
-             <meshStandardMaterial color="#ffffff" wireframe />
-          </Box>
-        </group>
-      );
-    } else if (nameLow.includes('indoor')) {
-      return (
-        <group>
-          {/* Closed Stadium */}
-          <Box args={[width, height * 1.2, depth]} position={[0, height * 0.1, 0]} castShadow receiveShadow>
-            <meshStandardMaterial color="#cbd5e1" metalness={0.5} />
-          </Box>
-          {/* Curved Roof */}
-          <Cylinder args={[Math.min(width, depth)/2, Math.min(width, depth)/2, Math.max(width, depth), 32, 1, false, 0, Math.PI]} position={[0, height * 0.7, 0]} rotation={[width > depth ? 0 : Math.PI / 2, 0, Math.PI / 2]} castShadow>
-             <meshStandardMaterial color="#94a3b8" />
-          </Cylinder>
-        </group>
-      );
-    } else {
-      // Sports Ground or default park-like sports area
-      return (
-        <group>
-          <Box args={[width, 0.1, depth]} position={[0, -height/2 + 0.05, 0]} receiveShadow>
-            <meshStandardMaterial color="#22c55e" />
-          </Box>
-          {/* Running Track (Ovalish) */}
-          <Cylinder args={[Math.min(width, depth)*0.4, Math.min(width, depth)*0.4, 0.15, 32]} position={[0, -height/2 + 0.08, 0]}>
-             <meshStandardMaterial color="#b91c1c" />
-          </Cylinder>
-          {/* Inner Grass */}
-          <Cylinder args={[Math.min(width, depth)*0.3, Math.min(width, depth)*0.3, 0.2, 32]} position={[0, -height/2 + 0.1, 0]}>
-             <meshStandardMaterial color="#22c55e" />
-          </Cylinder>
-        </group>
-      );
-    }
+    return (
+      <group>
+        {/* Stadium seating / field */}
+        <Box args={[width, 0.2, depth]} position={[0, -height/2 + 0.1, 0]} receiveShadow>
+          <meshStandardMaterial color="#22c55e" /> {/* Grass field */}
+        </Box>
+        {/* Stadium walls */}
+        <Box args={[width, height * 0.4, 0.5]} position={[0, -height * 0.3, -depth/2 + 0.25]} castShadow>
+          <meshStandardMaterial color="#64748b" />
+        </Box>
+        <Box args={[width, height * 0.4, 0.5]} position={[0, -height * 0.3, depth/2 - 0.25]} castShadow>
+          <meshStandardMaterial color="#64748b" />
+        </Box>
+        <Box args={[0.5, height * 0.4, depth]} position={[-width/2 + 0.25, -height * 0.3, 0]} castShadow>
+          <meshStandardMaterial color="#64748b" />
+        </Box>
+        <Box args={[0.5, height * 0.4, depth]} position={[width/2 - 0.25, -height * 0.3, 0]} castShadow>
+          <meshStandardMaterial color="#64748b" />
+        </Box>
+      </group>
+    );
   } else if (type === 'park') {
     return (
       <group>
         <Box args={[width, 0.2, depth]} position={[0, -height/2 + 0.1, 0]} receiveShadow>
           <meshStandardMaterial color="#22c55e" />
         </Box>
-        {/* Many trees for Eco Park */}
-        {parkTrees.map(({tx, tz}, i) => {
-          return (
-            <group key={i} position={[tx, -height/2 + 0.5, tz]}>
-              <Cylinder args={[0.1, 0.1, 0.8]} position={[0, -0.1, 0]} castShadow>
-                 <meshStandardMaterial color="#78350f" />
-              </Cylinder>
-              <Cylinder args={[0.4, 0.6, 1.2]} position={[0, 0.8, 0]} castShadow>
-                 <meshStandardMaterial color="#15803d" />
-              </Cylinder>
-            </group>
-          );
-        })}
-        {/* Butterflies */}
-        <Butterflies />
+        {/* Few trees */}
+        {[[-width/4, -depth/4], [width/4, depth/4], [-width/3, depth/3]].map((pos, i) => (
+          <group key={i} position={[pos[0], -height/2 + 0.5, pos[1]]}>
+            <Cylinder args={[0.1, 0.1, 0.8]} position={[0, -0.1, 0]} castShadow>
+               <meshStandardMaterial color="#78350f" />
+            </Cylinder>
+            <Cylinder args={[0.4, 0.6, 0.8]} position={[0, 0.6, 0]} castShadow>
+               <meshStandardMaterial color="#15803d" />
+            </Cylinder>
+          </group>
+        ))}
       </group>
     );
   } else if (type === 'food') {
@@ -954,138 +785,7 @@ export const DetailedRobot = ({ isMoving, showFeatures = false, activeFeature = 
   );
 };
 
-const CrowdGroup = React.memo(({ 
-  location, gridSize, isMapView, policeState, policePath, policePosIndex 
-}: { 
-  location: GridPoint | null, gridSize: GridPoint, isMapView: boolean,
-  policeState: string, policePath: GridPoint[], policePosIndex: number 
-}) => {
-  const groupRef = useRef<THREE.Group>(null);
-  
-  // Create ~15 simple capsule meshes clustered
-  const people = useMemo(() => {
-    return Array.from({ length: 15 }).map((_, i) => {
-      const offsetX = (Math.random() - 0.5) * 1.5;
-      const offsetZ = (Math.random() - 0.5) * 1.5;
-      return { x: offsetX, z: offsetZ };
-    });
-  }, [location?.x, location?.y]);
-
-  useFrame((state, delta) => {
-    if (!groupRef.current || !location) return;
-    if (policeState === 'departing' && policePath.length > 0 && policePosIndex < policePath.length) {
-      // Follow the police car but lag slightly behind
-      const targetPoint = policePath[Math.max(0, policePosIndex - 1)]; 
-      const [tx, ty, tz] = getGridPosition(targetPoint, gridSize, 0, isMapView);
-      const targetPos = new THREE.Vector3(tx, ty, tz);
-      groupRef.current.position.lerp(targetPos, delta * 3);
-    } else if (policeState === 'idle' || policeState === 'en_route') {
-      const [cx, cy, cz] = getGridPosition(location, gridSize, 0, isMapView);
-      groupRef.current.position.lerp(new THREE.Vector3(cx, cy, cz), delta * 5);
-    }
-  });
-
-  if (!location) return null;
-
-  return (
-    <group ref={groupRef}>
-      {people.map((p, i) => (
-        <group key={i} position={[p.x, 0, p.z]}>
-           <mesh position={[0, 0.4, 0]}>
-             <capsuleGeometry args={[0.15, 0.5, 4, 8]} />
-             <meshStandardMaterial color="#f97316" roughness={0.7} />
-           </mesh>
-           <mesh position={[0, 0.85, 0]}>
-             <sphereGeometry args={[0.2, 8, 8]} />
-             <meshStandardMaterial color="#fcd34d" />
-           </mesh>
-        </group>
-      ))}
-    </group>
-  );
-});
-
-const PoliceCar = React.memo(({
-  path, currentIndex, isMapView, gridSize, policeState, onReachNode, onMissionComplete
-}: {
-  path: GridPoint[];
-  currentIndex: number;
-  isMapView: boolean;
-  gridSize: GridPoint;
-  policeState: string;
-  onReachNode: (idx: number) => void;
-  onMissionComplete: () => void;
-}) => {
-  const ref = useRef<THREE.Group>(null);
-  const lightsRef = useRef<THREE.Group>(null);
-  const isMovingRef = useRef(false);
-
-  useFrame((state, delta) => {
-    if (!ref.current) return;
-    
-    // Flashing lights
-    if (lightsRef.current && (policeState === 'en_route' || policeState === 'departing' || policeState === 'arrived')) {
-       const time = state.clock.getElapsedTime();
-       const isRed = (time % 0.5) < 0.25;
-       const redLight = lightsRef.current.children[0] as THREE.PointLight;
-       const blueLight = lightsRef.current.children[1] as THREE.PointLight;
-       redLight.intensity = isRed ? 2 : 0;
-       blueLight.intensity = !isRed ? 2 : 0;
-    }
-
-    if (policeState === 'en_route' || policeState === 'departing') {
-      if (currentIndex < path.length) {
-        const targetPoint = path[currentIndex];
-        const [tx, ty, tz] = getGridPosition(targetPoint, gridSize, 0.2, isMapView);
-        const targetPos = new THREE.Vector3(tx, ty, tz);
-        
-        if (!isMovingRef.current) isMovingRef.current = true;
-        
-        ref.current.position.lerp(targetPos, delta * 15);
-        
-        const dir = targetPos.clone().sub(ref.current.position);
-        if (dir.lengthSq() > 0.001) {
-          const targetRot = Math.atan2(dir.x, dir.z);
-          const currentRot = ref.current.rotation.y;
-          let diff = targetRot - currentRot;
-          while (diff < -Math.PI) diff += Math.PI * 2;
-          while (diff > Math.PI) diff -= Math.PI * 2;
-          ref.current.rotation.y += diff * delta * 10;
-        }
-
-        if (ref.current.position.distanceTo(targetPos) < 0.1) {
-          if (currentIndex < path.length - 1) {
-            onReachNode(currentIndex + 1);
-          } else {
-            isMovingRef.current = false;
-            onMissionComplete();
-          }
-        }
-      }
-    }
-  });
-
-  if (policeState === 'idle' || path.length === 0) return null;
-
-  return (
-    <group ref={ref}>
-      <mesh position={[0, 0.4, 0]}>
-        <boxGeometry args={[0.7, 0.5, 1.4]} />
-        <meshStandardMaterial color="#0033aa" />
-      </mesh>
-      <mesh position={[0, 0.7, -0.1]}>
-        <boxGeometry args={[0.6, 0.3, 0.8]} />
-        <meshStandardMaterial color="#ffffff" />
-      </mesh>
-      <group ref={lightsRef} position={[0, 0.9, -0.1]}>
-        <pointLight position={[-0.2, 0, 0]} color="red" distance={5} />
-        <pointLight position={[0.2, 0, 0]} color="blue" distance={5} />
-      </group>
-    </group>
-  );
-});
-
-const Robot = React.memo(({
+const Robot = ({
   path, currentIndex, isPlaying, gridSize, isMapView, speed, dynamicObstaclesRef,
   onReachNode, onMissionComplete, onObstacleDetected, robotPosRef, robotRotRef
 }: {
@@ -1134,21 +834,16 @@ const Robot = React.memo(({
     if (isPlaying) {
       // --- Sensor Logic: Check for dynamic obstacles ahead ---
       if (dynamicObstaclesRef && dynamicObstaclesRef.current.length > 0) {
-        // Look ahead 5 steps to calculate diversion asynchronously before hitting the obstacle
-        const upcomingPath = path.slice(currentIndex, currentIndex + 5);
-        let immediateBlock = false;
+        const upcomingPath = path.slice(currentIndex, currentIndex + 4);
         for (const obs of dynamicObstaclesRef.current) {
           const obsTarget = obs.path[Math.min(obs.currentIndex, obs.path.length - 1)];
           for (const p of upcomingPath) {
             if ((p.x === obs.pos.x && p.y === obs.pos.y) || (p.x === obsTarget.x && p.y === obsTarget.y)) {
               onObstacleDetected(obs.pos);
-              if (currentIndex + 1 < path.length && p.x === path[currentIndex + 1].x && p.y === path[currentIndex + 1].y) {
-                 immediateBlock = true;
-              }
+              return; // Pause movement this frame
             }
           }
         }
-        if (immediateBlock) return; // Only pause if the very next node is blocked
       }
 
       if (dist < 0.05) {
@@ -1189,13 +884,17 @@ const Robot = React.memo(({
   const startPos = getGridPosition(path[0] || { x: 0, y: 0, f: 0 }, gridSize, 0.22, isMapView);
   return (
     <group ref={ref} position={startPos}>
+      {/* Contact shadow */}
+      <mesh position={[0, -0.21, 0]} rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
+        <circleGeometry args={[0.4, 24]} />
+        <meshBasicMaterial color="#000000" transparent opacity={0.25} depthWrite={false} />
+      </mesh>
       <DetailedRobot isMoving={isMoving} />
     </group>
   );
-});
+};
 
-// 3D Line component for path visualization
-const PathLine = React.memo(({ path, currentIndex, gridSize, isMapView, color = "#00ffff", opacity = 0.8 }: { path: GridPoint[], currentIndex: number, gridSize: GridPoint, isMapView: boolean, color?: string, opacity?: number }) => {
+const PathLine = ({ path, currentIndex, gridSize, isMapView, color = "#00ffff", opacity = 0.8 }: { path: GridPoint[], currentIndex: number, gridSize: GridPoint, isMapView: boolean, color?: string, opacity?: number }) => {
   const remainingPath = path.slice(currentIndex);
   if (remainingPath.length < 2) return null;
   const points = remainingPath.map(p => {
@@ -1206,176 +905,33 @@ const PathLine = React.memo(({ path, currentIndex, gridSize, isMapView, color = 
   return (
     <Line points={points} color={color} lineWidth={4} opacity={opacity} transparent />
   );
-});
+};
 
-const EnvironmentMap = React.memo(({ mapData, isTargeting, onMapClick, isNight }: { mapData: MapData, isTargeting?: boolean, onMapClick?: (p: THREE.Vector3) => void | Promise<void>, isNight?: boolean }) => {
+const EnvironmentMap = ({ mapData, isTargeting, onMapClick }: { mapData: MapData, isTargeting?: boolean, onMapClick?: (p: THREE.Vector3) => void }) => {
   const { gridSize } = mapData;
-
-  // 1. Scenic Mountain Ring (Clean, evenly spaced semi-circle)
-  const mountains = React.useMemo(() => {
-    const arr = [];
-    const numMountains = 12; // Far fewer, distinct mountains
-    const radius = 250;
-    // Semi-circle behind the university (from angle -PI/4 to 5PI/4)
-    for (let i = 0; i <= numMountains; i++) {
-      const angle = -Math.PI / 4 + (i / numMountains) * (1.5 * Math.PI);
-      const x = Math.cos(angle) * radius;
-      const z = Math.sin(angle) * radius;
-      // Fixed, clean proportions
-      arr.push({ x, z, height: 60, radius: 40 });
-    }
-    return arr;
-  }, []);
-
-  // 2. Organized City Grid (Right side of the map)
-  const cityBuildings = React.useMemo(() => {
-    const arr = [];
-    const startX = gridSize.x / 2 + 50;
-    const startZ = -gridSize.y / 2 + 20;
-    const rows = 4;
-    const cols = 5;
-    const spacing = 15;
-
-    for (let r = 0; r < rows; r++) {
-      for (let c = 0; c < cols; c++) {
-        const x = startX + c * spacing;
-        const z = startZ + r * spacing;
-        // Clean alternating heights
-        const height = (r + c) % 2 === 0 ? 25 : 15;
-        arr.push({ x, z, width: 8, depth: 8, height });
-      }
-    }
-    return arr;
-  }, [gridSize]);
-
-  // 3. Orchard-Style Tree Placement (Left and Front side)
-  const trees = React.useMemo(() => {
-    const arr = [];
-    // A clean 10x10 grid of trees on the left
-    const startX = -gridSize.x / 2 - 40;
-    const startZ = -40;
-    for (let r = 0; r < 8; r++) {
-      for (let c = 0; c < 8; c++) {
-        arr.push({ x: startX - c * 8, z: startZ + r * 8 });
-      }
-    }
-    
-    // A clean row of trees lining the front road
-    for (let i = 0; i < 15; i++) {
-        arr.push({ x: -60 + i * 8, z: gridSize.y / 2 + 30 });
-    }
-    return arr;
-  }, [gridSize]);
-
   return (
-    <group>
-      {/* Base Interaction Plane (Transparent, original grid) */}
-      <Plane 
-        args={[gridSize.x, gridSize.y]} 
-        rotation={[-Math.PI / 2, 0, 0]} 
-        position={[0, 0, 0]} 
-        receiveShadow
-        onClick={(e) => {
-          if (isTargeting && onMapClick) {
-            e.stopPropagation();
-            onMapClick(e.point);
-          }
-        }}
-        onPointerOver={() => { if (isTargeting) document.body.style.cursor = 'crosshair'; }}
-        onPointerOut={() => { if (isTargeting) document.body.style.cursor = 'auto'; }}
-      >
-        <meshStandardMaterial color="#bbf7d0" opacity={0} transparent />
-      </Plane>
-
-      {/* INFINITE Horizon Plane (Clean Dark Green Base) */}
-      <Plane args={[10000, 10000]} rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.5, 0]} receiveShadow>
-        <meshStandardMaterial color={isNight ? "#062113" : "#3b6b2b"} roughness={1.0} />
-      </Plane>
-
-      {/* Inner University Grass Platform */}
-      <Plane args={[gridSize.x + 30, gridSize.y + 30]} rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.1, 0]} receiveShadow>
-        <meshStandardMaterial color={isNight ? "#143317" : "#5d8f43"} roughness={0.9} />
-      </Plane>
-
-      {/* Clean Straight Roads */}
-      {/* Horizontal Highway (Front) */}
-      <Plane args={[400, 10]} rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.05, gridSize.y / 2 + 15]} receiveShadow>
-         <meshStandardMaterial color={isNight ? "#1f2937" : "#6b7280"} roughness={0.8} />
-      </Plane>
-      {/* Vertical Highway (Right) leading to City */}
-      <Plane args={[10, 400]} rotation={[-Math.PI / 2, 0, 0]} position={[gridSize.x / 2 + 25, -0.05, 0]} receiveShadow>
-         <meshStandardMaterial color={isNight ? "#1f2937" : "#6b7280"} roughness={0.8} />
-      </Plane>
-
-      {/* Smooth River (Flowing from the Waterfall) */}
-      <Plane args={[20, 250]} rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.2, -180]} receiveShadow>
-        <meshStandardMaterial color={isNight ? "#1e3a8a" : "#3b82f6"} roughness={0.1} metalness={0.8} />
-      </Plane>
-
-      {/* Distant Scenic Mountains */}
-      <group>
-        <Instances castShadow receiveShadow>
-          <coneGeometry args={[1, 1, 4]} />
-          <meshStandardMaterial color={isNight ? "#292524" : "#57534e"} roughness={1.0} />
-          {mountains.map((m, i) => (
-             <Instance key={`mountain-base-${i}`} position={[m.x, m.height/2 - 0.5, m.z]} scale={[m.radius, m.height, m.radius]} />
-          ))}
-        </Instances>
-        <Instances>
-          <coneGeometry args={[1, 1, 4]} />
-          <meshStandardMaterial color={isNight ? "#e7e5e4" : "#ffffff"} roughness={0.8} />
-          {mountains.map((m, i) => (
-             <Instance key={`mountain-snow-${i}`} position={[m.x, m.height - (m.height * 0.2) - 0.5, m.z]} scale={[m.radius * 0.45, m.height * 0.45, m.radius * 0.45]} />
-          ))}
-        </Instances>
-        
-        {/* Dedicated Grand Waterfall Mountain (Back Center) */}
-        <group position={[0, -0.5, -300]}>
-            <mesh position={[0, 45, 0]} castShadow receiveShadow>
-                <coneGeometry args={[50, 90, 4]} />
-                <meshStandardMaterial color={isNight ? "#292524" : "#57534e"} roughness={1.0} />
-            </mesh>
-            <mesh position={[0, 72, 0]}>
-                <coneGeometry args={[22, 36, 4]} />
-                <meshStandardMaterial color={isNight ? "#e7e5e4" : "#ffffff"} roughness={0.8} />
-            </mesh>
-            {/* Simplified Waterfall structure (a clean box instead of an angled plane to avoid math complexity) */}
-            <mesh position={[0, 40, 20]} castShadow>
-                <boxGeometry args={[8, 80, 2]} />
-                <meshStandardMaterial color={isNight ? "#60a5fa" : "#7dd3fc"} roughness={0.2} metalness={0.6} emissive={isNight ? "#1d4ed8" : "#38bdf8"} emissiveIntensity={0.5} />
-            </mesh>
-        </group>
-      </group>
-
-      {/* Clean Organized City */}
-      <Instances castShadow receiveShadow>
-        <boxGeometry args={[1, 1, 1]} />
-        <meshStandardMaterial color={isNight ? "#374151" : "#e5e7eb"} roughness={0.6} />
-        {cityBuildings.map((b, i) => (
-           <Instance key={`city-${i}`} position={[b.x, b.height/2 - 0.5, b.z]} scale={[b.width, b.height, b.depth]} />
-        ))}
-      </Instances>
-
-      {/* Orchard-Style Structured Trees */}
-      <group>
-        <Instances castShadow receiveShadow>
-          <cylinderGeometry args={[0.2, 0.2, 0.8]} />
-          <meshStandardMaterial color="#5c3619" />
-          {trees.map((t, i) => (
-             <Instance key={`tree-trunk-${i}`} position={[t.x, 0.4, t.z]} />
-          ))}
-        </Instances>
-        <Instances castShadow receiveShadow>
-          <coneGeometry args={[1.2, 3]} />
-          <meshStandardMaterial color={isNight ? "#064e3b" : "#22c55e"} roughness={0.9} />
-          {trees.map((t, i) => (
-             <Instance key={`tree-leaves-${i}`} position={[t.x, 1.8, t.z]} />
-          ))}
-        </Instances>
-      </group>
-    </group>
+    <Plane 
+      args={[gridSize.x, gridSize.y]} 
+      rotation={[-Math.PI / 2, 0, 0]} 
+      position={[0, 0, 0]} 
+      receiveShadow
+      onClick={(e) => {
+        if (isTargeting && onMapClick) {
+          e.stopPropagation();
+          onMapClick(e.point);
+        }
+      }}
+      onPointerOver={() => {
+        if (isTargeting) document.body.style.cursor = 'crosshair';
+      }}
+      onPointerOut={() => {
+        if (isTargeting) document.body.style.cursor = 'auto';
+      }}
+    >
+      <meshStandardMaterial color="#bbf7d0" />
+    </Plane>
   );
-});
+};
 
 interface SimulationViewProps {
   mapData: MapData | null;
@@ -1396,7 +952,6 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
   const [currentPosIndex, setCurrentPosIndex] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
   const [isMapView, setIsMapView] = useState(false);
-  const [isNight, setIsNight] = useState(false);
 
   const [isFollowing, setIsFollowing] = useState(false);
   const [triggerReset, setTriggerReset] = useState(false);
@@ -1405,127 +960,46 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
   
   const [aiExplanations, setAiExplanations] = useState<string[]>([]);
   const [selectedRoom, setSelectedRoom] = useState<Room | null>(null);
-
-  const handleRoomClick = async (room: Room) => {
-    setSelectedRoom(room);
-    if (!mapData) return;
-    if (robotState === 'idle' || robotState === 'patrol') {
-      const target = room.door || room.start;
-      addExplanation(`User selected ${room.name}. Navigating immediately.`);
-      const currentLoc = path.length > 0 ? path[Math.min(currentPosIndex, path.length - 1)] : mapData.start;
-      const newPath = await calculatePathAsync(currentLoc, target, [...(mapData.obstacles || []), ...userBlockers], mapData);
-      
-      if (newPath.length > 0) {
-        setPath(newPath);
-        setCurrentPosIndex(0);
-        setRobotState('mission');
-        setIsPlaying(true);
-        setIsIdleMode(false);
-      } else {
-        addExplanation(`Cannot find path to ${room.name}.`);
-      }
-    }
-  };
   const [isEmergencyTargeting, setIsEmergencyTargeting] = useState(false);
-  const [isCrowdTargeting, setIsCrowdTargeting] = useState(false);
-  const [crowdLocation, setCrowdLocation] = useState<GridPoint | null>(null);
-  
-  // Police State
-  const [policeState, setPoliceState] = useState<'idle' | 'en_route' | 'arrived' | 'departing'>('idle');
-  const [policePath, setPolicePath] = useState<GridPoint[]>([]);
-  const [policePosIndex, setPolicePosIndex] = useState(0);
-  const [isRobotWaitingForPolice, setIsRobotWaitingForPolice] = useState(false);
-  const [isPoliceAlertActive, setIsPoliceAlertActive] = useState(false);
   const [isPlacingBlocker, setIsPlacingBlocker] = useState(false);
   const [isIdleMode, setIsIdleMode] = useState(false);
-  const [savedMission, setSavedMission] = useState<{remainingPath: GridPoint[], state: any} | null>(null);
   const [userBlockers, setUserBlockers] = useState<GridPoint[]>([]);
 
-  // Recalculate path dynamically if obstacles are added while moving, or auto-resume if barriers are cleared
+  // Recalculate path dynamically if obstacles are added while moving
   useEffect(() => {
-    (async () => {
-    const allObstacles = [...(mapData?.obstacles || []), ...userBlockers];
-    
-    // 1. Auto-Resume Logic (if waiting due to barriers)
-    if (isIdleMode && savedMission && savedMission.remainingPath && mapData) {
-      const currentLoc = path.length > 0 ? path[Math.min(currentPosIndex, path.length - 1)] : mapData.start;
-      
-      // Extract key waypoints from the remaining path to preserve stops (e.g. at an emergency site)
-      const waypoints = savedMission.remainingPath.filter((p, i) => i > 0 && p.x === savedMission.remainingPath[i-1].x && p.y === savedMission.remainingPath[i-1].y && p.f === savedMission.remainingPath[i-1].f);
-      if (savedMission.remainingPath.length > 0) waypoints.push(savedMission.remainingPath[savedMission.remainingPath.length - 1]);
-      
-      let canResume = true;
-      let fullResumePath: GridPoint[] = [];
-      let startLoc = currentLoc;
-      
-      for (const wp of waypoints) {
-         const segment = await calculatePathAsync(startLoc, wp, allObstacles, mapData);
-         if (segment.length === 0) { canResume = false; break; }
-         fullResumePath = [...fullResumePath, ...segment.slice(fullResumePath.length > 0 ? 1 : 0), wp]; // Append segment and add the pause explicitly
-         startLoc = wp;
-      }
-      
-      if (canResume && fullResumePath.length > 0) {
-        setPath(fullResumePath);
-        setCurrentPosIndex(0);
-        setRobotState(savedMission.state);
-        setIsPlaying(true);
-        setIsIdleMode(false);
-        setSavedMission(null);
-        addExplanation(`Path cleared! Automatically resuming mission to destination.`);
-        return; // Skip blockage checks this frame
-      }
-    }
-
-    // 2. Dynamic Rerouting & Auto-Parking Logic
     if (isPlaying && path.length > 0 && currentPosIndex < path.length && mapData) {
        const currentLoc = path[currentPosIndex];
        const targetLoc = path[path.length - 1];
-       // Check if current path is strictly blocked
+       const allObstacles = [...(mapData.obstacles || []), ...userBlockers];
+       // Check if current path is blocked
        const isBlocked = path.slice(currentPosIndex).some(p => 
           userBlockers.some(b => b.x === p.x && b.y === p.y && b.f === p.f)
        );
-       
        if (isBlocked) {
-         const newPath = await calculatePathAsync(currentLoc, targetLoc, allObstacles, mapData);
+         const newPath = calculatePath(currentLoc, targetLoc, allObstacles, mapData);
          if (newPath.length > 0) {
            setPath(newPath);
            setCurrentPosIndex(0);
            addExplanation("Road blocked! Rerouting to destination...");
          } else {
-           // Completely blocked! Save mission and park at nearest accessible room
-           let nearestRoom: Room | null = null;
-           let nearestPath: GridPoint[] = [];
-           let minDist = Infinity;
-           
-           if (mapData.rooms) {
-              for (const r of mapData.rooms) {
-                  const p = await calculatePathAsync(currentLoc, r.door || r.start, allObstacles, mapData);
-                  if (p.length > 0 && p.length < minDist) {
-                      minDist = p.length;
-                      nearestRoom = r;
-                      nearestPath = p;
-                  }
-              }
-            }
-           
-           if (nearestRoom && nearestPath.length > 0) {
-               setSavedMission({ remainingPath: path.slice(currentPosIndex), state: robotState });
-               setPath(nearestPath);
+           const homeRoom = mapData.rooms?.find(r => r.name.toLowerCase().includes('generator')) || mapData.rooms?.[0];
+           let homePath: GridPoint[] = [];
+           if (homeRoom) {
+               homePath = calculatePath(currentLoc, homeRoom.door || homeRoom.start, allObstacles, mapData);
+           }
+           if (homePath.length > 0) {
+               setPath(homePath);
                setCurrentPosIndex(0);
-               setRobotState('idle');
-               setIsIdleMode(true);
-               addExplanation(`Road completely blocked! Parking safely at ${nearestRoom.name} and waiting for clear path.`);
+               setRobotState('returning_home');
+               addExplanation("Road to destination is completely blocked! Returning to base.");
            } else {
                setIsPlaying(false);
                setRobotState('idle');
-               setIsIdleMode(true);
-               addExplanation("Road completely blocked and no safe parking available! Halting.");
+               addExplanation("Road completely blocked and cannot reach base! Halting.");
            }
          }
        }
     }
-    })();
   }, [userBlockers]);
   
   const [dynamicObstacles, setDynamicObstacles] = useState<DynamicObstacle[]>([]);
@@ -1537,7 +1011,7 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
   const [isOn, setIsOn] = useState(false);
   const batteryRef = useRef(100);
   const robotStateRef = useRef<RobotState>('idle');
-  const originalMissionRef = useRef<{path: GridPoint[], index: number, state?: RobotState} | null>(null);
+  const originalMissionRef = useRef<{path: GridPoint[], index: number} | null>(null);
   const robotPosRef = useRef<THREE.Vector3 | null>(null);
   const robotRotRef = useRef<number>(0);
   const controlsRef = useRef<any>(null);
@@ -1569,7 +1043,6 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
   }, [robotState]);
 
   const isOnRef = useRef(isOn);
-  const justPoweredOnRef = useRef(false);
   useEffect(() => { isOnRef.current = isOn; }, [isOn]);
   
   const togglePowerRef = useRef<any>(null);
@@ -1604,7 +1077,7 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
     });
   };
 
-  const togglePower = async () => {
+  const togglePower = () => {
     if (isOn) {
       setIsOn(false);
       addExplanation("Powering OFF. Returning to Robot Home for standby and charging...");
@@ -1612,7 +1085,7 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
       const homeRoom = mapData?.rooms?.find(r => r.name.toLowerCase().includes('generator')) || mapData?.rooms?.[0];
       if (homeRoom && mapData) {
         const currentLoc = path.length > 0 && currentPosIndex < path.length ? path[currentPosIndex] : mapData.start;
-        const homePath = await calculatePathAsync(currentLoc, homeRoom.door || homeRoom.start, [...(mapData.obstacles || []), ...userBlockers], mapData);
+        const homePath = calculatePath(currentLoc, homeRoom.door || homeRoom.start, [...(mapData.obstacles || []), ...userBlockers], mapData);
         if (homePath.length > 0) {
            setPath(homePath);
            setCurrentPosIndex(0);
@@ -1625,7 +1098,6 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
       }
     } else {
       setIsOn(true);
-      justPoweredOnRef.current = true;
       setRobotState('patrol'); // Initialize directly into patrol mode
       setBattery(100);
       addExplanation("Powering ON. System initialized. Beginning patrol.");
@@ -1728,67 +1200,44 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
   }, [isPlaying, mapData]);
 
   const prevIsIdleMode = useRef(isIdleMode);
-  const hasAutoStartedRef = useRef(false);
 
-  // Auto-Start Patrol Logic
+  // Auto-Patrol Logic
   useEffect(() => {
-    if (mapData && !hasAutoStartedRef.current) {
-      hasAutoStartedRef.current = true;
-      setIsOn(true);
-      const startInitialPatrol = async () => {
-        addExplanation('System online. Initiating default autonomous patrol.');
-        const currentLoc = mapData.start;
-        const randomRoom = mapData.rooms[Math.floor(Math.random() * mapData.rooms.length)];
-        const patrolPath = await calculatePathAsync(currentLoc, randomRoom.door || randomRoom.start, [...(mapData.obstacles || [])], mapData);
-        if (patrolPath.length > 0) {
-          setPath(patrolPath);
-          setCurrentPosIndex(0);
-          setRobotState('patrol');
-          setIsPlaying(true);
-        }
-      };
-      setTimeout(() => startInitialPatrol(), 1500); 
-    }
-  }, [mapData]);
-
-  // Auto-Patrol Logic (Manual Wake-up)
-  useEffect(() => {
-    if (!isIdleMode && prevIsIdleMode.current && (robotState === 'idle' || robotState === 'patrol') && !isPlaying && isOn) {
-      // Waking up from manual idle mode
-      const startPatrol = async () => {
+    let timeout: any;
+    if (!isIdleMode && (robotState === 'idle' || robotState === 'patrol') && !isPlaying && isOn) {
+      const waitTime = (prevIsIdleMode.current && !isIdleMode) ? 0 : 2500;
+      timeout = setTimeout(() => {
         if (!mapData || !mapData.rooms) return;
-        addExplanation('Idle mode disabled. Initiating autonomous patrol mode.');
+        addExplanation(waitTime === 0 ? 'Idle mode disabled. Resuming patrol immediately.' : 'Idle detected. Initiating autonomous patrol mode.');
         const currentLoc = path.length > 0 ? path[currentPosIndex] : mapData.start;
         const randomRoom = mapData.rooms[Math.floor(Math.random() * mapData.rooms.length)];
-        const patrolPath = await calculatePathAsync(currentLoc, randomRoom.door || randomRoom.start, [...(mapData.obstacles || []), ...userBlockers], mapData);
+        const patrolPath = calculatePath(currentLoc, randomRoom.door || randomRoom.start, [...(mapData.obstacles || []), ...userBlockers], mapData);
         if (patrolPath.length > 0) {
           setPath(patrolPath);
           setCurrentPosIndex(0);
           setRobotState('patrol');
           setIsPlaying(true);
-        } else {
-          addExplanation('Failed to calculate patrol path. Staying idle.');
         }
-      };
-      startPatrol();
+      }, waitTime);
     }
     prevIsIdleMode.current = isIdleMode;
-  }, [isIdleMode]);
+    return () => clearTimeout(timeout);
+  }, [robotState, isPlaying, path, currentPosIndex, mapData, isOn, isIdleMode]);
 
-  const initializeDynamicObstacles = async (robotPath?: GridPoint[]) => {
+  const initializeDynamicObstacles = (robotPath?: GridPoint[]) => {
     if (!mapData || !mapData.roads || mapData.roads.length < 5) return;
     const roads = mapData.roads;
     const obs: DynamicObstacle[] = [];
     
-    // Spawn 20 people and cars walking/driving around
-    for (let i = 0; i < 20; i++) {
+    // Spawn 15 people and 7 cars walking/driving around
+    for (let i = 0; i < 22; i++) {
       const start = roads[Math.floor(Math.random() * roads.length)];
       const end = roads[Math.floor(Math.random() * roads.length)];
-      const path = await calculatePathAsync(start, end, [...(mapData.obstacles || []), ...userBlockers], mapData, true);
+      const path = calculatePath(start, end, [...(mapData.obstacles || []), ...userBlockers], mapData, true);
       if (path.length > 0) {
         obs.push({
           id: `obs_${i}`,
-          type: Math.random() > 0.5 ? 'car' : 'person',
+          type: i < 7 ? 'car' : 'person',
           pos: path[0],
           targetPos: end,
           path,
@@ -1825,13 +1274,13 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
     setAiExplanations(prev => [msg, ...prev].slice(0, 5));
   };
 
-  const resumeMissionTo = async (currentLoc: GridPoint, targetLoc: GridPoint) => {
+  const resumeMissionTo = (currentLoc: GridPoint, targetLoc: GridPoint) => {
     if (!mapData) return;
     const allObstacles = [...(mapData.obstacles || []), ...userBlockers];
     
-    let nextPath = await calculatePathAsync(currentLoc, targetLoc, allObstacles, mapData);
+    let nextPath = calculatePath(currentLoc, targetLoc, allObstacles, mapData);
     if (nextPath.length === 0) {
-      nextPath = await calculateLongPathAsync(currentLoc, targetLoc, allObstacles, mapData);
+      nextPath = calculateLongPath(currentLoc, targetLoc, allObstacles, mapData);
       if (nextPath.length > 0) {
         addExplanation(`Taking a detour to reach target.`);
       }
@@ -1841,12 +1290,7 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
       setPath(nextPath);
       setActivePathColor('#00ffff');
       setCurrentPosIndex(0);
-      setRobotState(prev => {
-        if (prev === 'evading_obstacle' && originalMissionRef.current?.state) {
-          return originalMissionRef.current.state;
-        }
-        return prev === 'mission' ? 'mission' : 'patrol';
-      });
+      setRobotState(prev => prev === 'mission' ? 'mission' : 'patrol');
       setIsPlaying(true);
     } else {
       setRobotState('idle');
@@ -1957,7 +1401,7 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
     window.dispatchEvent(new CustomEvent('local_ctr_messages_update', { detail: ctrMessages }));
   }, [ctrMessages]);
 
-  const resetSimulation = async () => {
+  const resetSimulation = () => {
     if (!mapData) return;
     // Preserve current location if robot is active
     const currentLoc = (path.length > 0 && currentPosIndex < path.length) ? path[currentPosIndex] : mapData.start;
@@ -1984,8 +1428,8 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
     
     if (isEmergencySideTask) {
       const emergencyLoc = path.length > 0 ? path[path.length - 1] : mapData.start;
-      const fPath = await calculatePathAsync(currentLoc, target, [...(mapData.obstacles || []), ...userBlockers], mapData);
-      const rPath = await calculatePathAsync(target, emergencyLoc, [...(mapData.obstacles || []), ...userBlockers], mapData);
+      const fPath = calculatePath(currentLoc, target, [...(mapData.obstacles || []), ...userBlockers], mapData);
+      const rPath = calculatePath(target, emergencyLoc, [...(mapData.obstacles || []), ...userBlockers], mapData);
       if (fPath.length > 0 && rPath.length > 0) {
         initialPath = [...fPath, fPath[fPath.length - 1], ...rPath.slice(1)];
       } else {
@@ -1993,9 +1437,9 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
       }
       setActivePathColor('#00ffff');
     } else {
-      const fPath = await calculatePathAsync(currentLoc, target, [...(mapData.obstacles || []), ...userBlockers], mapData);
-      let sPath = await calculateLongPathAsync(currentLoc, target, [...(mapData.obstacles || []), ...userBlockers], mapData);
-      if (sPath.length === 0) sPath = await calculatePathAsync(currentLoc, target, [...(mapData.obstacles || []), ...userBlockers], mapData);
+      const fPath = calculatePath(currentLoc, target, [...(mapData.obstacles || []), ...userBlockers], mapData);
+      let sPath = calculateLongPath(currentLoc, target, [...(mapData.obstacles || []), ...userBlockers], mapData);
+      if (sPath.length === 0) sPath = calculatePath(currentLoc, target, [...(mapData.obstacles || []), ...userBlockers], mapData);
       
       if (selectedStrategyId === 'fastest') {
         initialPath = fPath;
@@ -2047,9 +1491,9 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
     originalMissionRef.current = { path: [...path], index: currentPosIndex };
     const generatorRoom = mapData.rooms.find(r => r.name.toLowerCase().includes('generator')) || mapData.rooms[0];
     
-    setTimeout(async () => {
-          const currentLoc = path[currentPosIndex] || mapData.start;
-      const chargePath = await calculatePathAsync(currentLoc, generatorRoom.door || generatorRoom.start, [...(mapData.obstacles || []), ...userBlockers], mapData);
+    setTimeout(() => {
+      const currentLoc = path[currentPosIndex] || mapData.start;
+      const chargePath = calculatePath(currentLoc, generatorRoom.door || generatorRoom.start, [...(mapData.obstacles || []), ...userBlockers], mapData);
       setPath(chargePath);
       setCurrentPosIndex(0);
       setRobotState('returning_home');
@@ -2059,7 +1503,7 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
     }, 1500);
   };
 
-  const handleChargeComplete = async () => {
+  const handleChargeComplete = () => {
     if (!mapData) return;
     
     if (robotStateRef.current === 'off' || !isOn) {
@@ -2070,8 +1514,8 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
     addExplanation(`Charge complete! Resuming operations.`);
     const orig = originalMissionRef.current;
     
-    setTimeout(async () => {
-          const currentLoc = path[path.length - 1] || mapData.start;
+    setTimeout(() => {
+      const currentLoc = path[path.length - 1] || mapData.start;
       if (orig && orig.path.length > 0) {
         const finalTarget = orig.path[orig.path.length - 1];
         resumeMissionTo(currentLoc, finalTarget);
@@ -2082,7 +1526,7 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
     }, 1500);
   };
 
-  const handleEmergencyCall = async (targetPos: GridPoint) => {
+  const handleEmergencyCall = (targetPos: GridPoint) => {
     if (!isOn) {
       addExplanation("Emergency override! Powering ON to respond to critical emergency.");
       setIsOn(true);
@@ -2103,11 +1547,11 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
     }
     
     const currentLoc = path[currentPosIndex] || mapData.start;
-    const emergencyPath = await calculatePathAsync(currentLoc, targetPos, [...(mapData.obstacles || []), ...userBlockers], mapData);
+    const emergencyPath = calculatePath(currentLoc, targetPos, [...(mapData.obstacles || []), ...userBlockers], mapData);
     
     if (emergencyPath.length > 0) {
       setPath(emergencyPath);
-      setActivePathColor('#ef4444');
+      setActivePathColor('#00ffff');
       setCurrentPosIndex(0);
       setRobotState('emergency_response');
       setIsPlaying(true);
@@ -2118,54 +1562,25 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
     isRecalculating.current = false;
   };
 
-  const handleCrowdEmergency = async (targetPos: GridPoint) => {
-    if (!isOn) {
-      addExplanation("Crowd detected! Powering ON to respond to critical emergency.");
-      setIsOn(true);
-      justPoweredOnRef.current = true;
-      turnOffAfterEmergencyRef.current = true;
-    } else {
-      turnOffAfterEmergencyRef.current = false;
-    }
-    
+  const handleEmergencyComplete = () => {
     if (!mapData) return;
-    
-    addExplanation(`CROWD CONTROL MODE: Diverting immediately to (${targetPos.x}, ${targetPos.y})!`);
-    setIsPlaying(false);
-    isRecalculating.current = true;
-    
-    if (!originalMissionRef.current && path.length > 0 && robotState !== 'idle') {
-      originalMissionRef.current = { path: [...path], index: currentPosIndex };
-    }
-    
-    const currentLoc = (path.length > 0 && currentPosIndex < path.length) ? path[currentPosIndex] : mapData.start;
-    const emergencyPath = await calculatePathAsync(currentLoc, targetPos, [...(mapData.obstacles || []), ...userBlockers], mapData);
-    
-    if (emergencyPath.length > 0) {
-      setPath(emergencyPath);
-      setActivePathColor('#a855f7'); // Purple path for crowd control
-      setCurrentPosIndex(0);
-      setRobotState('crowd_response');
-      setIsPlaying(true);
-    } else {
-      addExplanation(`Crowd control route calculation failed. Unable to reach target.`);
-      setIsPlaying(true);
-    }
-    isRecalculating.current = false;
-  };
-
-  const handleEmergencyComplete = async () => {
-    if (!mapData) return;
-    addExplanation(`Arrived at emergency location. Providing assistance for 2.5 seconds...`);
+    addExplanation(`Arrived at emergency location. Providing assistance for 5 seconds...`);
     setIsPlaying(false);
     
     if (emergencyTimeoutRef.current) {
       clearTimeout(emergencyTimeoutRef.current);
     }
     
-    emergencyTimeoutRef.current = setTimeout(async () => {
+    emergencyTimeoutRef.current = setTimeout(() => {
+      // Dispatch local request to trigger the global confirmation modal for completion
+      window.dispatchEvent(new CustomEvent('local_emergency_request', { detail: {x: 0, y: 0} }));
       emergencyTimeoutRef.current = null;
-      
+    }, 5000);
+  };
+
+  useEffect(() => {
+    const handleRemoteApprove = () => {
+      if (!mapData) return;
       if (turnOffAfterEmergencyRef.current) {
          addExplanation("Emergency override complete. Returning to Robot Home to power off.");
          turnOffAfterEmergencyRef.current = false;
@@ -2174,39 +1589,43 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
          const homeRoom = mapData?.rooms?.find(r => r.name.toLowerCase().includes('generator')) || mapData?.rooms?.[0];
          if (homeRoom) {
            const currentLoc = path[path.length - 1] || mapData.start;
-           const homePath = await calculatePathAsync(currentLoc, homeRoom.door || homeRoom.start, [...(mapData.obstacles || []), ...userBlockers], mapData);
+           const homePath = calculatePath(currentLoc, homeRoom.door || homeRoom.start, [...(mapData.obstacles || []), ...userBlockers], mapData);
            setPath(homePath);
            setCurrentPosIndex(0);
            setRobotState('returning_home');
            setIsPlaying(true);
          }
       } else {
-         const orig = originalMissionRef.current;
-         if (orig && orig.path.length > 0) {
-           addExplanation(`Emergency resolved. Returning to previous mission...`);
-           const target = orig.path[orig.path.length - 1];
-           const currentLoc = path[path.length - 1] || mapData!.start;
-           resumeMissionTo(currentLoc, target);
+         addExplanation(`Emergency resolved. Returning to patrol mode.`);
+         const currentLoc = path[path.length - 1] || mapData.start;
+         const randomRoom = mapData.rooms[Math.floor(Math.random() * mapData.rooms.length)];
+         const patrolPath = calculatePath(currentLoc, randomRoom.door || randomRoom.start, [...(mapData.obstacles || []), ...userBlockers], mapData);
+         if (patrolPath.length > 0) {
+           setPath(patrolPath);
+           setCurrentPosIndex(0);
+           setRobotState('patrol');
+           setIsPlaying(true);
          } else {
-           addExplanation(`Emergency resolved. Returning to patrol mode.`);
-           const currentLoc = path[path.length - 1] || mapData.start;
-           const randomRoom = mapData.rooms[Math.floor(Math.random() * mapData.rooms.length)];
-           const patrolPath = await calculatePathAsync(currentLoc, randomRoom.door || randomRoom.start, [...(mapData.obstacles || []), ...userBlockers], mapData);
-           if (patrolPath.length > 0) {
-             setPath(patrolPath);
-             setCurrentPosIndex(0);
-             setRobotState('patrol');
-             setIsPlaying(true);
-           } else {
-             setRobotState('idle'); 
-           }
+           setRobotState('idle'); 
          }
       }
       originalMissionRef.current = null;
-    }, 2500);
-  };
+    };
 
-  const handleObstacleDetected = async (obsPos: GridPoint) => {
+    const handleRemoteDeny = () => {
+      addExplanation("Holding position at emergency location.");
+    };
+
+    window.addEventListener('remote_emergency_approve', handleRemoteApprove);
+    window.addEventListener('remote_emergency_deny', handleRemoteDeny);
+
+    return () => {
+      window.removeEventListener('remote_emergency_approve', handleRemoteApprove);
+      window.removeEventListener('remote_emergency_deny', handleRemoteDeny);
+    };
+  }, [mapData, isOn, robotState, path, currentPosIndex]);
+
+  const handleObstacleDetected = (obsPos: GridPoint) => {
     if (isRecalculating.current) return;
     isRecalculating.current = true;
     
@@ -2219,12 +1638,8 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
     const currentLoc = path[currentPosIndex];
     const targetLoc = path[path.length - 1];
     
-    // We treat all dynamic obstacles (and their immediate next step) as hard blockages for this local recalculation
-    const allDynamicObs = dynamicObstaclesRef.current.flatMap(o => {
-      const oTarget = o.path[Math.min(o.currentIndex, o.path.length - 1)];
-      return [o.pos, oTarget];
-    });
-    const allObstacles = [...(mapData.obstacles || []), ...userBlockers, ...allDynamicObs, obsPos];
+    // We treat the specific position of the dynamic obstacle as a hard blockage for this local recalculation
+    const allObstacles = [...(mapData.obstacles || []), ...userBlockers, obsPos];
     
     let intermediateTarget = null;
     for (let i = currentPosIndex; i < path.length - 1; i++) {
@@ -2236,24 +1651,24 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
     
     let newPath: GridPoint[] = [];
     if (intermediateTarget) {
-      const fPath = await calculatePathAsync(currentLoc, intermediateTarget, allObstacles, mapData);
-      const rPath = await calculatePathAsync(intermediateTarget, targetLoc, allObstacles, mapData);
+      const fPath = calculatePath(currentLoc, intermediateTarget, allObstacles, mapData);
+      const rPath = calculatePath(intermediateTarget, targetLoc, allObstacles, mapData);
       if (fPath.length > 0 && rPath.length > 0) {
-        newPath = [...fPath, ...rPath.slice(1)];
+        newPath = [...fPath, fPath[fPath.length - 1], ...rPath.slice(1)];
       }
     } else {
-      newPath = await calculatePathAsync(currentLoc, targetLoc, allObstacles, mapData);
+      newPath = calculatePath(currentLoc, targetLoc, allObstacles, mapData);
     }
     
     if (newPath.length === 0) {
       if (intermediateTarget) {
-         const fPath = await calculateLongPathAsync(currentLoc, intermediateTarget, allObstacles, mapData);
-         const rPath = await calculateLongPathAsync(intermediateTarget, targetLoc, allObstacles, mapData);
+         const fPath = calculateLongPath(currentLoc, intermediateTarget, allObstacles, mapData);
+         const rPath = calculateLongPath(intermediateTarget, targetLoc, allObstacles, mapData);
          if (fPath.length > 0 && rPath.length > 0) {
-           newPath = [...fPath, ...rPath.slice(1)];
+           newPath = [...fPath, fPath[fPath.length - 1], ...rPath.slice(1)];
          }
       } else {
-         newPath = await calculateLongPathAsync(currentLoc, targetLoc, allObstacles, mapData);
+         newPath = calculateLongPath(currentLoc, targetLoc, allObstacles, mapData);
       }
     }
     
@@ -2262,7 +1677,7 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
       setCurrentPosIndex(0);
       setIsPlaying(true);
       addExplanation(`Successfully found alternative route avoiding obstacle! Resuming mission.`);
-      setTimeout(() => { isRecalculating.current = false; }, 200); // 200ms cooldown
+      isRecalculating.current = false;
     } else {
       const reverseSteps = Math.min(currentPosIndex, 4);
       if (reverseSteps > 0) {
@@ -2272,7 +1687,7 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
             reversePath.push(path[i]);
         }
         if (robotState !== 'evading_obstacle' && robotState !== 'charging' && robotState !== 'emergency_response') {
-            originalMissionRef.current = { path: [...path], index: currentPosIndex, state: robotState };
+            originalMissionRef.current = { path: [...path], index: currentPosIndex };
         }
         setPath(reversePath);
         setCurrentPosIndex(0);
@@ -2282,7 +1697,7 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
       } else {
         addExplanation(`Blocked at starting position. Waiting for obstacle to clear...`);
         if (robotState !== 'evading_obstacle' && robotState !== 'charging' && robotState !== 'emergency_response') {
-            originalMissionRef.current = { path: [...path], index: currentPosIndex, state: robotState };
+            originalMissionRef.current = { path: [...path], index: currentPosIndex };
         }
         setRobotState('evading_obstacle');
         setIsPlaying(false);
@@ -2295,7 +1710,7 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
   };
 
 
-  const startSimulation = async () => { 
+  const startSimulation = () => { 
     if (mapData && path.length > 0) {
       setRobotState(prev => {
          if (prev === 'emergency_response') return prev;
@@ -2323,84 +1738,11 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
     setCurrentPosIndex(newIndex);
   };
 
-  const handlePoliceReachNode = React.useCallback((idx: number) => {
-    setPolicePosIndex(idx);
-  }, []);
-
-  const handlePoliceMissionComplete = React.useCallback(() => {
-    if (policeState === 'en_route') {
-      setPoliceState('arrived');
-      addExplanation('Police arrived at the scene. Loading crowd...');
-      setTimeout(async () => {
-        if (!mapData || !crowdLocation) return;
-        addExplanation('Crowd secured. Police departing to safety...');
-        const startLoc = mapData.start; // return to map edge
-        const returnPath = await calculatePathAsync(crowdLocation, startLoc, [...(mapData.obstacles || []), ...userBlockers], mapData);
-        if (returnPath.length > 0) {
-          setPolicePath(returnPath);
-          setPolicePosIndex(0);
-          setPoliceState('departing');
-          
-          setCrowdLocation(null);
-          setIsPoliceAlertActive(false);
-          setIsRobotWaitingForPolice(false);
-          const orig = originalMissionRef.current;
-          if (orig && orig.path.length > 0) {
-            const target = orig.path[orig.path.length - 1];
-            const currentLoc = path[path.length - 1] || mapData!.start;
-            resumeMissionTo(currentLoc, target);
-          } else {
-            setRobotState('idle');
-          }
-          originalMissionRef.current = null;
-        } else {
-          setPoliceState('idle');
-          setCrowdLocation(null);
-          setIsPoliceAlertActive(false);
-          setIsRobotWaitingForPolice(false);
-          const orig = originalMissionRef.current;
-          if (orig && orig.path.length > 0) {
-            const target = orig.path[orig.path.length - 1];
-            const currentLoc = path[path.length - 1] || mapData!.start;
-            resumeMissionTo(currentLoc, target);
-          } else {
-            setRobotState('idle');
-          }
-          originalMissionRef.current = null;
-        }
-      }, 3000);
-    } else if (policeState === 'departing') {
-      setPoliceState('idle');
-      addExplanation('Police have safely left the area.');
-    }
-  }, [policeState, mapData, crowdLocation, path, userBlockers]);
-
-  const handleCrowdResponseComplete = async () => {
-    if (!mapData || !crowdLocation) return;
-    addExplanation(`Arrived at crowd location. Securing area and awaiting police vehicle...`);
-    setIsPlaying(false);
-    setIsRobotWaitingForPolice(true);
-    setRobotState('waiting_for_police');
-    
-    const startLoc = mapData.start; 
-    const newPolicePath = await calculatePathAsync(startLoc, crowdLocation, [...(mapData.obstacles || []), ...userBlockers], mapData);
-    if (newPolicePath.length > 0) {
-      setPolicePath(newPolicePath);
-      setPolicePosIndex(0);
-      setPoliceState('en_route');
-      setIsPoliceAlertActive(true);
-    } else {
-      addExplanation(`Police route calculation failed. Cannot reach crowd.`);
-    }
-  };
-
   const handleMissionComplete = () => {
     if (robotState === 'charging') {
       handleChargeComplete();
     } else if (robotState === 'emergency_response') {
       handleEmergencyComplete();
-    } else if (robotState === 'crowd_response') {
-      handleCrowdResponseComplete();
     } else if (robotState === 'returning_home') {
       setIsPlaying(false);
       setRobotState('off');
@@ -2427,9 +1769,9 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
         setIsPlaying(false);
         isRecalculating.current = true;
         
-        setTimeout(async () => {
+        setTimeout(() => {
           const currentLoc = path.length > 0 ? path[path.length - 1] : mapData.start;
-          const nextPath = await calculatePathAsync(currentLoc, nextTask.location, [...(mapData.obstacles || []), ...userBlockers], mapData);
+          const nextPath = calculatePath(currentLoc, nextTask.location, [...(mapData.obstacles || []), ...userBlockers], mapData);
           
           if (nextPath.length > 0) {
             setPath(nextPath);
@@ -2442,176 +1784,14 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
             setRobotState('idle');
           }
           isRecalculating.current = false;
-        }, 2500);
+        }, 800);
       } else {
         setIsPlaying(false);
         setRobotState('idle');
-        addExplanation('Mission complete. Returning to patrol mode.');
-        
-        if (!isIdleMode && isOn) {
-          setTimeout(async () => {
-            if (!mapData || !mapData.rooms) return;
-            addExplanation('Initiating autonomous patrol mode.');
-            const currentLoc = path.length > 0 ? path[path.length - 1] : mapData.start;
-            const randomRoom = mapData.rooms[Math.floor(Math.random() * mapData.rooms.length)];
-            const patrolPath = await calculatePathAsync(currentLoc, randomRoom.door || randomRoom.start, [...(mapData.obstacles || []), ...userBlockers], mapData);
-            if (patrolPath.length > 0) {
-              setPath(patrolPath);
-              setCurrentPosIndex(0);
-              setRobotState('patrol');
-              setIsPlaying(true);
-            } else {
-              addExplanation('Auto-patrol path failed to calculate.');
-            }
-          }, 2500);
-        }
+        addExplanation('Mission complete. Waiting 2.5s before returning to patrol mode.');
       }
     }
   };
-
-  const handleMapClickRef = useRef<((p: THREE.Vector3) => Promise<void>) | ((p: THREE.Vector3) => void)>(async (p: THREE.Vector3) => {
-      const gridP = getGridPointFromVector3(p, mapData!.gridSize);
-    if (isPlacingBlocker) {
-      setUserBlockers(prev => {
-        const roads = mapData?.roads || [];
-        const exists = prev.find(b => b.x === gridP.x && b.y === gridP.y && b.f === gridP.f);
-        
-        let toBlock: GridPoint[] = [gridP];
-        if (roads.some(r => r.x === gridP.x && r.y === gridP.y)) {
-          const hasEW = roads.some(r => r.y === gridP.y && (r.x === gridP.x + 1 || r.x === gridP.x - 1));
-          const hasNS = roads.some(r => r.x === gridP.x && (r.y === gridP.y + 1 || r.y === gridP.y - 1));
-          
-          if (hasEW && !hasNS) {
-            let dy = 1;
-            while (roads.some(r => r.x === gridP.x && r.y === gridP.y + dy)) {
-              toBlock.push({ ...gridP, y: gridP.y + dy });
-              dy++;
-            }
-            dy = -1;
-            while (roads.some(r => r.x === gridP.x && r.y === gridP.y + dy)) {
-              toBlock.push({ ...gridP, y: gridP.y + dy });
-              dy--;
-            }
-          } else if (hasNS && !hasEW) {
-            let dx = 1;
-            while (roads.some(r => r.y === gridP.y && r.x === gridP.x + dx)) {
-              toBlock.push({ ...gridP, x: gridP.x + dx });
-              dx++;
-            }
-            dx = -1;
-            while (roads.some(r => r.y === gridP.y && r.x === gridP.x + dx)) {
-              toBlock.push({ ...gridP, x: gridP.x + dx });
-              dx--;
-            }
-          }
-        }
-
-        if (exists) {
-          return prev.filter(b => !toBlock.some(cs => cs.x === b.x && cs.y === b.y && cs.f === b.f));
-        } else {
-          const newBlockers = [...prev];
-          toBlock.forEach(cs => {
-             if (!newBlockers.some(b => b.x === cs.x && b.y === cs.y && b.f === cs.f)) {
-                newBlockers.push(cs);
-             }
-          });
-          return newBlockers;
-        }
-      });
-      return;
-    }
-    
-    if (isCrowdTargeting) {
-      setCrowdLocation(gridP);
-      setIsCrowdTargeting(false);
-      handleCrowdEmergency(gridP);
-      return;
-    }
-
-    if (isEmergencyTargeting) {
-      setIsEmergencyTargeting(false);
-      document.body.style.cursor = 'auto';
-      handleEmergencyCall(gridP);
-    }
-  });
-  
-  const handleReachNodeRef = useRef(handleReachNode);
-  const handleMissionCompleteRef = useRef(handleMissionComplete);
-  const handleObstacleDetectedRef = useRef(handleObstacleDetected);
-
-  useEffect(() => {
-    handleReachNodeRef.current = handleReachNode;
-    handleMissionCompleteRef.current = handleMissionComplete;
-    handleObstacleDetectedRef.current = handleObstacleDetected;
-    handleMapClickRef.current = (p: THREE.Vector3) => {
-      const gridP = getGridPointFromVector3(p, mapData!.gridSize);
-      if (isPlacingBlocker) {
-        setUserBlockers(prev => {
-          const roads = mapData?.roads || [];
-          const exists = prev.find(b => b.x === gridP.x && b.y === gridP.y && b.f === gridP.f);
-          
-          let toBlock: GridPoint[] = [gridP];
-          if (roads.some(r => r.x === gridP.x && r.y === gridP.y)) {
-            const hasEW = roads.some(r => r.y === gridP.y && (r.x === gridP.x + 1 || r.x === gridP.x - 1));
-            const hasNS = roads.some(r => r.x === gridP.x && (r.y === gridP.y + 1 || r.y === gridP.y - 1));
-            
-            if (hasEW && !hasNS) {
-              let dy = 1;
-              while (roads.some(r => r.x === gridP.x && r.y === gridP.y + dy)) {
-                toBlock.push({ ...gridP, y: gridP.y + dy });
-                dy++;
-              }
-              dy = -1;
-              while (roads.some(r => r.x === gridP.x && r.y === gridP.y + dy)) {
-                toBlock.push({ ...gridP, y: gridP.y + dy });
-                dy--;
-              }
-            } else if (hasNS && !hasEW) {
-              let dx = 1;
-              while (roads.some(r => r.y === gridP.y && r.x === gridP.x + dx)) {
-                toBlock.push({ ...gridP, x: gridP.x + dx });
-                dx++;
-              }
-              dx = -1;
-              while (roads.some(r => r.y === gridP.y && r.x === gridP.x + dx)) {
-                toBlock.push({ ...gridP, x: gridP.x + dx });
-                dx--;
-              }
-            }
-          }
-  
-          if (exists) {
-            return prev.filter(b => !toBlock.some(cs => cs.x === b.x && cs.y === b.y && cs.f === b.f));
-          } else {
-            const newBlockers = [...prev];
-            toBlock.forEach(cs => {
-               if (!newBlockers.some(b => b.x === cs.x && b.y === cs.y && b.f === cs.f)) {
-                  newBlockers.push(cs);
-               }
-            });
-            return newBlockers;
-          }
-        });
-        return;
-      }
-      
-      if (isCrowdTargeting) {
-        setCrowdLocation(gridP);
-        setIsCrowdTargeting(false);
-        handleCrowdEmergency(gridP);
-        return;
-      }
-
-      setIsEmergencyTargeting(false);
-      document.body.style.cursor = 'auto';
-      handleEmergencyCall(gridP);
-    };
-  });
-
-  const stableHandleReachNode = React.useCallback((index: number) => handleReachNodeRef.current(index), []);
-  const stableHandleMissionComplete = React.useCallback(() => handleMissionCompleteRef.current(), []);
-  const stableHandleObstacleDetected = React.useCallback((p: GridPoint) => handleObstacleDetectedRef.current(p), []);
-  const stableHandleMapClick = React.useCallback((p: THREE.Vector3) => handleMapClickRef.current(p), []);
 
   const dispatchLocalMission = (targetPos: GridPoint, missionText: string) => {
     if (!isOn) {
@@ -2628,13 +1808,13 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
     isRecalculating.current = true;
     addExplanation(`New command: ${missionText}. Calculating route...`);
     
-    setTimeout(async () => {
-          const currentLoc = path.length > 0 && currentPosIndex < path.length ? path[currentPosIndex] : mapData.start;
+    setTimeout(() => {
+      const currentLoc = path.length > 0 && currentPosIndex < path.length ? path[currentPosIndex] : mapData.start;
       
       if (robotStateRef.current === 'emergency_response') {
          const emergencyLoc = path.length > 0 ? path[path.length - 1] : mapData.start;
-         const forwardPath = await calculatePathAsync(currentLoc, targetPos, [...(mapData.obstacles || []), ...userBlockers], mapData);
-         const returnPath = await calculatePathAsync(targetPos, emergencyLoc, [...(mapData.obstacles || []), ...userBlockers], mapData);
+         const forwardPath = calculatePath(currentLoc, targetPos, [...(mapData.obstacles || []), ...userBlockers], mapData);
+         const returnPath = calculatePath(targetPos, emergencyLoc, [...(mapData.obstacles || []), ...userBlockers], mapData);
          
          if (forwardPath.length > 0 && returnPath.length > 0) {
            const roundTripPath = [...forwardPath, forwardPath[forwardPath.length - 1], ...returnPath.slice(1)];
@@ -2648,7 +1828,7 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
            window.dispatchEvent(new CustomEvent('local_emergency_request', { detail: null }));
          }
       } else {
-         const shortPath = await calculatePathAsync(currentLoc, targetPos, [...(mapData.obstacles || []), ...userBlockers], mapData);
+         const shortPath = calculatePath(currentLoc, targetPos, [...(mapData.obstacles || []), ...userBlockers], mapData);
          
          if (shortPath.length > 0) {
            setPath(shortPath);
@@ -2710,12 +1890,6 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
             >
               Toggle View ({isMapView ? '2D' : '3D'})
             </button>
-            <button
-              onClick={() => setIsNight(!isNight)}
-              className="px-3 py-1.5 rounded-md text-xs font-bold bg-purple-600 text-white shadow-lg hover:bg-purple-700 transition-colors"
-            >
-              {isNight ? 'Switch to Day' : 'Switch to Night'}
-            </button>
 
             <button
               onClick={() => setIsFollowing(!isFollowing)}
@@ -2772,8 +1946,7 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
             )}
           </div>
         </div>
-        <Canvas shadows gl={{ antialias: false, powerPreference: "high-performance" }} dpr={[1, 1.5]}>
-          <color attach="background" args={[isNight ? '#0b0f19' : '#87ceeb']} />
+        <Canvas shadows gl={{ antialias: true }} dpr={[1, 2]}>
           {/* Camera */}
           {isMapView ? (
             <OrthographicCamera makeDefault position={[0, 100, 0]} zoom={6} near={0.1} far={1000} />
@@ -2781,13 +1954,10 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
             <PerspectiveCamera makeDefault position={[0, gridSize.y * 0.55, gridSize.y * 0.85]} fov={55} />
           )}
           {/* Lighting */}
-          <ambientLight intensity={isNight ? 0.2 : 0.7} />
-          
-          {/* Sun / Moon Light */}
+          <ambientLight intensity={0.7} />
           <directionalLight
-            position={isNight ? [-20, 30, -20] : [20, 30, 20]}
-            intensity={isNight ? 0.3 : 1.8}
-            color={isNight ? "#60a5fa" : "#ffffff"}
+            position={[20, 30, 20]}
+            intensity={1.8}
             castShadow
             shadow-mapSize={[2048, 2048]}
             shadow-camera-near={0.5}
@@ -2797,14 +1967,7 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
             shadow-camera-top={80}
             shadow-camera-bottom={-80}
           />
-          
-          {/* Sun / Moon Mesh */}
-          <mesh position={isNight ? [-40, 60, -40] : [40, 60, 40]}>
-            <sphereGeometry args={[4, 32, 32]} />
-            <meshBasicMaterial color={isNight ? "#e2e8f0" : "#fef08a"} />
-          </mesh>
-
-          <pointLight position={[0, 8, 0]} intensity={isNight ? 0.2 : 0.6} color="#60a5fa" />
+          <pointLight position={[0, 8, 0]} intensity={0.6} color="#60a5fa" />
           <CameraController 
             isFollowing={isFollowing} 
             robotPosRef={robotPosRef} 
@@ -2822,16 +1985,66 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
             dampingFactor={0.05}
             target={[0, 0.5, 0]}
             maxPolarAngle={Math.PI / 2 - 0.05}
-            maxDistance={gridSize.y * 1.5}
-            minZoom={isMapView ? 3.5 : 0}
           />
-          <CrowdGroup location={crowdLocation} gridSize={gridSize} isMapView={isMapView} policeState={policeState} policePath={policePath} policePosIndex={policePosIndex} />
-          <PoliceCar path={policePath} currentIndex={policePosIndex} isMapView={isMapView} gridSize={gridSize} policeState={policeState} onReachNode={handlePoliceReachNode} onMissionComplete={handlePoliceMissionComplete} />
+          
           <EnvironmentMap 
             mapData={mapData} 
-            isNight={isNight}
-            isTargeting={isEmergencyTargeting || isPlacingBlocker || isCrowdTargeting} 
-            onMapClick={stableHandleMapClick} 
+            isTargeting={isEmergencyTargeting || isPlacingBlocker} 
+            onMapClick={(p) => {
+              const gridP = getGridPointFromVector3(p, gridSize);
+              if (isPlacingBlocker) {
+                setUserBlockers(prev => {
+                  const roads = mapData?.roads || [];
+                  const exists = prev.find(b => b.x === gridP.x && b.y === gridP.y && b.f === gridP.f);
+                  
+                  let toBlock: GridPoint[] = [gridP];
+                  if (roads.some(r => r.x === gridP.x && r.y === gridP.y)) {
+                    const hasEW = roads.some(r => r.y === gridP.y && (r.x === gridP.x + 1 || r.x === gridP.x - 1));
+                    const hasNS = roads.some(r => r.x === gridP.x && (r.y === gridP.y + 1 || r.y === gridP.y - 1));
+                    
+                    if (hasEW && !hasNS) {
+                      let dy = 1;
+                      while (roads.some(r => r.x === gridP.x && r.y === gridP.y + dy)) {
+                        toBlock.push({ ...gridP, y: gridP.y + dy });
+                        dy++;
+                      }
+                      dy = -1;
+                      while (roads.some(r => r.x === gridP.x && r.y === gridP.y + dy)) {
+                        toBlock.push({ ...gridP, y: gridP.y + dy });
+                        dy--;
+                      }
+                    } else if (hasNS && !hasEW) {
+                      let dx = 1;
+                      while (roads.some(r => r.y === gridP.y && r.x === gridP.x + dx)) {
+                        toBlock.push({ ...gridP, x: gridP.x + dx });
+                        dx++;
+                      }
+                      dx = -1;
+                      while (roads.some(r => r.y === gridP.y && r.x === gridP.x + dx)) {
+                        toBlock.push({ ...gridP, x: gridP.x + dx });
+                        dx--;
+                      }
+                    }
+                  }
+
+                  if (exists) {
+                    return prev.filter(b => !toBlock.some(cs => cs.x === b.x && cs.y === b.y && cs.f === b.f));
+                  } else {
+                    const newBlockers = [...prev];
+                    toBlock.forEach(cs => {
+                       if (!newBlockers.some(b => b.x === cs.x && b.y === cs.y && b.f === cs.f)) {
+                          newBlockers.push(cs);
+                       }
+                    });
+                    return newBlockers;
+                  }
+                });
+                return;
+              }
+              setIsEmergencyTargeting(false);
+              document.body.style.cursor = 'auto';
+              handleEmergencyCall(gridP);
+            }} 
           />
           {rooms?.map((room: Room) => {
             const width = (room.end.x - room.start.x + 1) * 0.9;
@@ -2840,7 +2053,7 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
             const x = (room.start.x + room.end.x) / 2 - gridSize.x / 2;
             const z = (room.start.y + room.end.y) / 2 - gridSize.y / 2;
             return (
-              <group key={room.id} position={[x, height / 2, z]} onClick={(e) => { e.stopPropagation(); handleRoomClick(room); }}>
+              <group key={room.id} position={[x, height / 2, z]} onClick={(e) => { e.stopPropagation(); setSelectedRoom(room); }}>
                 <BuildingModel room={room} width={width} height={height} depth={depth} />
                 <Html position={[0, height / 2 + 1.5, 0]} center style={{ pointerEvents: 'none' }}>
                   <div className="text-[10px] font-bold text-white bg-black/80 px-2 py-1 rounded shadow-lg whitespace-nowrap">
@@ -2883,25 +2096,15 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
               isMapView={isMapView} 
               speed={(robotState === 'emergency_response' ? 25 : 10) * (speedLimit / 50)} 
               dynamicObstaclesRef={dynamicObstaclesRef}
-              onReachNode={stableHandleReachNode}
-              onMissionComplete={stableHandleMissionComplete}
-              onObstacleDetected={stableHandleObstacleDetected}
+              onReachNode={handleReachNode}
+              onMissionComplete={handleMissionComplete}
+              onObstacleDetected={handleObstacleDetected}
               robotPosRef={robotPosRef}
               robotRotRef={robotRotRef}
             />
           )}
         </Canvas>
       </div>
-
-      {/* Police Alert Banner */}
-      {isPoliceAlertActive && (
-        <div className="absolute bottom-8 left-1/2 transform -translate-x-1/2 z-[200] animate-pulse">
-          <div className="bg-blue-600 border-2 border-blue-400 text-white font-black tracking-widest px-8 py-3 rounded-full shadow-[0_0_20px_rgba(37,99,235,0.8)] flex items-center gap-3 text-lg">
-            <span className="text-2xl animate-bounce">🚔</span>
-            CALLING POLICE...
-          </div>
-        </div>
-      )}
 
       {/* CTR Overlay */}
       {isCTROpen && (
@@ -2970,15 +2173,10 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
             <h4 className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Mission Telemetry</h4>
             <div className="flex gap-2">
               <button
-                onClick={async () => {
+                onClick={() => {
                   const nextIdle = !isIdleMode;
                   setIsIdleMode(nextIdle);
                   if (nextIdle) {
-                    // Save current mission state before parking
-                    if (path.length > 0) {
-                      setSavedMission({ remainingPath: path.slice(currentPosIndex), state: robotState });
-                    }
-                    
                     // Find nearest room to park safely out of traffic
                     if (mapData && mapData.rooms && mapData.rooms.length > 0) {
                       let nearestRoom = mapData.rooms[0];
@@ -2989,7 +2187,7 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
                           if (dist < minDist) { minDist = dist; nearestRoom = r; }
                       });
                       const allObstacles = [...(mapData.obstacles || []), ...userBlockers];
-                      const parkPath = await calculatePathAsync(currentLoc, nearestRoom.door || nearestRoom.start, allObstacles, mapData);
+                      const parkPath = calculatePath(currentLoc, nearestRoom.door || nearestRoom.start, allObstacles, mapData);
                       if (parkPath.length > 0) {
                          setPath(parkPath);
                          setCurrentPosIndex(0);
@@ -3003,40 +2201,8 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
                       }
                     }
                   } else {
-                    // Resume saved mission if any
-                    if (savedMission && savedMission.remainingPath && mapData) {
-                      const currentLoc = path.length > 0 ? path[Math.min(currentPosIndex, path.length - 1)] : mapData.start;
-                      const allObstacles = [...(mapData.obstacles || []), ...userBlockers];
-                      
-                      const waypoints = savedMission.remainingPath.filter((p, i) => i > 0 && p.x === savedMission.remainingPath[i-1].x && p.y === savedMission.remainingPath[i-1].y && p.f === savedMission.remainingPath[i-1].f);
-                      if (savedMission.remainingPath.length > 0) waypoints.push(savedMission.remainingPath[savedMission.remainingPath.length - 1]);
-                      
-                      let canResume = true;
-                      let fullResumePath: GridPoint[] = [];
-                      let startLoc = currentLoc;
-                      
-                      for (const wp of waypoints) {
-                         const segment = await calculatePathAsync(startLoc, wp, allObstacles, mapData);
-                         if (segment.length === 0) { canResume = false; break; }
-                         fullResumePath = [...fullResumePath, ...segment.slice(fullResumePath.length > 0 ? 1 : 0), wp];
-                         startLoc = wp;
-                      }
-                      
-                      if (canResume && fullResumePath.length > 0) {
-                        setPath(fullResumePath);
-                        setCurrentPosIndex(0);
-                        setRobotState(savedMission.state);
-                        setIsPlaying(true);
-                        addExplanation(`Idle mode deactivated. Resuming previous mission.`);
-                      } else {
-                        setRobotState('patrol');
-                        addExplanation("Idle mode deactivated. Path blocked, falling back to patrol.");
-                      }
-                      setSavedMission(null);
-                    } else {
-                      setRobotState('patrol');
-                      addExplanation("Idle mode deactivated. Resuming patrol.");
-                    }
+                    setRobotState('patrol');
+                    addExplanation("Idle mode deactivated. Resuming patrol.");
                   }
                 }}
                 className={`px-3 py-1 rounded text-[10px] font-bold flex items-center gap-1 transition-colors ${isIdleMode ? 'bg-gray-500 text-white' : 'bg-gray-500/20 text-gray-400 hover:bg-gray-500/40'}`}
@@ -3055,17 +2221,17 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
           
           <div className="grid grid-cols-2 gap-2 mb-4 transition-all duration-500">
             <div className="bg-white/5 border border-white/10 rounded-lg p-2">
-              <span className="text-[10px] text-gray-400 block mb-0.5 uppercase">BATTERY</span>
+              <span className="text-[9px] text-gray-400 block mb-0.5">BATTERY</span>
               <div className="flex items-center gap-1.5 mt-1">
-                <div className="flex-1 h-2 bg-gray-800 rounded-full overflow-hidden">
+                <div className="flex-1 h-1.5 bg-gray-800 rounded-full overflow-hidden">
                   <div className={`h-full ${battery > 60 ? 'bg-green-500' : battery > 30 ? 'bg-yellow-500' : 'bg-red-500'}`} style={{ width: `${battery}%` }} />
                 </div>
-                <span className="text-xs font-bold text-white">{battery}%</span>
+                <span className="text-[10px] font-bold text-white">{battery}%</span>
               </div>
             </div>
             <div className="bg-white/5 border border-white/10 rounded-lg p-2 flex flex-col justify-center">
-              <span className="text-[10px] text-gray-500 block mb-0.5">STATUS</span>
-              <span className={`text-sm font-bold uppercase ${
+              <span className="text-[9px] text-gray-500 block mb-0.5">STATUS</span>
+              <span className={`text-xs font-bold uppercase ${
                 robotState === 'charging' ? 'text-yellow-400' : 
                 robotState === 'patrol' ? 'text-blue-400' : 
                 robotState === 'mission' ? 'text-green-400' : 
@@ -3076,36 +2242,29 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
               </span>
             </div>
             <div className="bg-white/5 border border-white/10 rounded-lg p-2">
-              <span className="text-[10px] text-gray-500 block mb-0.5">DISTANCE</span>
-              <span className="text-base font-bold text-white">{path.length > 0 ? path.length - currentPosIndex : '--'} <span className="text-[10px] font-normal text-gray-500">m</span></span>
+              <span className="text-[9px] text-gray-500 block mb-0.5">DISTANCE</span>
+              <span className="text-sm font-bold text-white">{path.length > 0 ? path.length - currentPosIndex : '--'} <span className="text-[10px] font-normal text-gray-500">m</span></span>
             </div>
             <div className="bg-white/5 border border-white/10 rounded-lg p-2">
-              <span className="text-[10px] text-gray-500 block mb-0.5">ETA</span>
-              <span className="text-base font-bold text-white">{path.length > 0 ? Math.ceil((path.length - currentPosIndex) * 0.5) : '--'} <span className="text-[10px] font-normal text-gray-500">min</span></span>
+              <span className="text-[9px] text-gray-500 block mb-0.5">ETA</span>
+              <span className="text-sm font-bold text-white">{path.length > 0 ? Math.ceil((path.length - currentPosIndex) * 0.5) : '--'} <span className="text-[10px] font-normal text-gray-500">min</span></span>
             </div>
           </div>
+
           <div className="flex gap-2">
             <button
-              onClick={() => {
-                setIsEmergencyTargeting(!isEmergencyTargeting);
-                setIsCrowdTargeting(false);
-                setIsPlacingBlocker(false);
-              }}
+              onClick={() => startSimulation()}
+              disabled={isPlaying || (path.length > 0 && currentPosIndex >= path.length - 1)}
+              className="flex-1 flex items-center justify-center gap-2 px-4 py-2 bg-cyan-600 text-white rounded-lg font-medium hover:bg-cyan-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors shadow-sm text-xs"
+            >
+              <Play className="w-3.5 h-3.5" /> {isPlaying ? 'Simulating...' : 'Execute'}
+            </button>
+            <button
+              onClick={() => setIsEmergencyTargeting(!isEmergencyTargeting)}
               className={`px-3 py-2 border rounded-lg transition-colors flex items-center justify-center gap-2 font-bold text-xs ${isEmergencyTargeting ? 'bg-red-500 text-white border-red-500' : 'bg-red-500/10 text-red-500 border-red-500/30 hover:bg-red-500/20'}`}
               title="Target Emergency"
             >
               <ShieldAlert className="w-4 h-4" />
-            </button>
-            <button
-              onClick={() => {
-                setIsCrowdTargeting(!isCrowdTargeting);
-                setIsEmergencyTargeting(false);
-                setIsPlacingBlocker(false);
-              }}
-              className={`px-3 py-2 border rounded-lg transition-colors flex items-center justify-center gap-2 font-bold text-xs ${isCrowdTargeting ? 'bg-orange-500 text-white border-orange-500' : 'bg-orange-500/10 text-orange-500 border-orange-500/30 hover:bg-orange-500/20'}`}
-              title="Crowd"
-            >
-              <Users className="w-4 h-4" /> Crowd
             </button>
             <button
               onClick={() => {
@@ -3164,7 +2323,7 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
               {rooms?.map(room => (
                 <button 
                   key={room.id}
-                  onClick={() => handleRoomClick(room)}
+                  onClick={() => setSelectedRoom(room)}
                   className={`w-full text-left px-3 py-2 rounded border transition-colors text-xs flex justify-between items-center ${selectedRoom?.id === room.id ? 'bg-brand/20 border-brand text-white' : 'bg-white/5 hover:bg-white/10 border-white/5 text-gray-300'}`}
                 >
                   <span className="truncate mr-2">{room.name}</span>
@@ -3179,5 +2338,3 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
     </div>
   );
 };
-
-export default SimulationView;
