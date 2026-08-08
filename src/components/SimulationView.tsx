@@ -561,10 +561,10 @@ const BuildingModel = ({ room, width, height, depth }: { room: Room, width: numb
           const tz = (Math.random() - 0.5) * depth * 0.8;
           return (
             <group key={i} position={[tx, -height/2 + 0.5, tz]}>
-              <Cylinder args={[0.1, 0.1, 0.8]} position={[0, -0.1, 0]} castShadow>
+              <Cylinder args={[0.1, 0.1, 0.8]} position={[0, -0.1, 0]}>
                  <meshStandardMaterial color="#78350f" />
               </Cylinder>
-              <Cylinder args={[0.4, 0.6, 1.2]} position={[0, 0.8, 0]} castShadow>
+              <Cylinder args={[0.4, 0.6, 1.2]} position={[0, 0.8, 0]}>
                  <meshStandardMaterial color="#15803d" />
               </Cylinder>
             </group>
@@ -1024,16 +1024,16 @@ const PathLine = ({ path, currentIndex, gridSize, isMapView, color = "#00ffff", 
 // --- Forest Tree helper (tint changes for night mode) ---
 const ForestTree = ({ x, z, scale = 1, isNight = false }: { x: number; z: number; scale?: number; isNight?: boolean }) => (
   <group position={[x, 0, z]} scale={scale}>
-    <Cylinder args={[0.12, 0.16, 0.9, 6]} position={[0, 0.45, 0]} castShadow>
+    <Cylinder args={[0.12, 0.16, 0.9, 6]} position={[0, 0.45, 0]}>
       <meshStandardMaterial color={isNight ? '#3b1e0a' : '#7c4b1e'} roughness={0.9} />
     </Cylinder>
-    <Cylinder args={[0, 0.75, 1.2, 6]} position={[0, 1.4, 0]} castShadow>
+    <Cylinder args={[0, 0.75, 1.2, 6]} position={[0, 1.4, 0]}>
       <meshStandardMaterial color={isNight ? '#064e1e' : '#15803d'} roughness={0.8} />
     </Cylinder>
-    <Cylinder args={[0, 0.6, 1.0, 6]} position={[0, 2.1, 0]} castShadow>
+    <Cylinder args={[0, 0.6, 1.0, 6]} position={[0, 2.1, 0]}>
       <meshStandardMaterial color={isNight ? '#065f26' : '#16a34a'} roughness={0.8} />
     </Cylinder>
-    <Cylinder args={[0, 0.4, 0.8, 6]} position={[0, 2.7, 0]} castShadow>
+    <Cylinder args={[0, 0.4, 0.8, 6]} position={[0, 2.7, 0]}>
       <meshStandardMaterial color={isNight ? '#14532d' : '#4ade80'} roughness={0.8} />
     </Cylinder>
   </group>
@@ -1122,7 +1122,6 @@ const NaturalLandscape = ({ isNight, gridSize }: { isNight: boolean; gridSize: G
   const snowColor = isNight ? '#c4c4d0' : '#f0f4ff';
   const mountainColor = isNight ? '#374151' : '#6b7280';
   const rockColor = isNight ? '#292524' : '#57534e';
-  const waterColor = isNight ? '#1e40af' : '#60a5fa';
   const riverColor = isNight ? '#1e40af' : '#3b82f6';
 
   return (
@@ -1143,12 +1142,12 @@ const NaturalLandscape = ({ isNight, gridSize }: { isNight: boolean; gridSize: G
       {mountains.map((m, i) => (
         <group key={`mt-${i}`} position={[m.x, 0, m.z]}>
           {/* Main peak */}
-          <mesh castShadow>
+          <mesh>
             <coneGeometry args={[m.rx, m.h, 7, 1]} />
             <meshStandardMaterial color={mountainColor} roughness={0.85} />
           </mesh>
           {/* Snow cap */}
-          <mesh position={[0, m.h * 0.35, 0]} castShadow>
+          <mesh position={[0, m.h * 0.35, 0]}>
             <coneGeometry args={[m.rx * 0.35, m.h * 0.3, 7, 1]} />
             <meshStandardMaterial color={snowColor} roughness={0.5} />
           </mesh>
@@ -1157,7 +1156,7 @@ const NaturalLandscape = ({ isNight, gridSize }: { isNight: boolean; gridSize: G
 
       {/* --- ROCKS --- */}
       {rocks.map((r, i) => (
-        <mesh key={`rock-${i}`} position={[r.x, r.sy * 0.4, r.z]} scale={[r.sx, r.sy, r.sz]} castShadow>
+        <mesh key={`rock-${i}`} position={[r.x, r.sy * 0.4, r.z]} scale={[r.sx, r.sy, r.sz]}>
           <sphereGeometry args={[1, 6, 4]} />
           <meshStandardMaterial color={rockColor} roughness={0.95} metalness={0.05} />
         </mesh>
@@ -1195,7 +1194,6 @@ const EnvironmentMap = ({ mapData, isNight, isTargeting, onMapClick }: { mapData
         args={[gridSize.x * 20, gridSize.y * 20]}
         rotation={[-Math.PI / 2, 0, 0]}
         position={[0, -0.02, 0]}
-        receiveShadow
       >
         <meshStandardMaterial color={isNight ? '#052e16' : '#16a34a'} roughness={1} />
       </Plane>
@@ -2336,8 +2334,8 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
             }} 
           />
           {rooms?.map((room: Room) => {
-            const width = (room.end.x - room.start.x + 1) * 0.9;
-            const depth = (room.end.y - room.start.y + 1) * 0.9;
+            const width = (room.end.x - room.start.x + 1) * 0.75;
+            const depth = (room.end.y - room.start.y + 1) * 0.75;
             const height = 3;
             const x = (room.start.x + room.end.x) / 2 - gridSize.x / 2;
             const z = (room.start.y + room.end.y) / 2 - gridSize.y / 2;
