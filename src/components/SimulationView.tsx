@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState, useMemo } from 'react';
 import type { MapData, GridPoint, Room } from '../types';
 import { calculatePath, calculateLongPath } from '../utils/simulationEngine';
-import { Play, RotateCcw, Activity, ShieldAlert, Crosshair, Maximize, Minimize, Bot, Power, Send, Construction, Pause } from 'lucide-react';
+import { Play, RotateCcw, Activity, ShieldAlert, Crosshair, Maximize, Minimize, Bot, Power, Send, Construction, Pause, Users } from 'lucide-react';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import {
   OrbitControls,
@@ -32,7 +32,7 @@ export type DynamicObstacle = {
   isMoving: boolean;
 };
 
-export type RobotState = 'idle' | 'mission' | 'patrol' | 'charging' | 'emergency_response' | 'evading_obstacle' | 'returning_home' | 'off';
+export type RobotState = 'idle' | 'mission' | 'patrol' | 'charging' | 'emergency_response' | 'crowd_control' | 'evading_obstacle' | 'returning_home' | 'off';
 
 
 const CameraController = ({ isFollowing, robotPosRef, robotRotRef, controlsRef, triggerReset, onResetDone, gridSize, isMapView }: any) => {
@@ -342,6 +342,35 @@ const BlockersRender = ({ blockers, gridSize, roads }: { blockers: GridPoint[], 
     </group>
   );
 };
+
+const CrowdsRender = React.memo(({ crowds, gridSize }: { crowds: GridPoint[], gridSize: GridPoint }) => {
+  if (!crowds || crowds.length === 0) return null;
+  return (
+    <group>
+      {crowds.map((c, i) => {
+        const [cx, , cz] = getGridPosition({ x: c.x, y: c.y, f: 0 } as any, gridSize, 0);
+        return (
+          <group key={`crowd-${i}`} position={[cx, 0, cz]}>
+            {Array.from({ length: 15 }).map((_, j) => {
+              const ox = (Math.random() - 0.5) * 2;
+              const oz = (Math.random() - 0.5) * 2;
+              return (
+                <group key={`person-${j}`} position={[ox, 0, oz]}>
+                  <Box args={[0.3, 1, 0.3]} castShadow position={[0, 0.5, 0]}>
+                    <meshStandardMaterial color={['#ef4444', '#3b82f6', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899', '#6366f1'][j % 7]} roughness={0.8} />
+                  </Box>
+                  <Sphere args={[0.2]} position={[0, 1.1, 0]} castShadow>
+                    <meshStandardMaterial color="#fcd34d" />
+                  </Sphere>
+                </group>
+              );
+            })}
+          </group>
+        );
+      })}
+    </group>
+  );
+});
 
 const Butterflies = () => {
   const groupRef = useRef<THREE.Group>(null);
@@ -1249,8 +1278,10 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
   const [selectedRoom, setSelectedRoom] = useState<Room | null>(null);
   const [isEmergencyTargeting, setIsEmergencyTargeting] = useState(false);
   const [isPlacingBlocker, setIsPlacingBlocker] = useState(false);
+  const [isPlacingCrowd, setIsPlacingCrowd] = useState(false);
   const [isIdleMode, setIsIdleMode] = useState(false);
   const [userBlockers, setUserBlockers] = useState<GridPoint[]>([]);
+  const [crowds, setCrowds] = useState<GridPoint[]>([]);
 
   // Recalculate path dynamically if obstacles are added while moving
   useEffect(() => {
@@ -1829,6 +1860,39 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
     }, 1500);
   };
 
+  const handleCrowdEmergency = (targetPos: GridPoint) => {
+    if (!isOn) {
+      addExplanation("Crowd detected while OFF! Emergency wake-up sequence initiated.");
+      setIsOn(true);
+      turnOffAfterEmergencyRef.current = true;
+    } else {
+      turnOffAfterEmergencyRef.current = false;
+    }
+    
+    if (!mapData) return;
+    addExplanation(`CROWD EMERGENCY: Diverting immediately to (${targetPos.x}, ${targetPos.y})! All other tasks suspended.`);
+    setIsPlaying(false);
+    isRecalculating.current = true;
+    
+    if (robotState === 'mission' || robotState === 'patrol' || robotState === 'emergency_response') {
+      originalMissionRef.current = { path: [...path], index: currentPosIndex };
+    }
+    
+    const currentLoc = path.length > 0 && currentPosIndex < path.length ? path[currentPosIndex] : mapData.start;
+    const emergencyPath = calculatePath(currentLoc, targetPos, [...(mapData.obstacles || []), ...userBlockers], mapData);
+    
+    if (emergencyPath.length > 0) {
+      setPath(emergencyPath);
+      setActivePathColor('#ef4444');
+      setCurrentPosIndex(0);
+      setRobotState('crowd_control');
+      setIsPlaying(true);
+    } else {
+      addExplanation(`Emergency route calculation failed. Unable to reach crowd.`);
+      setIsPlaying(true);
+    }
+  };
+
   const handleEmergencyCall = (targetPos: GridPoint) => {
     if (!isOn) {
       addExplanation("Emergency override! Powering ON to respond to critical emergency.");
@@ -2311,9 +2375,15 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
           <EnvironmentMap 
             mapData={mapData}
             isNight={isNight}
-            isTargeting={isEmergencyTargeting || isPlacingBlocker} 
+            isTargeting={isEmergencyTargeting || isPlacingBlocker || isPlacingCrowd} 
             onMapClick={(p) => {
               const gridP = getGridPointFromVector3(p, gridSize);
+              if (isPlacingCrowd) {
+                setCrowds(prev => [...prev, gridP]);
+                handleCrowdEmergency(gridP);
+                setIsPlacingCrowd(false);
+                return;
+              }
               if (isPlacingBlocker) {
                 setUserBlockers(prev => {
                   const roads = mapData?.roads || [];
@@ -2387,6 +2457,7 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
           }), [rooms, gridSize, setSelectedRoom])}
           <RoadsRender roads={mapData.roads || []} gridSize={gridSize} />
           <BlockersRender blockers={userBlockers} gridSize={gridSize} roads={mapData.roads || []} />
+          <CrowdsRender crowds={crowds} gridSize={gridSize} />
 
           {/* Starting Gate */}
           {mapData.start && (
@@ -2606,12 +2677,22 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
             <button
               onClick={() => {
                 setIsPlacingBlocker(!isPlacingBlocker);
-                if (!isPlacingBlocker) setIsEmergencyTargeting(false);
+                if (!isPlacingBlocker) { setIsEmergencyTargeting(false); setIsPlacingCrowd(false); }
               }}
               className={`px-3 py-2 border rounded-lg transition-colors flex items-center justify-center gap-2 font-bold text-xs ${isPlacingBlocker ? 'bg-orange-500 text-white border-orange-500' : 'bg-orange-500/10 text-orange-500 border-orange-500/30 hover:bg-orange-500/20'}`}
               title="Toggle Road Blocker"
             >
               <Construction className="w-4 h-4" />
+            </button>
+            <button
+              onClick={() => {
+                setIsPlacingCrowd(!isPlacingCrowd);
+                if (!isPlacingCrowd) { setIsEmergencyTargeting(false); setIsPlacingBlocker(false); }
+              }}
+              className={`px-3 py-2 border rounded-lg transition-colors flex items-center justify-center gap-2 font-bold text-xs ${isPlacingCrowd ? 'bg-purple-500 text-white border-purple-500' : 'bg-purple-500/10 text-purple-500 border-purple-500/30 hover:bg-purple-500/20'}`}
+              title="Toggle Crowd Placement"
+            >
+              <Users className="w-4 h-4" />
             </button>
             <button
               onClick={resetSimulation}
@@ -2673,6 +2754,12 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
         </div>
         )}
       </div>
+
+      {robotState === 'crowd_control' && (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 bg-red-600 text-white px-6 py-3 rounded-full font-bold flex items-center gap-3 shadow-[0_0_20px_rgba(220,38,38,0.8)] border border-red-400 z-[9999] animate-pulse">
+          <span className="text-xl">🚔</span> Calling Police...
+        </div>
+      )}
     </div>
   );
 };
