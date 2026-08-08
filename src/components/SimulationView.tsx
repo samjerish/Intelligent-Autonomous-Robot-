@@ -1347,11 +1347,8 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
   const [showReasoningLog, setShowReasoningLog] = useState(false);
   const [isCCMinimized, setIsCCMinimized] = useState(false);
 
-  // Auto day/night from real local time (day = 6:00–18:00)
-  const isNight = useMemo(() => {
-    const h = new Date().getHours();
-    return h < 6 || h >= 18;
-  }, []);
+  // Day mode permanently enabled
+  const isNight = false;
   
   const [aiExplanations, setAiExplanations] = useState<string[]>([]);
   const [selectedRoom, setSelectedRoom] = useState<Room | null>(null);
