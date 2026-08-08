@@ -388,19 +388,24 @@ const BuildingModel = ({ room, width, height, depth }: { room: Room, width: numb
   } else if (type === 'library') {
     return (
       <group>
-        {/* Make it taller: height * 1.5 = 4.5. Ground is at -height/2 (-1.5) */}
-        <Box args={[width, height * 1.5, depth]} position={[0, height * 0.25, 0]} castShadow receiveShadow>
-          <meshStandardMaterial color="#e2e8f0" />
+        {/* Skyscraper base */}
+        <Box args={[width * 0.9, height * 0.5, depth * 0.9]} position={[0, -height/2 + 0.25, 0]} castShadow receiveShadow>
+          <meshStandardMaterial color="#0f172a" />
         </Box>
-        {/* Greek style columns */}
-        {[-width/2 + 0.5, 0, width/2 - 0.5].map((x, i) => (
-          <Cylinder key={i} args={[0.2, 0.2, height * 1.5]} position={[x, height * 0.25, depth/2 + 0.1]} castShadow>
-            <meshStandardMaterial color="#ffffff" />
-          </Cylinder>
-        ))}
-        {/* Pediment */}
-        <Cylinder args={[width/2, width/2, depth + 0.5, 3]} position={[0, height * 1.0, 0]} rotation={[width > depth ? 0 : Math.PI / 2, 0, Math.PI / 2]} castShadow>
-           <meshStandardMaterial color="#94a3b8" />
+        {/* Core structural building */}
+        <Box args={[width * 0.7, height * 6, depth * 0.7]} position={[0, height * 2.5, 0]} castShadow receiveShadow>
+          <meshStandardMaterial color="#334155" />
+        </Box>
+        {/* Glass exterior */}
+        <Box args={[width * 0.75, height * 5.8, depth * 0.75]} position={[0, height * 2.5, 0]} castShadow receiveShadow>
+          <meshStandardMaterial color="#38bdf8" transparent opacity={0.6} metalness={0.9} roughness={0.1} />
+        </Box>
+        {/* Roof */}
+        <Box args={[width * 0.8, 0.2, depth * 0.8]} position={[0, height * 5.5, 0]} castShadow receiveShadow>
+          <meshStandardMaterial color="#0f172a" />
+        </Box>
+        <Cylinder args={[0.1, 0.1, 2]} position={[0, height * 6, 0]}>
+          <meshStandardMaterial color="#ef4444" />
         </Cylinder>
       </group>
     );
@@ -432,17 +437,16 @@ const BuildingModel = ({ room, width, height, depth }: { room: Room, width: numb
           </Box>
         </group>
       );
-    } else if (name.includes('tennis')) {
+    } else if (name.includes('gymnasium') || name.includes('tennis')) {
       return (
         <group>
-          {/* Court */}
-          <Box args={[width, 0.2, depth]} position={[0, -height/2 + 0.1, 0]} receiveShadow>
-            <meshStandardMaterial color="#3b82f6" /> 
+          {/* Gymnasium Building */}
+          <Box args={[width, height * 1.2, depth]} position={[0, height * 0.1, 0]} castShadow receiveShadow>
+            <meshStandardMaterial color="#e2e8f0" /> 
           </Box>
-          {/* Net */}
-          <Box args={[width * 0.8, 0.4, 0.1]} position={[0, -height/2 + 0.3, 0]}>
-            <meshStandardMaterial color="#ffffff" transparent opacity={0.7} />
-          </Box>
+          <Cylinder args={[depth/2, depth/2, width, 16, 1, false, 0, Math.PI]} position={[0, height * 0.7, 0]} rotation={[0, 0, -Math.PI/2]} castShadow>
+             <meshStandardMaterial color="#94a3b8" metalness={0.4} />
+          </Cylinder>
         </group>
       );
     } else if (name.includes('cricket')) {
@@ -492,24 +496,44 @@ const BuildingModel = ({ room, width, height, depth }: { room: Room, width: numb
           </Box>
           {/* Curved Roof */}
           <Cylinder args={[depth/2, depth/2, width, 16, 1, false, 0, Math.PI]} position={[0, height/2, 0]} rotation={[0, 0, -Math.PI/2]} castShadow>
+          <Cylinder args={[d/2, d/2, w, 16, 1, false, 0, Math.PI]} position={[0, height/2, 0]} rotation={[0, 0, -Math.PI/2]} castShadow>
              <meshStandardMaterial color="#cbd5e1" metalness={0.4} />
           </Cylinder>
         </group>
       );
     } else {
-      // Default sports ground (play area like park)
       return (
         <group>
-          <Box args={[width, 0.2, depth]} position={[0, -height/2 + 0.1, 0]} receiveShadow>
+          <Box args={[w, 0.2, d]} position={[0, -height/2 + 0.1, 0]} receiveShadow>
             <meshStandardMaterial color="#4ade80" />
           </Box>
-          {/* Playground elements */}
-          <Box args={[2, 1, 2]} position={[-width/4, -height/2 + 0.6, -depth/4]} castShadow>
-            <meshStandardMaterial color="#ef4444" />
+          <group position={[-w/4 + 1, -height/2 + 0.2, 0]}>
+            <Box args={[0.1, 1.2, 0.1]} position={[-1, 0.5, 0]}><meshStandardMaterial color="#94a3b8" /></Box>
+            <Box args={[0.1, 1.2, 0.1]} position={[1, 0.5, 0]}><meshStandardMaterial color="#94a3b8" /></Box>
+            <Box args={[2.2, 0.1, 0.1]} position={[0, 1.1, 0]}><meshStandardMaterial color="#94a3b8" /></Box>
+            <Box args={[0.05, 0.8, 0.05]} position={[-0.5, 0.6, 0]}><meshStandardMaterial color="#000000" /></Box>
+            <Box args={[0.05, 0.8, 0.05]} position={[0.5, 0.6, 0]}><meshStandardMaterial color="#000000" /></Box>
+            <Box args={[0.6, 0.05, 0.3]} position={[-0.5, 0.2, 0]}><meshStandardMaterial color="#ef4444" /></Box>
+            <Box args={[0.6, 0.05, 0.3]} position={[0.5, 0.2, 0]}><meshStandardMaterial color="#3b82f6" /></Box>
+          </group>
+          <Box args={[2, 0.1, 2]} position={[w/4, -height/2 + 0.15, -d/4]}>
+            <meshStandardMaterial color="#fcd34d" />
           </Box>
-          <Cylinder args={[0.5, 0.5, 1.5]} position={[width/4, -height/2 + 0.85, depth/4]} castShadow>
-            <meshStandardMaterial color="#3b82f6" />
-          </Cylinder>
+          <Box args={[2.2, 0.2, 2.2]} position={[w/4, -height/2 + 0.1, -d/4]}>
+            <meshStandardMaterial color="#f59e0b" />
+          </Box>
+          <group position={[w/4, -height/2 + 0.2, d/4]}>
+             <Box args={[0.8, 1.5, 0.8]} position={[0, 0.75, -1]}><meshStandardMaterial color="#3b82f6" /></Box>
+             <Box args={[0.6, 2, 0.1]} position={[0, 0.5, 0]} rotation={[-Math.PI/4, 0, 0]}><meshStandardMaterial color="#ef4444" /></Box>
+          </group>
+          <group position={[-w/4, -height/2 + 0.2, d/3]}>
+            <Cylinder args={[0.1, 0.1, 1]} position={[0, 0.5, 0]}><meshStandardMaterial color="#78350f" /></Cylinder>
+            <Sphere args={[0.8, 8, 8]} position={[0, 1.2, 0]}><meshStandardMaterial color="#16a34a" /></Sphere>
+          </group>
+          <group position={[w/3, -height/2 + 0.2, d/3]}>
+            <Cylinder args={[0.1, 0.1, 1.2]} position={[0, 0.6, 0]}><meshStandardMaterial color="#78350f" /></Cylinder>
+            <Sphere args={[0.9, 8, 8]} position={[0, 1.4, 0]}><meshStandardMaterial color="#16a34a" /></Sphere>
+          </group>
         </group>
       );
     }
@@ -1916,8 +1940,8 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
             }} 
           />
           {rooms?.map((room: Room) => {
-            const width = (room.end.x - room.start.x + 1) * 0.9;
-            const depth = (room.end.y - room.start.y + 1) * 0.9;
+            const width = (room.end.x - room.start.x + 1) * 0.75;
+            const depth = (room.end.y - room.start.y + 1) * 0.75;
             const height = 3;
             const x = (room.start.x + room.end.x) / 2 - gridSize.x / 2;
             const z = (room.start.y + room.end.y) / 2 - gridSize.y / 2;
