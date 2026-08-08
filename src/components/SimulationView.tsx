@@ -35,7 +35,7 @@ export type DynamicObstacle = {
 export type RobotState = 'idle' | 'mission' | 'patrol' | 'charging' | 'emergency_response' | 'evading_obstacle' | 'returning_home' | 'off';
 
 
-const CameraController = ({ isFollowing, robotPosRef, controlsRef, triggerReset, onResetDone, gridSize, isMapView }: any) => {
+const CameraController = ({ isFollowing, robotPosRef, robotRotRef, controlsRef, triggerReset, onResetDone, gridSize, isMapView }: any) => {
   const { camera } = useThree();
   // Smoothed look-target to prevent jitter when following
   const smoothTarget = useRef(new THREE.Vector3(0, 0.5, 0));
@@ -57,22 +57,31 @@ const CameraController = ({ isFollowing, robotPosRef, controlsRef, triggerReset,
       if (onResetDone) onResetDone();
     }
 
-    if (isFollowing && robotPosRef.current) {
-      // Fixed isometric offset — same height & distance as recentre view
-      const offset = new THREE.Vector3(0, gridSize.y * 0.6, gridSize.y * 0.55);
+    if (isFollowing && robotPosRef.current && robotRotRef?.current !== undefined) {
+      // 3rd Person Follow Camera
+      const theta = robotRotRef.current;
+      const behindDist = 4.5;
+      const upDist = 2.5;
+      
+      const offset = new THREE.Vector3(
+        -Math.sin(theta) * behindDist,
+        upDist,
+        -Math.cos(theta) * behindDist
+      );
       const desiredPos = new THREE.Vector3().copy(robotPosRef.current).add(offset);
 
-      // Very smooth position lerp (lower alpha = less shake)
-      const lerpAlpha = 1 - Math.pow(0.02, delta);
+      // Very smooth position lerp
+      const lerpAlpha = 1 - Math.pow(0.005, delta);
       camera.position.lerp(desiredPos, lerpAlpha);
 
-      // Smooth the look-at target independently to avoid snap/jitter
-      smoothTarget.current.lerp(robotPosRef.current, lerpAlpha);
+      // Smooth the look-at target to look slightly ahead/above the robot
+      const targetLook = new THREE.Vector3().copy(robotPosRef.current).add(new THREE.Vector3(0, 0.5, 0));
+      smoothTarget.current.lerp(targetLook, lerpAlpha);
       camera.lookAt(smoothTarget.current);
 
       // Sync orbit controls target smoothly
       if (controlsRef.current) {
-        controlsRef.current.target.lerp(robotPosRef.current, lerpAlpha);
+        controlsRef.current.target.lerp(targetLook, lerpAlpha);
         controlsRef.current.update();
       }
     }
