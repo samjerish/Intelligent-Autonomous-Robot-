@@ -1106,7 +1106,8 @@ const Robot = React.memo(({
     if (isPlaying) {
       // --- Sensor Logic: Check for dynamic obstacles ahead ---
       if (dynamicObstaclesRef && dynamicObstaclesRef.current.length > 0) {
-        const upcomingPath = path.slice(currentIndex);
+        // Look ahead 5 steps to calculate diversion asynchronously before hitting the obstacle
+        const upcomingPath = path.slice(currentIndex, currentIndex + 5);
         let immediateBlock = false;
         for (const obs of dynamicObstaclesRef.current) {
           const obsTarget = obs.path[Math.min(obs.currentIndex, obs.path.length - 1)];
