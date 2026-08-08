@@ -368,7 +368,7 @@ const Butterflies = () => {
   );
 };
 
-const BuildingModel = ({ room, width, height, depth }: { room: Room, width: number, height: number, depth: number }) => {
+const BuildingModel = React.memo(({ room, width, height, depth }: { room: Room, width: number, height: number, depth: number }) => {
   const type = room.type || "unknown";
   const nameLow = room.name.toLowerCase();
   const baseColor = room.color || "#e2e8f0";
@@ -626,7 +626,7 @@ const BuildingModel = ({ room, width, height, depth }: { room: Room, width: numb
       </group>
     );
   }
-};
+});
 
 const SciFiGate = ({ position, scale = 1, rotation = [0, 0, 0] }: { position: [number, number, number], scale?: number, rotation?: [number, number, number] }) => {
   return (
@@ -1051,7 +1051,7 @@ const ForestTree = ({ x, z, scale = 1, isNight = false }: { x: number; z: number
 // --- Natural Landscape ---
 // Placed only OUTSIDE the campus boundary (outer belt).
 // Contains: sea, rivers, mountains, rocks, trees.
-const NaturalLandscape = ({ isNight, gridSize }: { isNight: boolean; gridSize: GridPoint }) => {
+const NaturalLandscape = React.memo(({ isNight, gridSize }: { isNight: boolean; gridSize: GridPoint }) => {
   const gx = gridSize.x;
   const gz = gridSize.y;
   const half_x = gx / 2;
@@ -1177,9 +1177,9 @@ const NaturalLandscape = ({ isNight, gridSize }: { isNight: boolean; gridSize: G
       ))}
     </group>
   );
-};
+});
 
-const EnvironmentMap = ({ mapData, isNight, isTargeting, onMapClick }: { mapData: MapData, isNight: boolean, isTargeting?: boolean, onMapClick?: (p: THREE.Vector3) => void }) => {
+const EnvironmentMap = React.memo(({ mapData, isNight, isTargeting, onMapClick }: { mapData: MapData, isNight: boolean, isTargeting?: boolean, onMapClick?: (p: THREE.Vector3) => void }) => {
   const { gridSize } = mapData;
   return (
     <group>
@@ -1211,7 +1211,7 @@ const EnvironmentMap = ({ mapData, isNight, isTargeting, onMapClick }: { mapData
       <NaturalLandscape isNight={isNight} gridSize={gridSize} />
     </group>
   );
-};
+});
 
 interface SimulationViewProps {
   mapData: MapData | null;
@@ -2085,8 +2085,12 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
       addExplanation("Cannot dispatch mission: Robot is powered OFF.");
       return;
     }
-    if (robotState === 'charging') {
+    if (robotState === 'charging' && battery < 100) {
       addExplanation("Cannot dispatch mission: Robot is currently charging and must reach 100%.");
+      return;
+    }
+    if (robotState === 'mission' || robotState === 'emergency_response') {
+      addExplanation("Cannot dispatch: Robot must complete its current active task first.");
       return;
     }
     if (!mapData) return;
@@ -2342,7 +2346,7 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
               handleEmergencyCall(gridP);
             }} 
           />
-          {rooms?.map((room: Room) => {
+          {useMemo(() => rooms?.map((room: Room) => {
             const width = (room.end.x - room.start.x + 1) * 0.75;
             const depth = (room.end.y - room.start.y + 1) * 0.75;
             const height = 3;
@@ -2358,7 +2362,7 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
                 </Html>
               </group>
             );
-          })}
+          }), [rooms, gridSize, setSelectedRoom])}
           <RoadsRender roads={mapData.roads || []} gridSize={gridSize} />
           <BlockersRender blockers={userBlockers} gridSize={gridSize} roads={mapData.roads || []} />
 
