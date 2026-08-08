@@ -2285,7 +2285,7 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
             target={[0, 2, 0]}
             maxPolarAngle={Math.PI / 2.15}
             minDistance={20}
-            maxDistance={gridSize.y * 2.0}
+            maxDistance={gridSize.y * 1.1}
           />
           
           <EnvironmentMap 
