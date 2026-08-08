@@ -772,7 +772,7 @@ const SciFiGate = ({ position, scale = 1, rotation = [0, 0, 0] }: { position: [n
 };
 
 /* ── Detailed Animated 3D Robot Body ── */
-export const DetailedRobot = ({ isMoving, showFeatures = false, activeFeature = "" }: { isMoving: boolean; showFeatures?: boolean; activeFeature?: string }) => {
+export const DetailedRobot = ({ isMoving, showFeatures = false, activeFeature = "", isEmergency = false }: { isMoving: boolean; showFeatures?: boolean; activeFeature?: string; isEmergency?: boolean }) => {
   const bodyRef = useRef<THREE.Group>(null);
   const headRef = useRef<THREE.Group>(null);
   const leftArmRef = useRef<THREE.Group>(null);
@@ -802,7 +802,16 @@ export const DetailedRobot = ({ isMoving, showFeatures = false, activeFeature = 
     if (backWheelRef.current) backWheelRef.current.rotation.x += delta * ws;
 
     if (antennaLightRef.current) {
-      (antennaLightRef.current.material as THREE.MeshStandardMaterial).emissiveIntensity = 0.5 + 0.5 * Math.sin(t * 5);
+      const mat = antennaLightRef.current.material as THREE.MeshStandardMaterial;
+      if (isEmergency) {
+        mat.color.set('#ef4444');
+        mat.emissive.set('#ef4444');
+        mat.emissiveIntensity = 1.0 + 1.0 * Math.sin(t * 15);
+      } else {
+        mat.color.set('#f97316');
+        mat.emissive.set('#f97316');
+        mat.emissiveIntensity = 0.5 + 0.5 * Math.sin(t * 5);
+      }
     }
     
     if (headRef.current) {
@@ -1036,6 +1045,7 @@ const Robot = ({
   onObstacleDetected: (obsPos: GridPoint) => void;
   robotPosRef: React.MutableRefObject<THREE.Vector3 | null>;
   robotRotRef: React.MutableRefObject<number>;
+  isEmergency?: boolean;
 }) => {
   const ref = useRef<THREE.Group>(null);
   const isMovingRef = useRef(false);
@@ -1119,7 +1129,7 @@ const Robot = ({
   const startPos = getGridPosition(path[0] || { x: 0, y: 0, f: 0 }, gridSize, 0.22, isMapView);
   return (
     <group ref={ref} position={startPos}>
-      <DetailedRobot isMoving={isMoving} />
+      <DetailedRobot isMoving={isMoving} isEmergency={isEmergency} />
     </group>
   );
 };
@@ -1427,6 +1437,8 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
         setActivePathColor('#22c55e'); // green
         break;
       case 'emergency_response':
+      case 'emergency_to_ctr':
+      case 'ctr_to_emergency':
         setActivePathColor('#ef4444'); // red
         break;
       case 'charging':
@@ -1438,6 +1450,51 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
         break;
       default:
         setActivePathColor('#00ffff'); // cyan
+    }
+  }, [robotState]);
+
+  useEffect(() => {
+    const isEmergency = robotState === 'emergency_response' || robotState === 'emergency_to_ctr' || robotState === 'ctr_to_emergency';
+    if (isEmergency) {
+      let intervalId: NodeJS.Timeout;
+      let audioCtx: AudioContext | null = null;
+      let oscillator: OscillatorNode | null = null;
+      
+      try {
+        audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
+        oscillator = audioCtx.createOscillator();
+        const gainNode = audioCtx.createGain();
+        
+        oscillator.type = 'square';
+        oscillator.connect(gainNode);
+        gainNode.connect(audioCtx.destination);
+        
+        const freq1 = 750;
+        const freq2 = 600;
+        let isHigh = true;
+        
+        intervalId = setInterval(() => {
+          if (oscillator && audioCtx) {
+            oscillator.frequency.setValueAtTime(isHigh ? freq2 : freq1, audioCtx.currentTime);
+            isHigh = !isHigh;
+          }
+        }, 500);
+        
+        gainNode.gain.setValueAtTime(0.05, audioCtx.currentTime); // very low volume so it's not annoying
+        oscillator.start();
+      } catch (e) {
+        console.error("Audio playback failed", e);
+      }
+      
+      return () => {
+        if (intervalId) clearInterval(intervalId);
+        if (oscillator) {
+          try { oscillator.stop(); } catch (e) {}
+        }
+        if (audioCtx && audioCtx.state !== 'closed') {
+          try { audioCtx.close(); } catch (e) {}
+        }
+      };
     }
   }, [robotState]);
 
@@ -2631,6 +2688,7 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
               onObstacleDetected={handleObstacleDetected}
               robotPosRef={robotPosRef}
               robotRotRef={robotRotRef}
+              isEmergency={robotState === 'emergency_response' || robotState === 'emergency_to_ctr' || robotState === 'ctr_to_emergency'}
             />
           )}
         </Canvas>
