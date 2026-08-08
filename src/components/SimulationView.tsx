@@ -440,13 +440,34 @@ const BuildingModel = ({ room, width, height, depth }: { room: Room, width: numb
     } else if (name.includes('gymnasium') || name.includes('tennis')) {
       return (
         <group>
-          {/* Gymnasium Building */}
-          <Box args={[width, height * 1.2, depth]} position={[0, height * 0.1, 0]} castShadow receiveShadow>
-            <meshStandardMaterial color="#e2e8f0" /> 
+          {/* Main Gym Building */}
+          <Box args={[width, height * 1.5, depth]} position={[0, height * 0.25, 0]} castShadow receiveShadow>
+            <meshStandardMaterial color="#334155" metalness={0.5} roughness={0.5} /> 
           </Box>
-          <Cylinder args={[depth/2, depth/2, width, 16, 1, false, 0, Math.PI]} position={[0, height * 0.7, 0]} rotation={[0, 0, -Math.PI/2]} castShadow>
-             <meshStandardMaterial color="#94a3b8" metalness={0.4} />
-          </Cylinder>
+          {/* Glass Front */}
+          <Box args={[width * 0.9, height * 1.2, 0.1]} position={[0, height * 0.1, depth/2 + 0.05]}>
+            <meshStandardMaterial color="#38bdf8" transparent opacity={0.5} metalness={0.9} roughness={0.1} />
+          </Box>
+          {/* Roof decoration */}
+          <Box args={[width * 1.05, 0.2, depth * 1.05]} position={[0, height * 1.05, 0]} castShadow>
+             <meshStandardMaterial color="#0f172a" />
+          </Box>
+          
+          {/* Giant Dumbbell Decoration on Roof */}
+          <group position={[0, height * 1.5, 0]}>
+             <Cylinder args={[0.2, 0.2, 2.5, 16]} rotation={[0, 0, Math.PI/2]}><meshStandardMaterial color="#94a3b8" metalness={0.8} /></Cylinder>
+             <Cylinder args={[0.6, 0.6, 0.4, 16]} position={[-1, 0, 0]} rotation={[0, 0, Math.PI/2]}><meshStandardMaterial color="#1e293b" /></Cylinder>
+             <Cylinder args={[0.6, 0.6, 0.4, 16]} position={[1, 0, 0]} rotation={[0, 0, Math.PI/2]}><meshStandardMaterial color="#1e293b" /></Cylinder>
+             <Cylinder args={[0.4, 0.4, 0.3, 16]} position={[-1.4, 0, 0]} rotation={[0, 0, Math.PI/2]}><meshStandardMaterial color="#1e293b" /></Cylinder>
+             <Cylinder args={[0.4, 0.4, 0.3, 16]} position={[1.4, 0, 0]} rotation={[0, 0, Math.PI/2]}><meshStandardMaterial color="#1e293b" /></Cylinder>
+          </group>
+
+          {/* Glowing GYM Sign */}
+          <Html position={[0, height * 0.8, depth/2 + 0.2]} center transform>
+             <div className="text-xl font-black text-red-500 tracking-[0.3em] drop-shadow-[0_0_10px_rgba(239,68,68,0.8)] border-2 border-red-500/50 px-4 py-1 rounded bg-black/80">
+                GYM
+             </div>
+          </Html>
         </group>
       );
     } else if (name.includes('cricket')) {
