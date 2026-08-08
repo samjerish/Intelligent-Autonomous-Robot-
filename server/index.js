@@ -79,6 +79,12 @@ const generateUniversityLayout = () => {
   addBuilding('Eco Park', 96, 56, 20, 10, cPark, 'park', 106, 66);
   addBuilding('College of Education', 96, 68, 20, 10, cAcademic, 'classroom', 106, 78);
 
+  // Row 4: y 84..99
+  addBuilding('Innovation Lab', 5, 84, 18, 12, cAcademic, 'classroom', 14, 96);
+  addBuilding('Research Center', 30, 84, 25, 12, cAcademic, 'classroom', 42, 96);
+  addBuilding('Student Center', 66, 84, 20, 12, cAmenities, 'utility', 76, 96);
+  addBuilding('Engineering Block', 96, 84, 20, 12, cAcademic, 'classroom', 106, 96);
+
   rooms.forEach(room => {
     for (let x = room.start.x; x <= room.end.x; x++) {
       for (let y = room.start.y; y <= room.end.y; y++) {
