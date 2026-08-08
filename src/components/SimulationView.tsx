@@ -192,7 +192,7 @@ const RoadsRender = ({ roads, gridSize }: { roads: GridPoint[], gridSize: GridPo
   return (
     <group>
       <Instances limit={roads.length} receiveShadow>
-        <boxGeometry args={[CELL_SIZE, 0.05, CELL_SIZE]} />
+        <boxGeometry args={[CELL_SIZE + 0.05, 0.05, CELL_SIZE + 0.05]} />
         <meshStandardMaterial color="#64748b" opacity={0.9} transparent />
         {roads.map((road, i) => {
           const [x, y, z] = getGridPosition(road, gridSize, 0.025);
@@ -202,8 +202,8 @@ const RoadsRender = ({ roads, gridSize }: { roads: GridPoint[], gridSize: GridPo
       
       {/* Two-way center lines */}
       <Instances limit={roads.length} receiveShadow>
-        <boxGeometry args={[CELL_SIZE * 0.6, 0.01, 0.1]} />
-        <meshStandardMaterial color="#fcd34d" emissive="#f59e0b" emissiveIntensity={0.5} />
+        <boxGeometry args={[CELL_SIZE * 0.6, 0.01, 0.05]} />
+        <meshStandardMaterial color="#ffffff" emissive="#ffffff" emissiveIntensity={0.8} />
         {roads.map((road, i) => {
           const [x, y, z] = getGridPosition(road, gridSize, 0.055);
           // Determine if road is horizontal (East-West) or vertical (North-South)
