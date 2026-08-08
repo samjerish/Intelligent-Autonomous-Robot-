@@ -1,101 +1,7 @@
 import type { GridPoint, MapData } from '../types';
 
-let worker: Worker | null = null;
-let messageId = 0;
-const pendingRequests = new Map<number, { resolve: (path: GridPoint[]) => void, reject: (err: any) => void }>();
-
-function getWorker() {
-  if (typeof window === 'undefined') return null; // SSR safety
-  if (!worker) {
-    worker = new Worker(new URL('./pathWorker.ts', import.meta.url), { type: 'module' });
-    worker.onmessage = (e) => {
-      const { id, path } = e.data;
-      if (pendingRequests.has(id)) {
-        pendingRequests.get(id)!.resolve(path);
-        pendingRequests.delete(id);
-      }
-    };
-  }
-  return worker;
-}
-
-export async function calculatePathAsync(start: GridPoint, end: GridPoint, obstacles: GridPoint[], mapData: MapData, requireRoads: boolean = true): Promise<GridPoint[]> {
-  const w = getWorker();
-  if (!w) return []; // Fallback for SSR
-
-  let targetEnd = end;
-  if (requireRoads && mapData.roads && mapData.roads.length > 0) {
-    const isEndOnRoad = mapData.roads.some(r => r.x === end.x && r.y === end.y && r.f === end.f);
-    if (!isEndOnRoad) {
-      let nearest = mapData.roads[0];
-      let minDist = Infinity;
-      for (const r of mapData.roads) {
-        const d = Math.abs(r.x - end.x) + Math.abs(r.y - end.y);
-        if (d < minDist) {
-          minDist = d;
-          nearest = r;
-        }
-      }
-      targetEnd = nearest;
-    }
-  }
-
-  return new Promise((resolve, reject) => {
-    const id = messageId++;
-    pendingRequests.set(id, { resolve, reject });
-    w.postMessage({ id, type: 'calculatePath', start, end: targetEnd, obstacles, mapData, requireRoads });
-  });
-}
-
-export async function calculateLongPathAsync(start: GridPoint, end: GridPoint, obstacles: GridPoint[], mapData: MapData, requireRoads: boolean = true): Promise<GridPoint[]> {
-  const w = getWorker();
-  if (!w) return [];
-
-  let targetEnd = end;
-  if (requireRoads && mapData.roads && mapData.roads.length > 0) {
-    const isEndOnRoad = mapData.roads.some(r => r.x === end.x && r.y === end.y && r.f === end.f);
-    if (!isEndOnRoad) {
-      let nearest = mapData.roads[0];
-      let minDist = Infinity;
-      for (const r of mapData.roads) {
-        const d = Math.abs(r.x - end.x) + Math.abs(r.y - end.y);
-        if (d < minDist) {
-          minDist = d;
-          nearest = r;
-        }
-      }
-      targetEnd = nearest;
-    }
-  }
-
-  return new Promise((resolve, reject) => {
-    const id = messageId++;
-    pendingRequests.set(id, { resolve, reject });
-    w.postMessage({ id, type: 'calculateLongPath', start, end: targetEnd, obstacles, mapData, requireRoads });
-  });
-}
-
-function manhattanDistance(a: GridPoint, b: GridPoint) {
-  return Math.abs(a.x - b.x) + Math.abs(a.y - b.y) + Math.abs(a.f - b.f) * 10;
-}
-
-function isAllowedDirection(curr: GridPoint, next: GridPoint): boolean {
-  if (next.x > curr.x) {
-    if (curr.y === 20 || curr.y === 21 || curr.y === 50 || curr.y === 51 || curr.y === 80 || curr.y === 81) return false;
-  }
-  if (next.x < curr.x) {
-    if (curr.y === 22 || curr.y === 23 || curr.y === 52 || curr.y === 53 || curr.y === 82 || curr.y === 83) return false;
-  }
-  if (next.y > curr.y) {
-    if (curr.x === 25 || curr.x === 26 || curr.x === 63 || curr.x === 64 || curr.x === 90 || curr.x === 91) return false;
-  }
-  if (next.y < curr.y) {
-    if (curr.x === 27 || curr.x === 28 || curr.x === 65 || curr.x === 66 || curr.x === 92 || curr.x === 93) return false;
-  }
-  return true;
-}
-
-export function calculatePath(start: GridPoint, end: GridPoint, obstacles: GridPoint[], mapData: MapData, requireRoads: boolean = true): GridPoint[] {
+export function calculatePath(start: GridPoint, end: GridPoint, obstacles: GridPoint[], mapData: MapData, requireRoads: boolean = false): GridPoint[] {
+  // 3D A* pathfinding implementation
   const { gridSize, stairs } = mapData;
 
   const getStairAt = (x: number, y: number, f: number) => {
@@ -133,6 +39,7 @@ export function calculatePath(start: GridPoint, end: GridPoint, obstacles: GridP
       { x: current.pos.x + 1, y: current.pos.y, f: current.pos.f }
     ];
 
+    // If standing on stairs, can go up or down a floor
     if (getStairAt(current.pos.x, current.pos.y, current.pos.f)) {
       if (current.pos.f < (gridSize.f || 1) - 1 && getStairAt(current.pos.x, current.pos.y, current.pos.f + 1)) {
         neighbors.push({ x: current.pos.x, y: current.pos.y, f: current.pos.f + 1 });
@@ -142,6 +49,7 @@ export function calculatePath(start: GridPoint, end: GridPoint, obstacles: GridP
       }
     }
 
+    // Elevators allow going to ANY floor
     const getElevatorAt = (x: number, y: number, f: number) => {
       return mapData.elevators?.find(e => e.x === x && e.y === y && e.f === f);
     };
@@ -163,24 +71,11 @@ export function calculatePath(start: GridPoint, end: GridPoint, obstacles: GridP
         neighbor.f >= 0 && neighbor.f < (gridSize.f || 1) &&
         !isObstacle(neighbor.x, neighbor.y, neighbor.f) &&
         !closedList.has(`${neighbor.x},${neighbor.y},${neighbor.f}`) &&
-        isAllowedDirection(current.pos, neighbor)
+        isRoad
       ) {
-        let floorCost = neighbor.f !== current.pos.f ? 5 : 1;
-        if (!isRoad) {
-           floorCost += 10;
-        }
-        
-        let proximityCost = 0;
-        for (let dx = -1; dx <= 1; dx++) {
-          for (let dy = -1; dy <= 1; dy++) {
-            if (dx === 0 && dy === 0) continue;
-            if (isObstacle(neighbor.x + dx, neighbor.y + dy, neighbor.f)) {
-              proximityCost += 15;
-            }
-          }
-        }
-        
-        const g = current.g + floorCost + proximityCost;
+        // Changing floors has a higher cost to simulate stair climbing
+        const gCost = neighbor.f !== current.pos.f ? 5 : 1;
+        const g = current.g + gCost;
         const h = manhattanDistance(neighbor, end);
         const existingNode = openList.find(n => n.pos.x === neighbor.x && n.pos.y === neighbor.y && n.pos.f === neighbor.f);
 
@@ -196,41 +91,13 @@ export function calculatePath(start: GridPoint, end: GridPoint, obstacles: GridP
     }
   }
 
-  return [];
+  return []; // No path found
 }
 
-export function calculateLongPath(start: GridPoint, end: GridPoint, obstacles: GridPoint[], mapData: MapData, requireRoads: boolean = true): GridPoint[] {
-  if (!mapData.rooms || mapData.rooms.length === 0) {
-    return calculatePath(start, end, obstacles, mapData, requireRoads);
-  }
-
-  let detourPoint: GridPoint | null = null;
-  let maxDetourDist = 0;
-
-  for (const room of mapData.rooms) {
-    const pt = room.door || room.start;
-    const distToStart = manhattanDistance(start, pt);
-    const distToEnd = manhattanDistance(pt, end);
-    const detourScore = distToStart + distToEnd;
-    
-    if (distToStart > 5 && distToEnd > 5 && detourScore > maxDetourDist) {
-      maxDetourDist = detourScore;
-      detourPoint = pt;
-    }
-  }
-
-  if (!detourPoint) {
-    return calculatePath(start, end, obstacles, mapData);
-  }
-
-  const part1 = calculatePath(start, detourPoint, obstacles, mapData);
-  const part2 = calculatePath(detourPoint, end, obstacles, mapData);
-
-  if (part1.length > 0 && part2.length > 0) {
-    return [...part1, ...part2.slice(1)];
-  }
-
-  return calculatePath(start, end, obstacles, mapData);
+// 3D Manhattan Distance
+function manhattanDistance(a: GridPoint, b: GridPoint) {
+  // Heavy weight on floor difference to discourage unnecessary floor changes
+  return Math.abs(a.x - b.x) + Math.abs(a.y - b.y) + Math.abs(a.f - b.f) * 10;
 }
 
 export function generateDynamicEvent(_mapData: MapData, currentPath: GridPoint[], currentIndex: number) {
@@ -240,6 +107,7 @@ export function generateDynamicEvent(_mapData: MapData, currentPath: GridPoint[]
   let newObstacle: GridPoint | null = null;
   
   if (eventType !== 'battery_warning') {
+    // Place obstacle on the path ahead
     const lookAhead = Math.min(currentIndex + 3, currentPath.length - 1);
     if (lookAhead > currentIndex) {
       newObstacle = currentPath[lookAhead];
@@ -249,3 +117,44 @@ export function generateDynamicEvent(_mapData: MapData, currentPath: GridPoint[]
   return { type: eventType, position: newObstacle };
 }
 
+export function calculateLongPath(start: GridPoint, end: GridPoint, obstacles: GridPoint[], mapData: MapData, requireRoads: boolean = false): GridPoint[] {
+  if (!mapData.rooms || mapData.rooms.length === 0) {
+    return calculatePath(start, end, obstacles, mapData, requireRoads);
+  }
+
+  // Find a room that acts as a detour.
+  // We want a room that is somewhat far from both start and end to ensure it's a "long" route.
+  let detourPoint: GridPoint | null = null;
+  let maxDetourDist = 0;
+
+  for (const room of mapData.rooms) {
+    const pt = room.door || room.start;
+    const distToStart = manhattanDistance(start, pt);
+    const distToEnd = manhattanDistance(pt, end);
+    // Score based on how out of the way it is. We want high total distance.
+    const detourScore = distToStart + distToEnd;
+    
+    // Avoid picking start or end exactly
+    if (distToStart > 5 && distToEnd > 5 && detourScore > maxDetourDist) {
+      maxDetourDist = detourScore;
+      detourPoint = pt;
+    }
+  }
+
+  if (!detourPoint) {
+    // If no good detour found, fallback to shortest
+    return calculatePath(start, end, obstacles, mapData);
+  }
+
+  // Calculate path to detour, then from detour to end
+  const part1 = calculatePath(start, detourPoint, obstacles, mapData);
+  const part2 = calculatePath(detourPoint, end, obstacles, mapData);
+
+  if (part1.length > 0 && part2.length > 0) {
+    // Combine paths, avoiding duplicate at the connection point
+    return [...part1, ...part2.slice(1)];
+  }
+
+  // Fallback if detour pathing fails
+  return calculatePath(start, end, obstacles, mapData);
+}

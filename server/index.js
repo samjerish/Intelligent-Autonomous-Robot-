@@ -70,7 +70,7 @@ const generateUniversityLayout = () => {
 
   // Row 3: y 54..79
   addBuilding('Swimming Pool', 5, 56, 15, 10, cSports, 'sports', 12, 66);
-  addBuilding('Gymnasium', 5, 68, 15, 10, cSports, 'sports', 12, 78);
+  addBuilding('Tennis Court', 5, 68, 15, 10, cSports, 'sports', 12, 78);
   addBuilding('Cricket Nets', 30, 56, 12, 12, cSports, 'sports', 36, 68);
   addBuilding('Hockey Field', 45, 56, 12, 12, cSports, 'sports', 51, 68);
   addBuilding('Sports Ground', 30, 70, 25, 9, cSports, 'sports', 42, 79);
@@ -78,9 +78,6 @@ const generateUniversityLayout = () => {
   addBuilding('Botanical Garden', 66, 73, 15, 6, cPark, 'park', 73, 79);
   addBuilding('Eco Park', 96, 56, 20, 10, cPark, 'park', 106, 66);
   addBuilding('College of Education', 96, 68, 20, 10, cAcademic, 'classroom', 106, 78);
-
-  // Security Room near gate (gate is at x=62, y=86) — with space
-  addBuilding('Security Room', 70, 84, 4, 5, cAmenities, 'security', 72, 89);
 
   rooms.forEach(room => {
     for (let x = room.start.x; x <= room.end.x; x++) {
@@ -104,15 +101,15 @@ const generateUniversityLayout = () => {
     }
   };
 
-  // Horizontal arteries — 6 cells wide
-  addRoadRect(0, 19, 119, 24);
-  addRoadRect(0, 49, 119, 54);
-  addRoadRect(0, 79, 119, 84);
+  // Horizontal arteries
+  addRoadRect(0, 20, 119, 23);
+  addRoadRect(0, 50, 119, 53);
+  addRoadRect(0, 80, 119, 83);
 
-  // Vertical main roads — 4 cells wide
-  addRoadRect(24, 0, 27, 99);
-  addRoadRect(62, 0, 65, 99);
-  addRoadRect(89, 0, 92, 99);
+  // Vertical main roads
+  addRoadRect(25, 0, 28, 99);
+  addRoadRect(63, 0, 66, 99);
+  addRoadRect(90, 0, 93, 99);
 
   const isInsideRoom = (x, y) => {
     return rooms.some(r => x >= r.start.x && x <= r.end.x && y >= r.start.y && y <= r.end.y);

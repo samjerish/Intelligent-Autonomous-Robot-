@@ -1,5 +1,4 @@
 import React, { useEffect, useRef, useState, useMemo } from 'react';
-import { DetailedRobot } from './DetailedRobot';
 import type { MapData, GridPoint, Room } from '../types';
 import { calculatePath, calculateLongPath } from '../utils/simulationEngine';
 import { Play, RotateCcw, Activity, ShieldAlert, Crosshair, Maximize, Minimize, Bot, Power, Send, Construction, Pause } from 'lucide-react';
@@ -16,6 +15,7 @@ import {
   Instance,
   Sphere,
   Cylinder,
+  RoundedBox,
 } from '@react-three/drei';
 import * as THREE from 'three';
 
@@ -189,62 +189,15 @@ const getGridPointFromVector3 = (point: THREE.Vector3, gridSize: GridPoint): Gri
 
 const RoadsRender = ({ roads, gridSize }: { roads: GridPoint[], gridSize: GridPoint }) => {
   if (!roads || roads.length === 0) return null;
-
-  // Hardcoded road center-lines matching the university map road definitions:
-  // Horizontal roads: y = 19–24, 49–54, 79–84  → centers y = 21, 51, 81
-  // Vertical roads:   x = 24–27, 62–65, 89–92  → centers x = 25, 63, 90
-  const H_CENTERS = [21, 51, 81];  // horizontal road center y-cells
-  const V_CENTERS = [25, 63, 90];  // vertical road center x-cells
-  const GRID_W = gridSize.x;
-  const GRID_H = gridSize.y;
-
-  // Build dash positions
-  const dashes: { wx: number; wz: number; isH: boolean }[] = [];
-  const STEP = 3; // every 3 cells, place 1 dash (creates gap pattern)
-
-  H_CENTERS.forEach(cy => {
-    for (let cx = 1; cx < GRID_W - 1; cx += STEP) {
-      const [wx, , wz] = getGridPosition({ x: cx, y: cy, f: 0 }, gridSize, 0.055);
-      dashes.push({ wx, wz, isH: true });
-    }
-  });
-
-  V_CENTERS.forEach(cx => {
-    for (let cy = 1; cy < GRID_H - 1; cy += STEP) {
-      const [wx, , wz] = getGridPosition({ x: cx, y: cy, f: 0 }, gridSize, 0.055);
-      dashes.push({ wx, wz, isH: false });
-    }
-  });
-
   return (
-    <>
-      {/* Dark asphalt road surface */}
-      <Instances limit={roads.length} receiveShadow>
-        <boxGeometry args={[CELL_SIZE, 0.05, CELL_SIZE]} />
-        <meshStandardMaterial color="#374151" roughness={0.9} />
-        {roads.map((road, i) => {
-          const [x, y, z] = getGridPosition(road, gridSize, 0.025);
-          return <Instance key={i} position={[x, y, z]} />;
-        })}
-      </Instances>
-
-      {/* Dashed center-lines — only in the center of each road */}
-      {dashes.map((d, i) =>
-        d.isH ? (
-          // Horizontal road → dash runs along X axis
-          <mesh key={`d-${i}`} position={[d.wx, 0.057, d.wz]}>
-            <boxGeometry args={[CELL_SIZE * 1.8, 0.02, CELL_SIZE * 0.14]} />
-            <meshStandardMaterial color="#facc15" emissive="#facc15" emissiveIntensity={0.5} roughness={0.4} />
-          </mesh>
-        ) : (
-          // Vertical road → dash runs along Z axis
-          <mesh key={`d-${i}`} position={[d.wx, 0.057, d.wz]}>
-            <boxGeometry args={[CELL_SIZE * 0.14, 0.02, CELL_SIZE * 1.8]} />
-            <meshStandardMaterial color="#facc15" emissive="#facc15" emissiveIntensity={0.5} roughness={0.4} />
-          </mesh>
-        )
-      )}
-    </>
+    <Instances limit={roads.length} receiveShadow>
+      <boxGeometry args={[CELL_SIZE, 0.05, CELL_SIZE]} />
+      <meshStandardMaterial color="#64748b" opacity={0.9} transparent />
+      {roads.map((road, i) => {
+        const [x, y, z] = getGridPosition(road, gridSize, 0.025);
+        return <Instance key={i} position={[x, y, z]} />;
+      })}
+    </Instances>
   );
 };
 
@@ -375,8 +328,34 @@ const BlockersRender = ({ blockers, gridSize, roads }: { blockers: GridPoint[], 
   );
 };
 
+const Butterflies = () => {
+  const groupRef = useRef<THREE.Group>(null);
+  useFrame(({ clock }) => {
+    if (groupRef.current) {
+      // Stopped movement for Butterflies
+      // const t = clock.getElapsedTime();
+      // groupRef.current.children.forEach((child, i) => {
+      //   child.position.y = Math.sin(t * 3 + i * 2) * 0.5 + 1.5;
+      //   child.position.x = Math.cos(t * 1.5 + i) * 3;
+      //   child.position.z = Math.sin(t * 1.8 + i * 1.5) * 3;
+      // });
+    }
+  });
+  
+  return (
+    <group ref={groupRef}>
+      {[...Array(15)].map((_, i) => (
+        <Box key={i} args={[0.05, 0.05, 0.05]}>
+          <meshBasicMaterial color={i % 2 === 0 ? "#fcd34d" : "#60a5fa"} />
+        </Box>
+      ))}
+    </group>
+  );
+};
+
 const BuildingModel = ({ room, width, height, depth }: { room: Room, width: number, height: number, depth: number }) => {
   const type = room.type || "unknown";
+  const nameLow = room.name.toLowerCase();
   const baseColor = room.color || "#e2e8f0";
   
   if (type === 'medical') {
@@ -399,33 +378,6 @@ const BuildingModel = ({ room, width, height, depth }: { room: Room, width: numb
             <meshStandardMaterial color="#ef4444" emissive="#ef4444" emissiveIntensity={0.5} />
           </Box>
         </group>
-      </group>
-    );
-  } else if (type === 'security') {
-    return (
-      <group>
-        {/* Security Booth - small compact building */}
-        <Box args={[width, height * 1.1, depth]} position={[0, height * 0.05, 0]} castShadow receiveShadow>
-          <meshStandardMaterial color="#1e293b" metalness={0.5} roughness={0.4} />
-        </Box>
-        {/* Glass window strip */}
-        <Box args={[width * 0.85, height * 0.4, 0.08]} position={[0, height * 0.15, depth/2 + 0.04]}>
-          <meshStandardMaterial color="#38bdf8" transparent opacity={0.7} metalness={0.9} roughness={0.1} />
-        </Box>
-        {/* Overhang / shade visor */}
-        <Box args={[width * 1.15, 0.1, depth * 0.7]} position={[0, height * 0.6, depth * 0.1]} castShadow>
-          <meshStandardMaterial color="#0f172a" />
-        </Box>
-        {/* Warning light on top */}
-        <Sphere args={[0.15, 8, 8]} position={[0, height * 0.75, 0]}>
-          <meshStandardMaterial color="#f59e0b" emissive="#f59e0b" emissiveIntensity={2} />
-        </Sphere>
-        {/* Security sign */}
-        <Html position={[0, height * 0.35, depth/2 + 0.1]} center transform>
-          <div className="text-[8px] font-black text-yellow-400 tracking-widest bg-black/90 px-1 py-0.5 rounded border border-yellow-500/50 whitespace-nowrap">
-            🛡 SECURITY
-          </div>
-        </Html>
       </group>
     );
   } else if (type === 'utility') {
@@ -462,24 +414,18 @@ const BuildingModel = ({ room, width, height, depth }: { room: Room, width: numb
   } else if (type === 'library') {
     return (
       <group>
-        {/* Skyscraper base */}
-        <Box args={[width * 0.9, height * 0.5, depth * 0.9]} position={[0, -height/2 + 0.25, 0]} castShadow receiveShadow>
-          <meshStandardMaterial color="#0f172a" />
+        <Box args={[width, height * 1.8, depth]} position={[0, height * 0.4, 0]} castShadow receiveShadow>
+          <meshStandardMaterial color="#e2e8f0" />
         </Box>
-        {/* Core structural building */}
-        <Box args={[width * 0.7, height * 6, depth * 0.7]} position={[0, height * 2.5, 0]} castShadow receiveShadow>
-          <meshStandardMaterial color="#334155" />
-        </Box>
-        {/* Glass exterior */}
-        <Box args={[width * 0.75, height * 5.8, depth * 0.75]} position={[0, height * 2.5, 0]} castShadow receiveShadow>
-          <meshStandardMaterial color="#38bdf8" transparent opacity={0.6} metalness={0.9} roughness={0.1} />
-        </Box>
-        {/* Roof */}
-        <Box args={[width * 0.8, 0.2, depth * 0.8]} position={[0, height * 5.5, 0]} castShadow receiveShadow>
-          <meshStandardMaterial color="#0f172a" />
-        </Box>
-        <Cylinder args={[0.1, 0.1, 2]} position={[0, height * 6, 0]}>
-          <meshStandardMaterial color="#ef4444" />
+        {/* Greek style columns */}
+        {[-width/2 + 0.5, 0, width/2 - 0.5].map((x, i) => (
+          <Cylinder key={i} args={[0.2, 0.2, height * 1.8]} position={[x, height * 0.4, depth/2 + 0.1]} castShadow>
+            <meshStandardMaterial color="#ffffff" />
+          </Cylinder>
+        ))}
+        {/* Pediment */}
+        <Cylinder args={[width/2, width/2, depth + 0.5, 3]} position={[0, height * 1.4, 0]} rotation={[width > depth ? 0 : Math.PI / 2, 0, Math.PI / 2]} castShadow>
+           <meshStandardMaterial color="#94a3b8" />
         </Cylinder>
       </group>
     );
@@ -489,145 +435,111 @@ const BuildingModel = ({ room, width, height, depth }: { room: Room, width: numb
         <Box args={[width, height * 0.5, depth]} position={[0, -height * 0.25, 0]} castShadow receiveShadow>
           <meshStandardMaterial color="#cbd5e1" />
         </Box>
-        {/* True Dome Roof */}
+        {/* Full Dome Roof */}
         <Sphere args={[Math.min(width, depth)/2, 32, 16, 0, Math.PI * 2, 0, Math.PI / 2]} position={[0, 0, 0]} castShadow>
-          <meshStandardMaterial color="#94a3b8" metalness={0.5} roughness={0.2} side={THREE.DoubleSide} />
+          <meshStandardMaterial color="#94a3b8" metalness={0.5} roughness={0.2} />
         </Sphere>
       </group>
     );
   } else if (type === 'sports') {
-    const name = room.name.toLowerCase();
-    
-    if (name.includes('swimming')) {
+    if (nameLow.includes('pool')) {
       return (
         <group>
-          {/* Pool base */}
-          <Box args={[width, 0.5, depth]} position={[0, -height/2 + 0.25, 0]} receiveShadow>
-            <meshStandardMaterial color="#e2e8f0" />
+          {/* Deck */}
+          <Box args={[width, 0.2, depth]} position={[0, -height/2 + 0.1, 0]} receiveShadow>
+            <meshStandardMaterial color="#cbd5e1" />
           </Box>
           {/* Water */}
-          <Box args={[width * 0.9, 0.4, depth * 0.9]} position={[0, -height/2 + 0.3, 0]}>
-            <meshStandardMaterial color="#38bdf8" transparent opacity={0.6} roughness={0.1} />
+          <Box args={[width * 0.8, 0.15, depth * 0.8]} position={[0, -height/2 + 0.15, 0]} receiveShadow>
+            <meshStandardMaterial color="#0ea5e9" opacity={0.7} transparent metalness={0.8} roughness={0.1} />
           </Box>
         </group>
       );
-    } else if (name.includes('gymnasium') || name.includes('tennis')) {
+    } else if (nameLow.includes('tennis')) {
       return (
         <group>
-          {/* Main Gym Building */}
-          <Box args={[width, height * 1.5, depth]} position={[0, height * 0.25, 0]} castShadow receiveShadow>
-            <meshStandardMaterial color="#334155" metalness={0.5} roughness={0.5} /> 
+          {/* Court */}
+          <Box args={[width, 0.1, depth]} position={[0, -height/2 + 0.05, 0]} receiveShadow>
+            <meshStandardMaterial color="#166534" />
           </Box>
-          {/* Glass Front */}
-          <Box args={[width * 0.9, height * 1.2, 0.1]} position={[0, height * 0.1, depth/2 + 0.05]}>
-            <meshStandardMaterial color="#38bdf8" transparent opacity={0.5} metalness={0.9} roughness={0.1} />
+          {/* Net */}
+          <Box args={[width * 0.8, 0.4, 0.05]} position={[0, -height/2 + 0.25, 0]} castShadow>
+            <meshStandardMaterial color="#f8fafc" opacity={0.8} transparent />
           </Box>
-          {/* Roof decoration */}
-          <Box args={[width * 1.05, 0.2, depth * 1.05]} position={[0, height * 1.05, 0]} castShadow>
-             <meshStandardMaterial color="#0f172a" />
-          </Box>
-          
-          {/* Giant Dumbbell Decoration on Roof */}
-          <group position={[0, height * 1.5, 0]}>
-             <Cylinder args={[0.2, 0.2, 2.5, 16]} rotation={[0, 0, Math.PI/2]}><meshStandardMaterial color="#94a3b8" metalness={0.8} /></Cylinder>
-             <Cylinder args={[0.6, 0.6, 0.4, 16]} position={[-1, 0, 0]} rotation={[0, 0, Math.PI/2]}><meshStandardMaterial color="#1e293b" /></Cylinder>
-             <Cylinder args={[0.6, 0.6, 0.4, 16]} position={[1, 0, 0]} rotation={[0, 0, Math.PI/2]}><meshStandardMaterial color="#1e293b" /></Cylinder>
-             <Cylinder args={[0.4, 0.4, 0.3, 16]} position={[-1.4, 0, 0]} rotation={[0, 0, Math.PI/2]}><meshStandardMaterial color="#1e293b" /></Cylinder>
-             <Cylinder args={[0.4, 0.4, 0.3, 16]} position={[1.4, 0, 0]} rotation={[0, 0, Math.PI/2]}><meshStandardMaterial color="#1e293b" /></Cylinder>
-          </group>
-
-          {/* Glowing GYM Sign */}
-          <Html position={[0, height * 0.8, depth/2 + 0.2]} center transform>
-             <div className="text-xl font-black text-red-500 tracking-[0.3em] drop-shadow-[0_0_10px_rgba(239,68,68,0.8)] border-2 border-red-500/50 px-4 py-1 rounded bg-black/80">
-                GYM
-             </div>
-          </Html>
         </group>
       );
-    } else if (name.includes('cricket')) {
+    } else if (nameLow.includes('cricket')) {
       return (
         <group>
+          {/* Grass */}
+          <Box args={[width, 0.1, depth]} position={[0, -height/2 + 0.05, 0]} receiveShadow>
+            <meshStandardMaterial color="#22c55e" />
+          </Box>
           {/* Pitch */}
-          <Box args={[width, 0.2, depth]} position={[0, -height/2 + 0.1, 0]} receiveShadow>
-            <meshStandardMaterial color="#22c55e" /> 
-          </Box>
-          <Box args={[width * 0.8, 0.22, depth * 0.3]} position={[0, -height/2 + 0.11, 0]}>
-             <meshStandardMaterial color="#d4d4d8" />
+          <Box args={[width * 0.2, 0.15, depth * 0.8]} position={[0, -height/2 + 0.08, 0]} receiveShadow>
+            <meshStandardMaterial color="#d4a373" />
           </Box>
           {/* Nets */}
-          <Box args={[width * 0.8, 2, depth * 0.3]} position={[0, -height/2 + 1, 0]}>
-             <meshStandardMaterial color="#000000" wireframe transparent opacity={0.3} />
+          <Box args={[width * 0.3, 1.5, depth * 0.9]} position={[0, -height/2 + 0.8, 0]}>
+             <meshStandardMaterial color="#94a3b8" wireframe />
           </Box>
           {/* Stumps */}
-          <group position={[width * 0.3, -height/2 + 0.3, 0]}>
-            <Cylinder args={[0.02, 0.02, 0.4]} position={[0, 0, -0.1]}><meshStandardMaterial color="#facc15" /></Cylinder>
-            <Cylinder args={[0.02, 0.02, 0.4]} position={[0, 0, 0]}><meshStandardMaterial color="#facc15" /></Cylinder>
-            <Cylinder args={[0.02, 0.02, 0.4]} position={[0, 0, 0.1]}><meshStandardMaterial color="#facc15" /></Cylinder>
-          </group>
+          {[-0.1, 0, 0.1].map((ox, i) => (
+             <Cylinder key={'s1'+i} args={[0.02, 0.02, 0.4]} position={[ox, -height/2 + 0.2, depth * 0.35]}>
+               <meshStandardMaterial color="#ffffff" />
+             </Cylinder>
+          ))}
+          {[-0.1, 0, 0.1].map((ox, i) => (
+             <Cylinder key={'s2'+i} args={[0.02, 0.02, 0.4]} position={[ox, -height/2 + 0.2, -depth * 0.35]}>
+               <meshStandardMaterial color="#ffffff" />
+             </Cylinder>
+          ))}
         </group>
       );
-    } else if (name.includes('hockey')) {
+    } else if (nameLow.includes('hockey')) {
       return (
         <group>
-          {/* Field */}
-          <Box args={[width, 0.2, depth]} position={[0, -height/2 + 0.1, 0]} receiveShadow>
-            <meshStandardMaterial color="#3b82f6" />
+          {/* Turf */}
+          <Box args={[width, 0.1, depth]} position={[0, -height/2 + 0.05, 0]} receiveShadow>
+            <meshStandardMaterial color="#15803d" />
           </Box>
           {/* Goals */}
-          <Box args={[0.2, 0.8, 1.5]} position={[-width/2 + 0.5, -height/2 + 0.5, 0]}>
+          <Box args={[width * 0.2, 0.8, 0.2]} position={[0, -height/2 + 0.45, depth/2 - 0.5]}>
              <meshStandardMaterial color="#ffffff" wireframe />
           </Box>
-          <Box args={[0.2, 0.8, 1.5]} position={[width/2 - 0.5, -height/2 + 0.5, 0]}>
+          <Box args={[width * 0.2, 0.8, 0.2]} position={[0, -height/2 + 0.45, -depth/2 + 0.5]}>
              <meshStandardMaterial color="#ffffff" wireframe />
           </Box>
         </group>
       );
-    } else if (name.includes('indoor')) {
+    } else if (nameLow.includes('indoor')) {
       return (
         <group>
-          {/* Closed stadium */}
-          <Box args={[width, height, depth]} position={[0, 0, 0]} castShadow receiveShadow>
-            <meshStandardMaterial color="#f1f5f9" /> 
+          {/* Closed Stadium */}
+          <Box args={[width, height * 1.2, depth]} position={[0, height * 0.1, 0]} castShadow receiveShadow>
+            <meshStandardMaterial color="#cbd5e1" metalness={0.5} />
           </Box>
           {/* Curved Roof */}
-          <Cylinder args={[depth/2, depth/2, width, 16, 1, false, 0, Math.PI]} position={[0, height/2, 0]} rotation={[0, 0, -Math.PI/2]} castShadow>
-             <meshStandardMaterial color="#cbd5e1" metalness={0.4} />
+          <Cylinder args={[Math.min(width, depth)/2, Math.min(width, depth)/2, Math.max(width, depth), 32, 1, false, 0, Math.PI]} position={[0, height * 0.7, 0]} rotation={[width > depth ? 0 : Math.PI / 2, 0, Math.PI / 2]} castShadow>
+             <meshStandardMaterial color="#94a3b8" />
           </Cylinder>
         </group>
       );
     } else {
+      // Sports Ground or default park-like sports area
       return (
         <group>
-          <Box args={[width, 0.2, depth]} position={[0, -height/2 + 0.1, 0]} receiveShadow>
-            <meshStandardMaterial color="#4ade80" />
+          <Box args={[width, 0.1, depth]} position={[0, -height/2 + 0.05, 0]} receiveShadow>
+            <meshStandardMaterial color="#22c55e" />
           </Box>
-          <group position={[-width/4 + 1, -height/2 + 0.2, 0]}>
-            <Box args={[0.1, 1.2, 0.1]} position={[-1, 0.5, 0]}><meshStandardMaterial color="#94a3b8" /></Box>
-            <Box args={[0.1, 1.2, 0.1]} position={[1, 0.5, 0]}><meshStandardMaterial color="#94a3b8" /></Box>
-            <Box args={[2.2, 0.1, 0.1]} position={[0, 1.1, 0]}><meshStandardMaterial color="#94a3b8" /></Box>
-            <Box args={[0.05, 0.8, 0.05]} position={[-0.5, 0.6, 0]}><meshStandardMaterial color="#000000" /></Box>
-            <Box args={[0.05, 0.8, 0.05]} position={[0.5, 0.6, 0]}><meshStandardMaterial color="#000000" /></Box>
-            <Box args={[0.6, 0.05, 0.3]} position={[-0.5, 0.2, 0]}><meshStandardMaterial color="#ef4444" /></Box>
-            <Box args={[0.6, 0.05, 0.3]} position={[0.5, 0.2, 0]}><meshStandardMaterial color="#3b82f6" /></Box>
-          </group>
-          <Box args={[2, 0.1, 2]} position={[width/4, -height/2 + 0.15, -depth/4]}>
-            <meshStandardMaterial color="#fcd34d" />
-          </Box>
-          <Box args={[2.2, 0.2, 2.2]} position={[width/4, -height/2 + 0.1, -depth/4]}>
-            <meshStandardMaterial color="#f59e0b" />
-          </Box>
-          <group position={[width/4, -height/2 + 0.2, depth/4]}>
-             <Box args={[0.8, 1.5, 0.8]} position={[0, 0.75, -1]}><meshStandardMaterial color="#3b82f6" /></Box>
-             <Box args={[0.6, 2, 0.1]} position={[0, 0.5, 0]} rotation={[-Math.PI/4, 0, 0]}><meshStandardMaterial color="#ef4444" /></Box>
-          </group>
-          <group position={[-width/4, -height/2 + 0.2, depth/3]}>
-            <Cylinder args={[0.1, 0.1, 1]} position={[0, 0.5, 0]}><meshStandardMaterial color="#78350f" /></Cylinder>
-            <Sphere args={[0.8, 8, 8]} position={[0, 1.2, 0]}><meshStandardMaterial color="#16a34a" /></Sphere>
-          </group>
-          <group position={[width/3, -height/2 + 0.2, depth/3]}>
-            <Cylinder args={[0.1, 0.1, 1.2]} position={[0, 0.6, 0]}><meshStandardMaterial color="#78350f" /></Cylinder>
-            <Sphere args={[0.9, 8, 8]} position={[0, 1.4, 0]}><meshStandardMaterial color="#16a34a" /></Sphere>
-          </group>
+          {/* Running Track (Ovalish) */}
+          <Cylinder args={[Math.min(width, depth)*0.4, Math.min(width, depth)*0.4, 0.15, 32]} position={[0, -height/2 + 0.08, 0]}>
+             <meshStandardMaterial color="#b91c1c" />
+          </Cylinder>
+          {/* Inner Grass */}
+          <Cylinder args={[Math.min(width, depth)*0.3, Math.min(width, depth)*0.3, 0.2, 32]} position={[0, -height/2 + 0.1, 0]}>
+             <meshStandardMaterial color="#22c55e" />
+          </Cylinder>
         </group>
       );
     }
@@ -637,30 +549,23 @@ const BuildingModel = ({ room, width, height, depth }: { room: Room, width: numb
         <Box args={[width, 0.2, depth]} position={[0, -height/2 + 0.1, 0]} receiveShadow>
           <meshStandardMaterial color="#22c55e" />
         </Box>
-        {/* More trees */}
-        {[
-          [-width/3, -depth/3], [width/3, depth/3], [-width/4, depth/4], [width/4, -depth/4],
-          [0, -depth/3], [width/3, 0], [-width/2.5, 0]
-        ].map((pos, i) => (
-          <group key={i} position={[pos[0], -height/2 + 0.5, pos[1]]}>
-            <Cylinder args={[0.1, 0.1, 0.8]} position={[0, -0.1, 0]} castShadow>
-               <meshStandardMaterial color="#78350f" />
-            </Cylinder>
-            <Cylinder args={[0.4 + (i%3)*0.1, 0.6 + (i%3)*0.1, 0.8 + (i%3)*0.2]} position={[0, 0.6, 0]} castShadow>
-               <meshStandardMaterial color={["#15803d", "#166534", "#22c55e"][i % 3]} />
-            </Cylinder>
-          </group>
-        ))}
+        {/* Many trees for Eco Park */}
+        {[...Array(nameLow.includes('eco') ? 15 : 4)].map((_, i) => {
+          const tx = (Math.random() - 0.5) * width * 0.8;
+          const tz = (Math.random() - 0.5) * depth * 0.8;
+          return (
+            <group key={i} position={[tx, -height/2 + 0.5, tz]}>
+              <Cylinder args={[0.1, 0.1, 0.8]} position={[0, -0.1, 0]} castShadow>
+                 <meshStandardMaterial color="#78350f" />
+              </Cylinder>
+              <Cylinder args={[0.4, 0.6, 1.2]} position={[0, 0.8, 0]} castShadow>
+                 <meshStandardMaterial color="#15803d" />
+              </Cylinder>
+            </group>
+          );
+        })}
         {/* Butterflies */}
-        {Array.from({ length: 12 }).map((_, i) => (
-          <Box key={`b-${i}`} args={[0.1, 0.1, 0.1]} position={[
-            ((i * 1.3) % width) - width/2,
-            -height/2 + 1 + (i % 3) * 0.5,
-            ((i * 1.7) % depth) - depth/2
-          ]}>
-             <meshStandardMaterial color={["#fbbf24", "#38bdf8", "#f472b6"][i % 3]} emissive={["#fbbf24", "#38bdf8", "#f472b6"][i % 3]} emissiveIntensity={0.5} />
-          </Box>
-        ))}
+        <Butterflies />
       </group>
     );
   } else if (type === 'food') {
@@ -743,6 +648,254 @@ const SciFiGate = ({ position, scale = 1, rotation = [0, 0, 0] }: { position: [n
   );
 };
 
+/* ── Detailed Animated 3D Robot Body ── */
+export const DetailedRobot = ({ isMoving, showFeatures = false, activeFeature = "" }: { isMoving: boolean; showFeatures?: boolean; activeFeature?: string }) => {
+  const bodyRef = useRef<THREE.Group>(null);
+  const headRef = useRef<THREE.Group>(null);
+  const leftArmRef = useRef<THREE.Group>(null);
+  const rightArmRef = useRef<THREE.Group>(null);
+  const leftWheelRef = useRef<THREE.Mesh>(null);
+  const rightWheelRef = useRef<THREE.Mesh>(null);
+  const frontWheelRef = useRef<THREE.Mesh>(null);
+  const backWheelRef = useRef<THREE.Mesh>(null);
+  const antennaLightRef = useRef<THREE.Mesh>(null);
+  const batteryMatRef = useRef<THREE.MeshStandardMaterial>(null);
+  
+  const clock = useRef(0);
+
+  useFrame((_state, delta) => {
+    clock.current += delta;
+    const t = clock.current;
+
+    if (bodyRef.current) bodyRef.current.position.y = isMoving ? Math.sin(t * 8) * 0.04 : 0;
+    if (headRef.current) headRef.current.rotation.y = isMoving ? Math.sin(t * 2) * 0.3 : Math.sin(t * 0.8) * 0.25;
+    if (leftArmRef.current) leftArmRef.current.rotation.x = isMoving ? Math.sin(t * 8) * 0.4 : 0;
+    if (rightArmRef.current) rightArmRef.current.rotation.x = isMoving ? -Math.sin(t * 8) * 0.4 : 0;
+
+    const ws = isMoving ? 8 : 0.5;
+    if (leftWheelRef.current) leftWheelRef.current.rotation.x += delta * ws;
+    if (rightWheelRef.current) rightWheelRef.current.rotation.x += delta * ws;
+    if (frontWheelRef.current) frontWheelRef.current.rotation.x += delta * ws;
+    if (backWheelRef.current) backWheelRef.current.rotation.x += delta * ws;
+
+    if (antennaLightRef.current) {
+      (antennaLightRef.current.material as THREE.MeshStandardMaterial).emissiveIntensity = 0.5 + 0.5 * Math.sin(t * 5);
+    }
+    
+    if (headRef.current) {
+      if (isMoving) {
+        headRef.current.rotation.y = Math.sin(t * 2.5) * 0.4;
+      } else {
+        headRef.current.rotation.y = THREE.MathUtils.lerp(headRef.current.rotation.y, 0, 0.1);
+      }
+    }
+    
+    if (batteryMatRef.current) {
+      if (activeFeature === 'battery') {
+        batteryMatRef.current.emissiveIntensity = 1.5 + 1.5 * Math.sin(t * 15);
+      } else {
+        batteryMatRef.current.emissiveIntensity = 0;
+      }
+    }
+  });
+
+  return (
+    <group scale={1.8}>
+      <group ref={bodyRef}>
+        {/* Torso */}
+        <RoundedBox args={[0.7, 0.55, 0.5]} radius={0.06} smoothness={4} position={[0, 0.6, 0]} castShadow>
+          <meshStandardMaterial color="#1e293b" metalness={0.7} roughness={0.25} />
+        </RoundedBox>
+        {/* Medical Kit (Back) */}
+        <RoundedBox args={[0.4, 0.3, 0.15]} radius={0.02} smoothness={4} position={[0, 0.65, -0.28]} castShadow>
+          <meshStandardMaterial color="#ef4444" metalness={0.2} roughness={0.6} />
+        </RoundedBox>
+        <Box args={[0.12, 0.04, 0.01]} position={[0, 0.65, -0.36]}>
+          <meshStandardMaterial color="#ffffff" emissive="#ffffff" emissiveIntensity={0.5} />
+        </Box>
+        <Box args={[0.04, 0.12, 0.01]} position={[0, 0.65, -0.36]}>
+          <meshStandardMaterial color="#ffffff" emissive="#ffffff" emissiveIntensity={0.5} />
+        </Box>
+        {showFeatures && (
+          <Html position={[0, 0.75, -0.4]} center>
+            <div className={`backdrop-blur-md border px-3 py-1.5 rounded-lg text-xs font-bold shadow-lg whitespace-nowrap pointer-events-none transition-all duration-300 ${activeFeature === 'medical' ? 'bg-black/90 border-red-400 text-red-400 scale-110 shadow-[0_0_15px_rgba(239,68,68,0.5)]' : 'bg-black/60 border-red-500/50 text-red-100'}`}>
+              <div className="flex items-center gap-1.5">
+                <div className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse"></div>
+                Emergency Medical Kit
+              </div>
+            </div>
+          </Html>
+        )}
+        
+        {/* Battery Box (Below Medical Kit) */}
+        <RoundedBox args={[0.35, 0.15, 0.15]} radius={0.02} smoothness={4} position={[0, 0.4, -0.28]} castShadow>
+          <meshStandardMaterial 
+            ref={batteryMatRef}
+            color={activeFeature === 'battery' ? "#22c55e" : "#14532d"} 
+            emissive={activeFeature === 'battery' ? "#22c55e" : "#000000"} 
+            emissiveIntensity={activeFeature === 'battery' ? 2 : 0} 
+            metalness={0.5} roughness={0.4} 
+          />
+        </RoundedBox>
+        {/* Battery Label */}
+        {showFeatures && (
+          <Html position={[0, 0.4, -0.4]} center>
+            <div className={`backdrop-blur-md border px-3 py-1.5 rounded-lg text-xs font-bold shadow-lg whitespace-nowrap pointer-events-none transition-all duration-300 ${activeFeature === 'battery' ? 'bg-black/90 border-green-400 text-green-400 scale-110 shadow-[0_0_15px_rgba(34,197,94,0.5)]' : 'bg-black/60 border-green-500/50 text-green-100'}`}>
+              <div className="flex items-center gap-1.5">
+                <div className={`w-1.5 h-1.5 rounded-full ${activeFeature === 'battery' ? 'bg-green-400 animate-pulse' : 'bg-green-500'}`}></div>
+                High-Capacity Battery
+              </div>
+            </div>
+          </Html>
+        )}
+        {/* Chest glow stripe */}
+        <Box args={[0.55, 0.08, 0.02]} position={[0, 0.65, 0.26]}>
+          <meshStandardMaterial color="#0ea5e9" emissive="#0ea5e9" emissiveIntensity={0.8} metalness={0.3} roughness={0.2} />
+        </Box>
+        {/* Chest grill lines */}
+        {[-0.1, 0, 0.1].map((ox, i) => (
+          <Box key={i} args={[0.04, 0.14, 0.02]} position={[ox, 0.55, 0.261]}>
+            <meshStandardMaterial color="#334155" metalness={0.5} roughness={0.4} />
+          </Box>
+        ))}
+        {/* Shoulder pads */}
+        <RoundedBox args={[0.16, 0.16, 0.16]} radius={0.04} smoothness={4} position={[-0.46, 0.76, 0]} castShadow>
+          <meshStandardMaterial color="#0f172a" metalness={0.8} roughness={0.2} />
+        </RoundedBox>
+        <RoundedBox args={[0.16, 0.16, 0.16]} radius={0.04} smoothness={4} position={[0.46, 0.76, 0]} castShadow>
+          <meshStandardMaterial color="#0f172a" metalness={0.8} roughness={0.2} />
+        </RoundedBox>
+
+        {/* Left Arm */}
+        <group ref={leftArmRef} position={[-0.46, 0.68, 0]}>
+          <Cylinder args={[0.07, 0.06, 0.28, 8]} position={[0, -0.14, 0]} castShadow>
+            <meshStandardMaterial color="#1e293b" metalness={0.7} roughness={0.3} />
+          </Cylinder>
+          <Sphere args={[0.07, 8, 8]} position={[0, -0.28, 0]} castShadow>
+            <meshStandardMaterial color="#334155" metalness={0.6} roughness={0.3} />
+          </Sphere>
+          <Cylinder args={[0.05, 0.04, 0.22, 8]} position={[0, -0.44, 0]} castShadow>
+            <meshStandardMaterial color="#1e293b" metalness={0.7} roughness={0.3} />
+          </Cylinder>
+          <Box args={[0.1, 0.09, 0.08]} position={[0, -0.6, 0]} castShadow>
+            <meshStandardMaterial color="#0ea5e9" metalness={0.5} roughness={0.2} />
+          </Box>
+        </group>
+
+        {/* Right Arm */}
+        <group ref={rightArmRef} position={[0.46, 0.68, 0]}>
+          <Cylinder args={[0.07, 0.06, 0.28, 8]} position={[0, -0.14, 0]} castShadow>
+            <meshStandardMaterial color="#1e293b" metalness={0.7} roughness={0.3} />
+          </Cylinder>
+          <Sphere args={[0.07, 8, 8]} position={[0, -0.28, 0]} castShadow>
+            <meshStandardMaterial color="#334155" metalness={0.6} roughness={0.3} />
+          </Sphere>
+          <Cylinder args={[0.05, 0.04, 0.22, 8]} position={[0, -0.44, 0]} castShadow>
+            <meshStandardMaterial color="#1e293b" metalness={0.7} roughness={0.3} />
+          </Cylinder>
+          <Box args={[0.1, 0.09, 0.08]} position={[0, -0.6, 0]} castShadow>
+            <meshStandardMaterial color="#0ea5e9" metalness={0.5} roughness={0.2} />
+          </Box>
+        </group>
+
+        {/* Head */}
+        <group ref={headRef} position={[0, 1.02, 0]}>
+          <pointLight position={[0, 0, 0.5]} intensity={1.5} distance={6} color="#e0f2fe" castShadow />
+          <RoundedBox args={[0.5, 0.42, 0.44]} radius={0.08} smoothness={4} position={[0, 0, 0]} castShadow>
+            <meshStandardMaterial color="#0f172a" metalness={0.75} roughness={0.2} />
+          </RoundedBox>
+          {/* Visor */}
+          <Box args={[0.38, 0.18, 0.02]} position={[0, 0.02, 0.23]}>
+            <meshStandardMaterial color="#0c1445" metalness={0.2} roughness={0.05} transparent opacity={0.85} />
+          </Box>
+          {/* Mouth bar */}
+          <Box args={[0.22, 0.03, 0.02]} position={[0, -0.1, 0.235]}>
+            <meshStandardMaterial color="#38bdf8" emissive="#38bdf8" emissiveIntensity={0.5} />
+          </Box>
+          {/* Ear vents */}
+          <Box args={[0.03, 0.12, 0.2]} position={[-0.265, 0, 0]}>
+            <meshStandardMaterial color="#1e293b" metalness={0.7} roughness={0.3} />
+          </Box>
+          <Box args={[0.03, 0.12, 0.2]} position={[0.265, 0, 0]}>
+            <meshStandardMaterial color="#1e293b" metalness={0.7} roughness={0.3} />
+          </Box>
+          {/* Antenna */}
+          <Cylinder args={[0.015, 0.015, 0.22, 6]} position={[0, 0.31, 0]} castShadow>
+            <meshStandardMaterial color="#475569" metalness={0.8} roughness={0.2} />
+          </Cylinder>
+          <Sphere ref={antennaLightRef} args={[0.045, 10, 10]} position={[0, 0.435, 0]} castShadow>
+            <meshStandardMaterial color="#f97316" emissive="#f97316" emissiveIntensity={0.8} roughness={0} />
+          </Sphere>
+          
+          {showFeatures && (
+            <>
+              <Html position={[0, 0.6, 0]} center>
+                <div className="bg-black/60 backdrop-blur-md border border-orange-500/50 text-orange-100 px-3 py-1.5 rounded-lg text-xs font-bold shadow-lg whitespace-nowrap pointer-events-none">
+                  LiDAR & Environmental Sensors
+                </div>
+              </Html>
+              <Html position={[0.4, 0.1, 0.3]} center>
+                <div className="bg-black/60 backdrop-blur-md border border-cyan-500/50 text-cyan-100 px-3 py-1.5 rounded-lg text-xs font-bold shadow-lg whitespace-nowrap pointer-events-none">
+                  Smart Interactive Display
+                </div>
+              </Html>
+            </>
+          )}
+        </group>
+
+        {/* Hip / Pelvis */}
+        <RoundedBox args={[0.6, 0.18, 0.45]} radius={0.05} smoothness={4} position={[0, 0.26, 0]} castShadow>
+          <meshStandardMaterial color="#0f172a" metalness={0.7} roughness={0.25} />
+        </RoundedBox>
+        {/* Storage / Grocery Box (Front) */}
+        <RoundedBox args={[0.45, 0.25, 0.2]} radius={0.03} smoothness={4} position={[0, 0.25, 0.28]} castShadow>
+          <meshStandardMaterial color="#1e293b" metalness={0.5} roughness={0.5} />
+        </RoundedBox>
+        <Box args={[0.4, 0.02, 0.22]} position={[0, 0.38, 0.28]}>
+          <meshStandardMaterial color="#0f172a" metalness={0.8} roughness={0.1} />
+        </Box>
+        {showFeatures && (
+          <Html position={[0, 0.25, 0.5]} center>
+            <div className="bg-black/60 backdrop-blur-md border border-green-500/50 text-green-100 px-3 py-1.5 rounded-lg text-xs font-bold shadow-lg whitespace-nowrap pointer-events-none mt-4">
+              <div className="flex items-center gap-1.5">
+                <div className="w-1.5 h-1.5 rounded-full bg-green-500"></div>
+                Secure Storage (Food & Deliveries)
+              </div>
+            </div>
+          </Html>
+        )}
+        {/* Base plate */}
+        <RoundedBox args={[0.75, 0.12, 0.6]} radius={0.04} smoothness={4} position={[0, 0.06, 0]} castShadow>
+          <meshStandardMaterial color="#1e293b" metalness={0.6} roughness={0.3} />
+        </RoundedBox>
+
+        {/* Wheels */}
+        <Cylinder ref={leftWheelRef} args={[0.22, 0.22, 0.12, 18]} position={[-0.42, 0, 0]} rotation={[0, 0, Math.PI / 2]} castShadow>
+          <meshStandardMaterial color="#0f172a" metalness={0.4} roughness={0.7} />
+        </Cylinder>
+        <Cylinder args={[0.1, 0.1, 0.14, 10]} position={[-0.44, 0, 0]} rotation={[0, 0, Math.PI / 2]}>
+          <meshStandardMaterial color="#334155" metalness={0.7} roughness={0.2} />
+        </Cylinder>
+        <Cylinder ref={rightWheelRef} args={[0.22, 0.22, 0.12, 18]} position={[0.42, 0, 0]} rotation={[0, 0, Math.PI / 2]} castShadow>
+          <meshStandardMaterial color="#0f172a" metalness={0.4} roughness={0.7} />
+        </Cylinder>
+        <Cylinder args={[0.1, 0.1, 0.14, 10]} position={[0.44, 0, 0]} rotation={[0, 0, Math.PI / 2]}>
+          <meshStandardMaterial color="#334155" metalness={0.7} roughness={0.2} />
+        </Cylinder>
+        <Cylinder ref={frontWheelRef} args={[0.14, 0.14, 0.1, 14]} position={[0, -0.08, 0.32]} rotation={[0, 0, Math.PI / 2]} castShadow>
+          <meshStandardMaterial color="#1e293b" metalness={0.4} roughness={0.7} />
+        </Cylinder>
+        <Cylinder ref={backWheelRef} args={[0.14, 0.14, 0.1, 14]} position={[0, -0.08, -0.32]} rotation={[0, 0, Math.PI / 2]} castShadow>
+          <meshStandardMaterial color="#1e293b" metalness={0.4} roughness={0.7} />
+        </Cylinder>
+        {/* Undercarriage glow */}
+        <Box args={[0.6, 0.02, 0.5]} position={[0, -0.2, 0]}>
+          <meshStandardMaterial color="#0ea5e9" emissive="#0ea5e9" emissiveIntensity={0.4} transparent opacity={0.7} />
+        </Box>
+      </group>
+    </group>
+  );
+};
 
 const Robot = ({
   path, currentIndex, isPlaying, gridSize, isMapView, speed, dynamicObstaclesRef,
@@ -757,7 +910,7 @@ const Robot = ({
   dynamicObstaclesRef: React.MutableRefObject<DynamicObstacle[]>;
   onReachNode: (idx: number) => void;
   onMissionComplete: () => void;
-  onObstacleDetected: (blockedPoints: GridPoint[]) => void;
+  onObstacleDetected: (obsPos: GridPoint) => void;
   robotPosRef: React.MutableRefObject<THREE.Vector3 | null>;
   robotRotRef: React.MutableRefObject<number>;
 }) => {
@@ -791,14 +944,14 @@ const Robot = ({
     if (pauseTimeRef.current > 0) return; // Wait if still paused
 
     if (isPlaying) {
+      // --- Sensor Logic: Check for dynamic obstacles ahead ---
       if (dynamicObstaclesRef && dynamicObstaclesRef.current.length > 0) {
         const upcomingPath = path.slice(currentIndex, currentIndex + 4);
         for (const obs of dynamicObstaclesRef.current) {
-          const obsUpcoming = obs.path.slice(obs.currentIndex, obs.currentIndex + 5);
+          const obsTarget = obs.path[Math.min(obs.currentIndex, obs.path.length - 1)];
           for (const p of upcomingPath) {
-            const collision = (p.x === obs.pos.x && p.y === obs.pos.y) || obsUpcoming.some(op => op.x === p.x && op.y === p.y);
-            if (collision) {
-              onObstacleDetected([obs.pos, ...obsUpcoming]);
+            if ((p.x === obs.pos.x && p.y === obs.pos.y) || (p.x === obsTarget.x && p.y === obsTarget.y)) {
+              onObstacleDetected(obs.pos);
               return; // Pause movement this frame
             }
           }
@@ -843,11 +996,6 @@ const Robot = ({
   const startPos = getGridPosition(path[0] || { x: 0, y: 0, f: 0 }, gridSize, 0.22, isMapView);
   return (
     <group ref={ref} position={startPos}>
-      {/* Contact shadow */}
-      <mesh position={[0, -0.21, 0]} rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
-        <circleGeometry args={[0.4, 24]} />
-        <meshBasicMaterial color="#000000" transparent opacity={0.25} depthWrite={false} />
-      </mesh>
       <DetailedRobot isMoving={isMoving} />
     </group>
   );
@@ -866,29 +1014,203 @@ const PathLine = ({ path, currentIndex, gridSize, isMapView, color = "#00ffff", 
   );
 };
 
+// --- SkyDome: renders sky sphere, sun/moon, and stars ---
+const SkyDome = ({ isNight, gridSize }: { isNight: boolean; gridSize: GridPoint }) => {
+  const radius = Math.max(gridSize.x, gridSize.y) * 1.2;
+  const starsRef = useRef<THREE.Points>(null);
+
+  // Slowly rotate star field
+  useFrame((_state, delta) => {
+    if (starsRef.current && isNight) {
+      starsRef.current.rotation.y += delta * 0.01;
+    }
+  });
+
+  // Generate star positions
+  const starPositions = useMemo(() => {
+    const count = 600;
+    const pos = new Float32Array(count * 3);
+    for (let i = 0; i < count; i++) {
+      const theta = Math.random() * Math.PI * 2;
+      const phi = Math.random() * Math.PI * 0.5; // upper hemisphere only
+      pos[i * 3]     = radius * 0.95 * Math.sin(phi) * Math.cos(theta);
+      pos[i * 3 + 1] = radius * 0.95 * Math.cos(phi);
+      pos[i * 3 + 2] = radius * 0.95 * Math.sin(phi) * Math.sin(theta);
+    }
+    return pos;
+  }, [radius]);
+
+  const skyColor   = isNight ? '#0a0f2c' : '#87ceeb';
+  const horizColor = isNight ? '#111827' : '#c9e8f5';
+
+  return (
+    <group>
+      {/* Sky sphere */}
+      <mesh>
+        <sphereGeometry args={[radius, 32, 16]} />
+        <meshBasicMaterial color={skyColor} side={THREE.BackSide} />
+      </mesh>
+
+      {/* Horizon haze band */}
+      <mesh>
+        <cylinderGeometry args={[radius * 0.999, radius * 0.999, radius * 0.15, 32, 1, true]} />
+        <meshBasicMaterial color={horizColor} side={THREE.BackSide} transparent opacity={0.8} />
+      </mesh>
+
+      {/* Sun (day) */}
+      {!isNight && (
+        <mesh position={[radius * 0.6, radius * 0.65, -radius * 0.4]}>
+          <sphereGeometry args={[radius * 0.06, 16, 16]} />
+          <meshBasicMaterial color="#fff7aa" />
+        </mesh>
+      )}
+
+      {/* Moon (night) */}
+      {isNight && (
+        <group position={[radius * -0.5, radius * 0.7, -radius * 0.3]}>
+          <mesh>
+            <sphereGeometry args={[radius * 0.055, 16, 16]} />
+            <meshBasicMaterial color="#d4d4d8" />
+          </mesh>
+          {/* Moon crater detail */}
+          <mesh position={[radius * 0.02, radius * 0.02, radius * 0.05]}>
+            <sphereGeometry args={[radius * 0.015, 8, 8]} />
+            <meshBasicMaterial color="#a1a1aa" />
+          </mesh>
+        </group>
+      )}
+
+      {/* Stars (night) */}
+      {isNight && (
+        <points ref={starsRef}>
+          <bufferGeometry>
+            <bufferAttribute attach="attributes-position" args={[starPositions, 3]} />
+          </bufferGeometry>
+          <pointsMaterial color="#ffffff" size={0.35} sizeAttenuation />
+        </points>
+      )}
+    </group>
+  );
+};
+
+// --- Forest Tree helper ---
+const ForestTree = ({ x, z, scale = 1 }: { x: number; z: number; scale?: number }) => (
+  <group position={[x, 0, z]} scale={scale}>
+    {/* Trunk */}
+    <Cylinder args={[0.12, 0.16, 0.9, 6]} position={[0, 0.45, 0]} castShadow>
+      <meshStandardMaterial color="#7c4b1e" roughness={0.9} />
+    </Cylinder>
+    {/* Canopy bottom */}
+    <Cylinder args={[0, 0.75, 1.2, 6]} position={[0, 1.4, 0]} castShadow>
+      <meshStandardMaterial color="#15803d" roughness={0.8} />
+    </Cylinder>
+    {/* Canopy mid */}
+    <Cylinder args={[0, 0.6, 1.0, 6]} position={[0, 2.1, 0]} castShadow>
+      <meshStandardMaterial color="#16a34a" roughness={0.8} />
+    </Cylinder>
+    {/* Canopy top */}
+    <Cylinder args={[0, 0.4, 0.8, 6]} position={[0, 2.7, 0]} castShadow>
+      <meshStandardMaterial color="#4ade80" roughness={0.8} />
+    </Cylinder>
+  </group>
+);
+
+// --- River strip helper ---
+const RiverStrip = ({ x, z, length, isHorizontal }: { x: number; z: number; length: number; isHorizontal: boolean }) => (
+  <mesh
+    position={[x, 0.02, z]}
+    rotation={[-Math.PI / 2, 0, isHorizontal ? 0 : Math.PI / 2]}
+    receiveShadow
+  >
+    <planeGeometry args={isHorizontal ? [length, 1.2] : [length, 1.2]} />
+    <meshStandardMaterial color="#3b82f6" roughness={0.1} metalness={0.3} transparent opacity={0.75} />
+  </mesh>
+);
+
 const EnvironmentMap = ({ mapData, isTargeting, onMapClick }: { mapData: MapData, isTargeting?: boolean, onMapClick?: (p: THREE.Vector3) => void }) => {
   const { gridSize } = mapData;
+
+  // Deterministic tree positions scattered around the campus edges
+  const trees = useMemo(() => {
+    const list: { x: number; z: number; scale: number }[] = [];
+    const gx = gridSize.x;
+    const gz = gridSize.y;
+    // Border tree ring
+    const step = 4;
+    for (let xi = -gx / 2 + 1; xi < gx / 2; xi += step) {
+      list.push({ x: xi, z: -gz / 2 + 1.5, scale: 0.7 + ((Math.abs(xi) * 7) % 5) * 0.08 });
+      list.push({ x: xi, z:  gz / 2 - 1.5, scale: 0.7 + ((Math.abs(xi) * 5) % 5) * 0.08 });
+    }
+    for (let zi = -gz / 2 + 1; zi < gz / 2; zi += step) {
+      list.push({ x: -gx / 2 + 1.5, z: zi, scale: 0.7 + ((Math.abs(zi) * 3) % 5) * 0.08 });
+      list.push({ x:  gx / 2 - 1.5, z: zi, scale: 0.7 + ((Math.abs(zi) * 9) % 5) * 0.08 });
+    }
+    // Interior cluster patches (deterministic offsets)
+    const patches = [
+      { cx: -gx * 0.3, cz: -gz * 0.3 },
+      { cx:  gx * 0.3, cz: -gz * 0.3 },
+      { cx: -gx * 0.3, cz:  gz * 0.3 },
+      { cx:  gx * 0.3, cz:  gz * 0.3 },
+      { cx:  0,        cz: -gz * 0.35 },
+      { cx:  0,        cz:  gz * 0.35 },
+    ];
+    patches.forEach(({ cx, cz }, pi) => {
+      for (let i = 0; i < 6; i++) {
+        const angle = (i / 6) * Math.PI * 2 + pi * 0.4;
+        const r = 3 + (i * pi * 7) % 4;
+        list.push({
+          x: cx + Math.cos(angle) * r,
+          z: cz + Math.sin(angle) * r,
+          scale: 0.75 + (i % 3) * 0.1,
+        });
+      }
+    });
+    return list;
+  }, [gridSize]);
+
   return (
-    <Plane 
-      args={[gridSize.x, gridSize.y]} 
-      rotation={[-Math.PI / 2, 0, 0]} 
-      position={[0, 0, 0]} 
-      receiveShadow
-      onClick={(e) => {
-        if (isTargeting && onMapClick) {
-          e.stopPropagation();
-          onMapClick(e.point);
-        }
-      }}
-      onPointerOver={() => {
-        if (isTargeting) document.body.style.cursor = 'crosshair';
-      }}
-      onPointerOut={() => {
-        if (isTargeting) document.body.style.cursor = 'auto';
-      }}
-    >
-      <meshStandardMaterial color="#bbf7d0" />
-    </Plane>
+    <group>
+      {/* Grass ground */}
+      <Plane 
+        args={[gridSize.x, gridSize.y]} 
+        rotation={[-Math.PI / 2, 0, 0]} 
+        position={[0, 0, 0]} 
+        receiveShadow
+        onClick={(e) => {
+          if (isTargeting && onMapClick) {
+            e.stopPropagation();
+            onMapClick(e.point);
+          }
+        }}
+        onPointerOver={() => {
+          if (isTargeting) document.body.style.cursor = 'crosshair';
+        }}
+        onPointerOut={() => {
+          if (isTargeting) document.body.style.cursor = 'auto';
+        }}
+      >
+        <meshStandardMaterial color="#4ade80" roughness={0.9} />
+      </Plane>
+
+      {/* Extended ground border so no black shows */}
+      <Plane
+        args={[gridSize.x * 3, gridSize.y * 3]}
+        rotation={[-Math.PI / 2, 0, 0]}
+        position={[0, -0.01, 0]}
+        receiveShadow
+      >
+        <meshStandardMaterial color="#16a34a" roughness={1} />
+      </Plane>
+
+      {/* Rivers */}
+      <RiverStrip x={-gridSize.x * 0.22} z={0} length={gridSize.y * 0.7} isHorizontal={false} />
+      <RiverStrip x={0} z={gridSize.y * 0.28} length={gridSize.x * 0.5} isHorizontal />
+
+      {/* Trees */}
+      {trees.map((t, i) => (
+        <ForestTree key={i} x={t.x} z={t.z} scale={t.scale} />
+      ))}
+    </group>
   );
 };
 
@@ -916,6 +1238,7 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
   const [triggerReset, setTriggerReset] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [showReasoningLog, setShowReasoningLog] = useState(false);
+  const [isNight, setIsNight] = useState(false);
   
   const [aiExplanations, setAiExplanations] = useState<string[]>([]);
   const [selectedRoom, setSelectedRoom] = useState<Room | null>(null);
@@ -1584,99 +1907,87 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
     };
   }, [mapData, isOn, robotState, path, currentPosIndex]);
 
-  const handleObstacleDetected = (blockedPoints: GridPoint[]) => {
+  const handleObstacleDetected = (obsPos: GridPoint) => {
     if (isRecalculating.current) return;
     isRecalculating.current = true;
-
-    if (!mapData) { isRecalculating.current = false; return; }
-
+    
+    addExplanation(`CRITICAL: Dynamic Obstacle detected at (${obsPos.x}, ${obsPos.y}). Rerouting instantly...`);
+    
+    if (!mapData) {
+       isRecalculating.current = false;
+       return;
+    }
     const currentLoc = path[currentPosIndex];
     const targetLoc = path[path.length - 1];
-    const allObstacles = [...(mapData.obstacles || []), ...userBlockers, ...blockedPoints];
-
-    const isRoad = (nx: number, ny: number) =>
-      mapData.roads && mapData.roads.some(r => r.x === nx && r.y === ny && r.f === currentLoc.f);
-
-    const isClear = (nx: number, ny: number) =>
-      nx >= 0 && ny >= 0 &&
-      nx < (mapData.gridSize?.x || 120) &&
-      ny < (mapData.gridSize?.y || 100) &&
-      !allObstacles.some(o => o.x === nx && o.y === ny && o.f === currentLoc.f) &&
-      isRoad(nx, ny);
-
-    // Determine movement direction (toward next path node)
-    const nextNode = path[Math.min(currentPosIndex + 1, path.length - 1)];
-    const dx = nextNode.x - currentLoc.x;
-    const dy = nextNode.y - currentLoc.y;
-
-    // Perpendicular sidestep candidates (left and right of travel direction)
-    let sideOptions: Array<{x: number, y: number}> = [];
-    if (dx !== 0) {
-      // Moving horizontally — sidestep in y
-      sideOptions = [
-        { x: currentLoc.x, y: currentLoc.y - 1 },
-        { x: currentLoc.x, y: currentLoc.y + 1 },
-        { x: currentLoc.x, y: currentLoc.y - 2 },
-        { x: currentLoc.x, y: currentLoc.y + 2 },
-      ];
-    } else if (dy !== 0) {
-      // Moving vertically — sidestep in x
-      sideOptions = [
-        { x: currentLoc.x - 1, y: currentLoc.y },
-        { x: currentLoc.x + 1, y: currentLoc.y },
-        { x: currentLoc.x - 2, y: currentLoc.y },
-        { x: currentLoc.x + 2, y: currentLoc.y },
-      ];
+    
+    // We treat the specific position of the dynamic obstacle as a hard blockage for this local recalculation
+    const allObstacles = [...(mapData.obstacles || []), ...userBlockers, obsPos];
+    
+    let intermediateTarget = null;
+    for (let i = currentPosIndex; i < path.length - 1; i++) {
+      if (path[i].x === path[i+1].x && path[i].y === path[i+1].y && path[i].f === path[i+1].f) {
+        intermediateTarget = path[i];
+        break;
+      }
+    }
+    
+    let newPath: GridPoint[] = [];
+    if (intermediateTarget) {
+      const fPath = calculatePath(currentLoc, intermediateTarget, allObstacles, mapData);
+      const rPath = calculatePath(intermediateTarget, targetLoc, allObstacles, mapData);
+      if (fPath.length > 0 && rPath.length > 0) {
+        newPath = [...fPath, fPath[fPath.length - 1], ...rPath.slice(1)];
+      }
     } else {
-      // Diagonal fallback
-      sideOptions = [
-        { x: currentLoc.x - 1, y: currentLoc.y },
-        { x: currentLoc.x + 1, y: currentLoc.y },
-        { x: currentLoc.x, y: currentLoc.y - 1 },
-        { x: currentLoc.x, y: currentLoc.y + 1 },
-      ];
+      newPath = calculatePath(currentLoc, targetLoc, allObstacles, mapData);
     }
-
-    // Try each sidestep — pick first clear road tile
-    const sideTile = sideOptions.find(s => isClear(s.x, s.y));
-
-    if (sideTile) {
-      // INSTANT inline diversion: sidestep → resume from sidestepped position onward
-      const sideNode: GridPoint = { x: sideTile.x, y: sideTile.y, f: currentLoc.f };
-      const resumePath = path.slice(currentPosIndex);
-      const newPath: GridPoint[] = [currentLoc, sideNode, ...resumePath];
-      setPath(newPath);
-      setCurrentPosIndex(0);
-      setIsPlaying(true);
-      // Release lock immediately — no delay
-      isRecalculating.current = false;
-      return;
+    
+    if (newPath.length === 0) {
+      if (intermediateTarget) {
+         const fPath = calculateLongPath(currentLoc, intermediateTarget, allObstacles, mapData);
+         const rPath = calculateLongPath(intermediateTarget, targetLoc, allObstacles, mapData);
+         if (fPath.length > 0 && rPath.length > 0) {
+           newPath = [...fPath, fPath[fPath.length - 1], ...rPath.slice(1)];
+         }
+      } else {
+         newPath = calculateLongPath(currentLoc, targetLoc, allObstacles, mapData);
+      }
     }
-
-    // Fallback: full A* only if inline sidestep is impossible
-    addExplanation(`CRITICAL: Dynamic Obstacle detected at (${blockedPoints[0].x}, ${blockedPoints[0].y}). Rerouting...`);
-    let newPath: GridPoint[] = calculatePath(currentLoc, targetLoc, allObstacles, mapData);
-    if (newPath.length === 0) newPath = calculateLongPath(currentLoc, targetLoc, allObstacles, mapData);
-
+    
     if (newPath.length > 0) {
       setPath(newPath);
       setCurrentPosIndex(0);
       setIsPlaying(true);
-      addExplanation(`Found alternative route. Resuming mission.`);
-      setTimeout(() => { isRecalculating.current = false; }, 800);
+      addExplanation(`Successfully found alternative route avoiding obstacle! Resuming mission.`);
+      isRecalculating.current = false;
     } else {
-      addExplanation(`Yielding to traffic...`);
-      const pullOver = sideOptions.find(s =>
-        s.x >= 0 && s.y >= 0 &&
-        !allObstacles.some(o => o.x === s.x && o.y === s.y && o.f === currentLoc.f)
-      );
-      if (pullOver) {
-        setPath([currentLoc, { x: pullOver.x, y: pullOver.y, f: currentLoc.f }]);
+      const reverseSteps = Math.min(currentPosIndex, 4);
+      if (reverseSteps > 0) {
+        addExplanation(`Path completely blocked! Reversing ${reverseSteps} steps to evade obstacle...`);
+        const reversePath = [];
+        for (let i = currentPosIndex; i >= currentPosIndex - reverseSteps; i--) {
+            reversePath.push(path[i]);
+        }
+        if (robotState !== 'evading_obstacle' && robotState !== 'charging' && robotState !== 'emergency_response') {
+            originalMissionRef.current = { path: [...path], index: currentPosIndex };
+        }
+        setPath(reversePath);
         setCurrentPosIndex(0);
         setRobotState('evading_obstacle');
         setIsPlaying(true);
+        isRecalculating.current = false;
+      } else {
+        addExplanation(`Blocked at starting position. Waiting for obstacle to clear...`);
+        if (robotState !== 'evading_obstacle' && robotState !== 'charging' && robotState !== 'emergency_response') {
+            originalMissionRef.current = { path: [...path], index: currentPosIndex };
+        }
+        setRobotState('evading_obstacle');
+        setIsPlaying(false);
+        setTimeout(() => {
+          isRecalculating.current = false;
+          setIsPlaying(true); // retry loop
+        }, 3000);
       }
-      isRecalculating.current = false;
     }
   };
 
@@ -1888,6 +2199,19 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
             >
               {isFullscreen ? <Minimize className="w-4 h-4" /> : <Maximize className="w-4 h-4" />}
             </button>
+
+            {/* Day / Night Toggle */}
+            <button
+              onClick={() => setIsNight(!isNight)}
+              className={`px-3 py-1.5 rounded-md text-xs font-bold shadow-lg transition-colors flex items-center gap-1.5 border ${
+                isNight
+                  ? 'bg-indigo-900 text-yellow-300 border-indigo-600 hover:bg-indigo-800'
+                  : 'bg-sky-400 text-white border-sky-300 hover:bg-sky-500'
+              }`}
+              title={isNight ? 'Switch to Day' : 'Switch to Night'}
+            >
+              {isNight ? '🌙 Night' : '☀️ Day'}
+            </button>
           </div>
           
           {/* Reasoning Log Option */}
@@ -1917,18 +2241,23 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
             )}
           </div>
         </div>
-        <Canvas shadows gl={{ antialias: true }} dpr={[1, 1.2]}>
+        <Canvas shadows gl={{ antialias: true }} dpr={[1, 2]}>
+          {/* Sky colour attached directly to scene */}
+          <color attach="background" args={[isNight ? '#05081a' : '#87ceeb']} />
           {/* Camera */}
           {isMapView ? (
             <OrthographicCamera makeDefault position={[0, 100, 0]} zoom={6} near={0.1} far={1000} />
           ) : (
             <PerspectiveCamera makeDefault position={[0, gridSize.y * 0.55, gridSize.y * 0.85]} fov={55} />
           )}
-          {/* Lighting */}
-          <ambientLight intensity={0.7} />
+          {/* Sky Dome */}
+          {!isMapView && <SkyDome isNight={isNight} gridSize={gridSize} />}
+          {/* Lighting — adapts to day/night */}
+          <ambientLight intensity={isNight ? 0.15 : 0.7} color={isNight ? '#c7d2fe' : '#ffffff'} />
           <directionalLight
-            position={[20, 30, 20]}
-            intensity={1.8}
+            position={isNight ? [-20, 30, -20] : [20, 30, 20]}
+            intensity={isNight ? 0.3 : 1.8}
+            color={isNight ? '#9ca3c8' : '#fff5d0'}
             castShadow
             shadow-mapSize={[2048, 2048]}
             shadow-camera-near={0.5}
@@ -1938,7 +2267,10 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
             shadow-camera-top={80}
             shadow-camera-bottom={-80}
           />
-          <pointLight position={[0, 8, 0]} intensity={0.6} color="#60a5fa" />
+          {/* Moon glow at night */}
+          {isNight && <pointLight position={[-20, 25, -15]} intensity={0.6} color="#bfdbfe" />}
+          {/* Day fill light */}
+          {!isNight && <pointLight position={[0, 8, 0]} intensity={0.6} color="#60a5fa" />}
           <CameraController 
             isFollowing={isFollowing} 
             robotPosRef={robotPosRef} 
@@ -2018,8 +2350,8 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
             }} 
           />
           {rooms?.map((room: Room) => {
-            const width = (room.end.x - room.start.x + 1) * 0.65;
-            const depth = (room.end.y - room.start.y + 1) * 0.65;
+            const width = (room.end.x - room.start.x + 1) * 0.9;
+            const depth = (room.end.y - room.start.y + 1) * 0.9;
             const height = 3;
             const x = (room.start.x + room.end.x) / 2 - gridSize.x / 2;
             const z = (room.start.y + room.end.y) / 2 - gridSize.y / 2;
@@ -2309,3 +2641,5 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
     </div>
   );
 };
+
+export default SimulationView;

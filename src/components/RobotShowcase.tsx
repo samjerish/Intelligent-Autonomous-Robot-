@@ -1,140 +1,16 @@
 import React, { Suspense, useState } from 'react';
-import { Canvas, useFrame } from '@react-three/fiber';
+import { Canvas } from '@react-three/fiber';
 import { OrbitControls, Environment, ContactShadows, Html } from '@react-three/drei';
-import * as THREE from 'three';
-import { DetailedRobot } from './DetailedRobot';
-import { X, ShieldAlert, Package, Zap, Activity, Power, Radio, Smartphone, Target, Info, Volume2, VolumeX } from 'lucide-react';
+import { DetailedRobot } from './SimulationView';
+import { X, ShieldAlert, Package, Zap, Activity, Power, Radio, Smartphone, Target, Info } from 'lucide-react';
 import { AnimatedPASName } from '../App';
-
-const AnimatedRobotGroup: React.FC<{ currentWordIndex: number; onClick: (e: any) => void; children: React.ReactNode }> = ({ currentWordIndex, onClick, children }) => {
-  const groupRef = React.useRef<THREE.Group>(null);
-  
-  useFrame((state, delta) => {
-    if (!groupRef.current) return;
-    
-    let targetScale = 1;
-    let targetRotY = 0;
-    // We will keep rotation X at 0 so the floor/table doesn't tilt!
-    let targetRotX = 0; 
-    let featureLocalPos = new THREE.Vector3(0, 0, 0);
-    
-    // "heavy-duty chassis" (13-14)
-    if (currentWordIndex >= 13 && currentWordIndex <= 14) {
-      targetScale = 2.2;
-      featureLocalPos.set(0, 0.6 * 1.8, 0);
-      targetRotY = Math.PI / 5;
-    }
-    // "360-degree LiDAR" (15-17)
-    else if (currentWordIndex >= 15 && currentWordIndex <= 17) {
-      targetScale = 3.5;
-      featureLocalPos.set(0, 1.25 * 1.8, 0);
-      targetRotY = Math.PI / 8;
-    }
-    // "medical kits" (27-28)
-    else if (currentWordIndex >= 26 && currentWordIndex <= 28) {
-      targetScale = 3.0;
-      featureLocalPos.set(0, 0.65 * 1.8, -0.28 * 1.8);
-      targetRotY = Math.PI; 
-    }
-    // "battery" / "generator" (34-45)
-    else if (currentWordIndex >= 34 && currentWordIndex <= 45) {
-      targetScale = 2.5;
-      featureLocalPos.set(0, 0.4 * 1.8, -0.28 * 1.8);
-      targetRotY = Math.PI; 
-    } else {
-      targetScale = 1;
-      featureLocalPos.set(0, 0.8, 0); // Default so targetPosY becomes -0.8
-    }
-
-    // If speaking, orient relative to camera so it's always perfectly visible
-    if (currentWordIndex >= 0) {
-      const camAngle = Math.atan2(state.camera.position.x, state.camera.position.z);
-      targetRotY += camAngle;
-    } else {
-      targetRotY = 0;
-    }
-    
-    // Calculate the perfect world position to center the feature!
-    const scaledPos = featureLocalPos.clone().multiplyScalar(targetScale);
-    const euler = new THREE.Euler(targetRotX, targetRotY, 0, 'YXZ');
-    scaledPos.applyEuler(euler);
-    
-    // To center it, we counter-act the offset. We also add +0.5 to Y when zoomed to clear captions.
-    let targetPosY = -scaledPos.y + (currentWordIndex >= 0 ? 0.6 : 0);
-    let targetPosZ = -scaledPos.z + (currentWordIndex >= 0 ? 1.0 : 0);
-    let targetPosX = -scaledPos.x;
-    
-    groupRef.current.scale.lerp(new THREE.Vector3(targetScale, targetScale, targetScale), delta * 4);
-    groupRef.current.position.lerp(new THREE.Vector3(targetPosX, targetPosY, targetPosZ), delta * 4);
-    
-    // Smoothly interpolate rotation
-    groupRef.current.rotation.x += (targetRotX - groupRef.current.rotation.x) * delta * 4;
-    
-    // Handle Y rotation shortest path
-    let diff = targetRotY - groupRef.current.rotation.y;
-    while (diff < -Math.PI) diff += Math.PI * 2;
-    while (diff > Math.PI) diff -= Math.PI * 2;
-    groupRef.current.rotation.y += diff * delta * 4;
-  });
-  
-  return <group ref={groupRef} position={[0, -0.8, 0]} onClick={onClick}>{children}</group>;
-};
 
 interface RobotShowcaseProps {
   onClose: () => void;
 }
 
 export const RobotShowcase: React.FC<RobotShowcaseProps> = ({ onClose }) => {
-  const [showSpecs, setShowSpecs] = useState(true);
-  const [isSpeaking, setIsSpeaking] = useState(false);
-  const [caption, setCaption] = useState("");
-  const [currentWordIndex, setCurrentWordIndex] = useState(-1);
-
-  let activeFeature = "";
-  if (currentWordIndex >= 13 && currentWordIndex <= 14) activeFeature = "chassis";
-  else if (currentWordIndex >= 15 && currentWordIndex <= 17) activeFeature = "lidar";
-  else if (currentWordIndex >= 26 && currentWordIndex <= 28) activeFeature = "medical";
-  else if (currentWordIndex >= 34 && currentWordIndex <= 45) activeFeature = "battery";
-
-  const speechText = "Hello! I am the IR-2026 Autonomous Security Robot. My main features include a heavy-duty chassis, 360-degree LiDAR for avoiding obstacles, and autonomous patrol capabilities. I can deliver medical kits in emergencies, and when my battery is low, I automatically return to the generator room to recharge.";
-
-  React.useEffect(() => {
-    if (isSpeaking) {
-      const utterance = new SpeechSynthesisUtterance(speechText);
-      utterance.pitch = 1.0;
-      utterance.rate = 1.0;
-      utterance.voice = window.speechSynthesis.getVoices().find(v => v.name.includes('Google') || v.name.includes('English')) || null;
-      
-      utterance.onstart = () => {
-        setCaption(speechText);
-        setCurrentWordIndex(-1);
-      };
-      
-      utterance.onboundary = (event) => {
-        if (event.name === 'word') {
-          const textBefore = speechText.substring(0, event.charIndex);
-          const wordCount = textBefore.trim().length > 0 ? textBefore.trim().split(/\s+/).length : 0;
-          setCurrentWordIndex(wordCount);
-        }
-      };
-      
-      utterance.onend = () => { 
-        setIsSpeaking(false); 
-        setCaption(""); 
-        setCurrentWordIndex(-1);
-      };
-      
-      window.speechSynthesis.cancel();
-      window.speechSynthesis.speak(utterance);
-    } else {
-      window.speechSynthesis.cancel();
-      setCaption("");
-      setCurrentWordIndex(-1);
-    }
-    return () => {
-      window.speechSynthesis.cancel();
-    };
-  }, [isSpeaking]);
+  const [showSpecs, setShowSpecs] = useState(false);
 
   return (
     <div className="absolute inset-0 z-[200] bg-black/90 flex flex-col overflow-hidden animate-in fade-in duration-500 font-sans">
@@ -149,17 +25,19 @@ export const RobotShowcase: React.FC<RobotShowcaseProps> = ({ onClose }) => {
           <Environment preset="city" />
           
           <Suspense fallback={null}>
-            <AnimatedRobotGroup currentWordIndex={currentWordIndex} onClick={(e) => { e.stopPropagation(); setShowSpecs(!showSpecs); }}>
-              <DetailedRobot isMoving={false} showFeatures={showSpecs} activeFeature={activeFeature} />
+            <group position={[0, -0.8, 0]} onClick={(e) => { e.stopPropagation(); setShowSpecs(!showSpecs); }}>
+              <DetailedRobot isMoving={false} showFeatures={showSpecs} />
               <ContactShadows position={[0, 0, 0]} opacity={0.7} scale={12} blur={2.5} far={4} />
               
-              {/* Round Table / Pedestal */}
+              {/* Pedestal */}
               <mesh position={[0, -0.05, 0]} receiveShadow>
-                <cylinderGeometry args={[3, 3.2, 0.1, 64]} />
-                <meshStandardMaterial color="#0f172a" metalness={0.6} roughness={0.2} />
+                <cylinderGeometry args={[2.5, 2.8, 0.1, 64]} />
+                <meshStandardMaterial color="#111" metalness={0.8} roughness={0.2} />
               </mesh>
-              
-
+              <mesh position={[0, -0.15, 0]}>
+                <cylinderGeometry args={[2.8, 2.8, 0.1, 64]} />
+                <meshStandardMaterial color="#0ea5e9" emissive="#0ea5e9" emissiveIntensity={0.5} />
+              </mesh>
               
               {/* Robot Label */}
               <Html position={[0, -0.2, 2.8]} center>
@@ -167,11 +45,11 @@ export const RobotShowcase: React.FC<RobotShowcaseProps> = ({ onClose }) => {
                   <AnimatedPASName />
                 </div>
               </Html>
-            </AnimatedRobotGroup>
+            </group>
           </Suspense>
 
           <OrbitControls 
-            autoRotate={currentWordIndex < 0}
+            autoRotate 
             autoRotateSpeed={0.8}
             enablePan={false}
             minDistance={3}
@@ -193,21 +71,12 @@ export const RobotShowcase: React.FC<RobotShowcaseProps> = ({ onClose }) => {
             </h2>
             <p className="text-sm text-cyan-100/70 mt-1 font-mono uppercase tracking-widest drop-shadow-md">Hardware Specification & System Overview</p>
           </div>
-          <div className="flex gap-4">
-            <button 
-              onClick={() => setIsSpeaking(!isSpeaking)}
-              className={`p-3 rounded-xl transition-all border backdrop-blur-md flex items-center gap-2 font-bold ${isSpeaking ? 'bg-cyan-500/20 border-cyan-400 text-cyan-300 shadow-[0_0_15px_rgba(34,211,238,0.3)]' : 'bg-white/10 hover:bg-white/20 border-white/10 text-gray-300'}`}
-            >
-              {isSpeaking ? <VolumeX className="w-5 h-5" /> : <Volume2 className="w-5 h-5" />}
-              <span className="hidden sm:inline">{isSpeaking ? 'Stop Speech' : 'Listen to Specs'}</span>
-            </button>
-            <button 
-              onClick={onClose}
-              className="p-3 bg-white/10 hover:bg-red-500 hover:text-white text-gray-300 rounded-xl transition-all border border-white/10 backdrop-blur-md"
-            >
-              <X className="w-6 h-6" />
-            </button>
-          </div>
+          <button 
+            onClick={onClose}
+            className="p-3 bg-white/10 hover:bg-red-500 hover:text-white text-gray-300 rounded-xl transition-all border border-white/10 backdrop-blur-md"
+          >
+            <X className="w-6 h-6" />
+          </button>
         </div>
 
         {/* Floating Side Panels */}
@@ -319,33 +188,6 @@ export const RobotShowcase: React.FC<RobotShowcaseProps> = ({ onClose }) => {
             </div>
           </div>
         </div>
-
-        {/* Captions Overlay */}
-        {caption && (
-          <div className="absolute bottom-8 left-1/2 transform -translate-x-1/2 w-full max-w-5xl pointer-events-none z-50 px-4 text-center">
-             <div className="flex justify-center flex-wrap gap-x-6 gap-y-2 items-center">
-               {currentWordIndex >= 0 ? (
-                 speechText.split(/\s+/).slice(Math.floor(currentWordIndex / 3) * 3, Math.floor(currentWordIndex / 3) * 3 + 3).map((word, index) => {
-                   const absoluteIndex = Math.floor(currentWordIndex / 3) * 3 + index;
-                   const isCurrent = absoluteIndex === currentWordIndex;
-                   return (
-                     <span 
-                       key={absoluteIndex} 
-                       className={`text-3xl md:text-4xl font-black uppercase tracking-widest transition-all duration-150 ${isCurrent ? 'text-cyan-300 scale-110 drop-shadow-[0_0_20px_rgba(34,211,238,1)] z-10' : 'text-gray-400/70 scale-95 drop-shadow-[0_3px_3px_rgba(0,0,0,1)]'}`}
-                     >
-                       {word}
-                     </span>
-                   );
-                 })
-               ) : (
-                 <span className="text-gray-400 text-lg uppercase tracking-widest animate-pulse drop-shadow-md">
-                   Initializing Speech Subsystem...
-                 </span>
-               )}
-             </div>
-          </div>
-        )}
-
       </div>
       
       {/* Adding custom scrollbar styling globally for this component scope if needed, or rely on tailwind. We will just use inline styles or it falls back to default */}

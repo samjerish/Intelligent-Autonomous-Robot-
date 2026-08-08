@@ -131,38 +131,36 @@ const playDolbyAtmosIntro = () => {
 };
 
 export const IntroSequence = ({ onComplete }: { onComplete: () => void }) => {
-  const [phase, setPhase] = useState<number>(0);
+  const [phase, setPhase] = useState<number>(-3);
 
   const handleStart = () => {
-    setPhase(-1);
-    try { playDolbyAtmosIntro(); } catch(e) {}
-    setTimeout(() => {
-      setPhase(0); // Show grid, hide terminal
-    }, 1000); // Fade out and wait 1s before audio/ASPIRE starts
-  };
-
-  const handleSkip = () => {
-    setPhase(10);
-    onComplete();
+    if (phase === -2) {
+      setPhase(-1);
+    }
   };
 
   useEffect(() => {
     if (phase === -3) {
+      // Trigger slow fade-in on mount
       setTimeout(() => setPhase(-2), 100);
+    } else if (phase === -1) {
+      setTimeout(() => {
+        setPhase(0);
+        playDolbyAtmosIntro();
+      }, 1000); // Fade out and wait 1s before audio/ASPIRE starts
     } else if (phase === 0) {
-      try { playDolbyAtmosIntro(); } catch(e) {}
       setTimeout(() => setPhase(1), 100);
     } else if (phase === 1) {
-      setTimeout(() => setPhase(2), 2000); 
+      setTimeout(() => setPhase(2), 2000);
     } else if (phase >= 2 && phase <= 7) {
-      setTimeout(() => setPhase(phase + 1), 500); 
+      setTimeout(() => setPhase(phase + 1), 500);
     } else if (phase === 8) {
-      setTimeout(() => setPhase(9), 1500); 
+      setTimeout(() => setPhase(9), 1500);
     } else if (phase === 9) {
       setTimeout(() => {
         setPhase(10);
         onComplete();
-      }, 800); 
+      }, 800);
     }
   }, [phase, onComplete]);
 
@@ -177,17 +175,9 @@ export const IntroSequence = ({ onComplete }: { onComplete: () => void }) => {
 
   return (
     <div className={`fixed inset-0 z-[100] bg-black flex items-center justify-center overflow-hidden font-mono transition-opacity duration-1000 ${phase === 10 ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}>
-      
-      {/* Skip Button */}
-      <button 
-        onClick={handleSkip}
-        className="absolute top-6 right-6 z-[200] px-4 py-2 border border-white/20 text-white/50 hover:text-white hover:bg-white/10 rounded-sm font-serif tracking-[0.2em] text-[10px] uppercase transition-all duration-300"
-      >
-        Skip Intro
-      </button>
 
       {/* Production Intro (Phases -3, -2, -1) */}
-      <div className={`absolute inset-0 flex flex-col items-center justify-center z-50 transition-opacity duration-[2000ms] ease-in-out ${phase === -2 ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}>
+      <div className={`absolute inset-0 flex flex-col items-center justify-center z-50 transition-opacity duration-[3000ms] ease-in-out ${phase === -2 ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}>
         <div className="font-serif text-white/90 tracking-[0.4em] md:tracking-[0.6em] text-sm md:text-2xl uppercase font-light mb-6 drop-shadow-[0_0_15px_rgba(255,255,255,0.2)] text-center px-4">
           TEAM ASPIRE FROM KARUNYA
         </div>
@@ -198,17 +188,17 @@ export const IntroSequence = ({ onComplete }: { onComplete: () => void }) => {
 
         <button
           onClick={handleStart}
-          className="mt-8 px-8 py-3 border border-white/20 text-white/60 font-serif tracking-[0.3em] text-xs uppercase hover:bg-white/10 hover:text-white transition-all duration-300 rounded-sm hover:shadow-[0_0_20px_rgba(255,255,255,0.1)] cursor-pointer"
+          className="mt-8 px-8 py-3 border border-white/20 text-white/60 font-serif tracking-[0.3em] text-xs uppercase hover:bg-white/10 hover:text-white transition-all duration-500 rounded-sm hover:shadow-[0_0_20px_rgba(255,255,255,0.1)] cursor-pointer"
         >
           START EXPERIENCE
         </button>
       </div>
 
       {/* Ambient Grid Background - Appears after terminal */}
-      <div className={`absolute inset-0 bg-[linear-gradient(to_right,#0f172a_1px,transparent_1px),linear-gradient(to_bottom,#0f172a_1px,transparent_1px)] bg-[size:4rem_4rem] [mask-image:radial-gradient(ellipse_60%_60%_at_50%_50%,#000_70%,transparent_100%)] transition-opacity duration-[1000ms] ${phase >= 1 ? 'opacity-30' : 'opacity-0'}`} />
+      <div className={`absolute inset-0 bg-[linear-gradient(to_right,#0f172a_1px,transparent_1px),linear-gradient(to_bottom,#0f172a_1px,transparent_1px)] bg-[size:4rem_4rem] [mask-image:radial-gradient(ellipse_60%_60%_at_50%_50%,#000_70%,transparent_100%)] transition-opacity duration-[2000ms] ${phase >= 1 ? 'opacity-30' : 'opacity-0'}`} />
 
       {/* ASPIRE Core Sequence */}
-      <div className={`relative z-10 flex flex-col items-center justify-center transition-all duration-[1000ms] ${phase >= 1 && phase < 9 ? 'opacity-100 scale-100' : phase === 9 ? 'opacity-0 scale-50 -translate-y-[40vh] -translate-x-[40vw] !duration-500' : 'opacity-0 scale-95 pointer-events-none'}`}>
+      <div className={`relative z-10 flex flex-col items-center justify-center transition-all duration-[2000ms] ${phase >= 1 && phase < 9 ? 'opacity-100 scale-100' : phase === 9 ? 'opacity-0 scale-50 -translate-y-[40vh] -translate-x-[40vw] !duration-1000' : 'opacity-0 scale-95 pointer-events-none'}`}>
 
         {/* The letters container */}
         <div className="flex gap-4 items-center">

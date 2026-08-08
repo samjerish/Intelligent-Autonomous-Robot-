@@ -2,11 +2,9 @@ import { useState, useEffect, useRef } from 'react';
 import { Sidebar } from './components/Sidebar';
 
 // import { StrategyComparison } from './components/StrategyComparison';
+import { SimulationView } from './components/SimulationView';
 import { IntroSequence } from './components/IntroSequence';
 import { RobotShowcase } from './components/RobotShowcase';
-import React, { Suspense } from 'react';
-
-const SimulationView = React.lazy(() => import('./components/SimulationView').then(module => ({ default: module.SimulationView })));
 
 import { useLocalStorage } from './hooks/useLocalStorage';
 import type { MissionHistoryItem, MissionResult } from './types';
@@ -36,8 +34,12 @@ function App() {
   const [currentMission, setCurrentMission] = useState<MissionHistoryItem | null>(null);
 
   const [initialMapData, setInitialMapData] = useState<any>(null);
-  const [showIntro, setShowIntro] = useState(false);
-  const [introRendered, setIntroRendered] = useState(false);
+  const isMobile = typeof window !== 'undefined' && window.innerWidth < 768;
+  const safeGetSession = (key: string) => {
+    try { return sessionStorage.getItem(key); } catch(e) { return null; }
+  };
+  const [showIntro, setShowIntro] = useState(() => isMobile ? false : !safeGetSession('hasSeenIntro'));
+  const [introRendered, setIntroRendered] = useState(() => isMobile ? false : !safeGetSession('hasSeenIntro'));
   const [showRobotFeatures, setShowRobotFeatures] = useState(false);
   const [pendingEmergency, setPendingEmergency] = useState<{x: number, y: number} | null>(null);
   const [localIp, setLocalIp] = useState('');
@@ -202,8 +204,6 @@ function App() {
      window.dispatchEvent(new CustomEvent('remote_emergency_approve', { detail: pendingEmergency }));
   };
 
-  // Removed handleEmergencyReject
-
   /*
   const handleEmergencyDeny = () => {
      setPendingEmergency(null);
@@ -342,7 +342,7 @@ function App() {
       </nav>
 
       {/* Main Workspace Area */}
-      <div className={`flex-1 flex flex-col md:flex-row overflow-hidden relative transition-all duration-1000 ${showIntro ? 'opacity-0 translate-y-20' : 'opacity-100 translate-y-0'}`}>
+      <div className={`flex flex-col md:flex-row flex-1 p-2 md:p-6 gap-2 md:gap-6 overflow-hidden transition-all duration-1000 delay-500 ${showIntro ? 'opacity-0 scale-95 blur-sm' : 'opacity-100 scale-100 blur-0'}`}>
         {/* Ambient Grid for App */}
         <div className="absolute inset-0 pointer-events-none bg-[linear-gradient(to_right,#ffffff03_1px,transparent_1px),linear-gradient(to_bottom,#ffffff03_1px,transparent_1px)] bg-[size:4rem_4rem] [mask-image:radial-gradient(ellipse_60%_60%_at_50%_50%,#000_70%,transparent_100%)] z-0" />
         
@@ -399,9 +399,9 @@ function App() {
 
 
           {/* Main Simulation Area */}
-          <div className="flex-1 flex min-h-0">
+          <div className="flex-1 flex gap-4 min-h-0">
             {/* Main 3D Simulation Pane */}
-            <div className="flex-1 bg-black/40 overflow-hidden relative min-w-0 z-10">
+            <div className="flex-1 bg-black/40 border border-white/10 rounded-2xl shadow-2xl overflow-hidden relative min-w-0 z-10">
               
               {/* Floating History Sidebar Overlay */}
               {isHistoryOpen && (
@@ -416,13 +416,11 @@ function App() {
               )}
 
               {activeMapData ? (
-                <Suspense fallback={<div className="absolute inset-0 flex items-center justify-center bg-black text-cyan-400 font-mono tracking-[0.2em] animate-pulse z-50">INITIALIZING PAS CORE ENGINE...</div>}>
-                  <SimulationView 
-                    mapData={activeMapData} 
-                    onEvent={() => {}} 
-                    onDispatchMission={handleGenerate} 
-                  />
-                </Suspense>
+                <SimulationView 
+                  mapData={activeMapData} 
+                  onEvent={() => {}} 
+                  onDispatchMission={handleGenerate} 
+                />
               ) : (
                 <div className="flex items-center justify-center h-full text-text-muted">
                   Initializing 3D Environment...
@@ -480,14 +478,12 @@ function App() {
               The robot is holding position at the emergency location. Authorize to resume normal operations.
             </p>
             
-            <div className="flex w-full gap-3 mt-2 md:mt-1">
-              <button 
-                onClick={handleEmergencyApprove}
-                className="flex-1 py-4 md:py-2.5 rounded-xl font-bold bg-green-600 text-white hover:bg-green-500 shadow-[0_0_20px_rgba(34,197,94,0.5)] md:shadow-[0_0_15px_rgba(34,197,94,0.4)] md:bg-green-600/90 transition-all text-base md:text-xs tracking-wider"
-              >
-                AUTHORIZE
-              </button>
-            </div>
+            <button 
+              onClick={handleEmergencyApprove}
+              className="w-full py-4 md:py-2.5 mt-2 md:mt-1 rounded-xl font-bold bg-red-600 text-white hover:bg-red-500 shadow-[0_0_20px_rgba(239,68,68,0.5)] md:shadow-[0_0_15px_rgba(239,68,68,0.4)] md:bg-red-600/90 transition-all text-base md:text-xs tracking-wider"
+            >
+              AUTHORIZE RESUME
+            </button>
           </div>
         </div>
       )}
