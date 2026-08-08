@@ -2279,19 +2279,21 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
       handleEmergencyComplete();
     } else if (robotState === 'emergency_to_ctr') {
        if (emergencyLocationRef.current && mapData) {
-          addExplanation(`Mission target reached. Returning to emergency location...`);
+          addExplanation(`Mission target reached. Waiting 2.5 seconds before returning to emergency location...`);
           setIsPlaying(false);
           const currentLoc = path[path.length - 1] || mapData.start;
           const cToEPath = calculatePath(currentLoc, emergencyLocationRef.current, [...(mapData.obstacles || []), ...userBlockers], mapData);
           
-          if (cToEPath.length > 0) {
-             setPath(cToEPath);
-             setCurrentPosIndex(0);
-             setRobotState('ctr_to_emergency');
-             setIsPlaying(true);
-          } else {
-             handleEmergencyComplete();
-          }
+          setTimeout(() => {
+            if (cToEPath.length > 0) {
+               setPath(cToEPath);
+               setCurrentPosIndex(0);
+               setRobotState('ctr_to_emergency');
+               setIsPlaying(true);
+            } else {
+               handleEmergencyComplete();
+            }
+          }, 2500);
        } else {
           handleEmergencyComplete();
        }
@@ -2393,7 +2395,6 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
          const forwardPath = calculatePath(currentLoc, targetPos, [...(mapData.obstacles || []), ...userBlockers], mapData);
          
          if (forwardPath.length > 0) {
-           forwardPath.push(forwardPath[forwardPath.length - 1]); // Add duplicate node for 2.5s wait
            setPath(forwardPath);
            setCurrentPosIndex(0);
            setRobotState('emergency_to_ctr');
