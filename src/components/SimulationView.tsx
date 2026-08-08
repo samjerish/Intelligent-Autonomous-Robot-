@@ -2392,6 +2392,9 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
       const currentLoc = path.length > 0 && currentPosIndex < path.length ? path[currentPosIndex] : mapData.start;
       
       if (robotStateRef.current === 'emergency_response' || robotStateRef.current === 'emergency_to_ctr' || robotStateRef.current === 'ctr_to_emergency') {
+         if (robotStateRef.current === 'emergency_response') {
+           emergencyLocationRef.current = currentLoc;
+         }
          const forwardPath = calculatePath(currentLoc, targetPos, [...(mapData.obstacles || []), ...userBlockers], mapData);
          
          if (forwardPath.length > 0) {
