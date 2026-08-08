@@ -32,7 +32,7 @@ export type DynamicObstacle = {
   isMoving: boolean;
 };
 
-export type RobotState = 'idle' | 'mission' | 'patrol' | 'charging' | 'emergency_response' | 'crowd_control' | 'waiting_for_police' | 'evading_obstacle' | 'returning_home' | 'off';
+export type RobotState = 'idle' | 'mission' | 'patrol' | 'charging' | 'emergency_response' | 'emergency_to_ctr' | 'ctr_to_emergency' | 'crowd_control' | 'waiting_for_police' | 'evading_obstacle' | 'returning_home' | 'off';
 
 export type PoliceState = {
   active: boolean;
@@ -1413,6 +1413,7 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
   const batteryRef = useRef(100);
   const robotStateRef = useRef<RobotState>('idle');
   const originalMissionRef = useRef<{path: GridPoint[], index: number} | null>(null);
+  const emergencyLocationRef = useRef<GridPoint | null>(null);
   const robotPosRef = useRef<THREE.Vector3 | null>(null);
   const robotRotRef = useRef<number>(0);
   const controlsRef = useRef<any>(null);
@@ -2216,7 +2217,42 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
     if (robotState === 'charging') {
       handleChargeComplete();
     } else if (robotState === 'emergency_response') {
-      handleEmergencyComplete();
+      if (originalMissionRef.current && mapData) {
+        const ctrTarget = originalMissionRef.current.path[originalMissionRef.current.path.length - 1];
+        const currentLoc = path[path.length - 1] || mapData.start;
+        emergencyLocationRef.current = currentLoc;
+        
+        addExplanation(`Emergency area secured. Proceeding to original mission target before returning...`);
+        const eToCPath = calculatePath(currentLoc, ctrTarget, [...(mapData.obstacles || []), ...userBlockers], mapData);
+        if (eToCPath.length > 0) {
+           setPath(eToCPath);
+           setCurrentPosIndex(0);
+           setRobotState('emergency_to_ctr');
+           setIsPlaying(true);
+        } else {
+           handleEmergencyComplete();
+        }
+      } else {
+        handleEmergencyComplete();
+      }
+    } else if (robotState === 'emergency_to_ctr') {
+       if (emergencyLocationRef.current && mapData) {
+          addExplanation(`Mission target reached. Returning to emergency location to await authorization...`);
+          const currentLoc = path[path.length - 1] || mapData.start;
+          const cToEPath = calculatePath(currentLoc, emergencyLocationRef.current, [...(mapData.obstacles || []), ...userBlockers], mapData);
+          if (cToEPath.length > 0) {
+             setPath(cToEPath);
+             setCurrentPosIndex(0);
+             setRobotState('ctr_to_emergency');
+             setIsPlaying(true);
+          } else {
+             handleEmergencyComplete();
+          }
+       } else {
+          handleEmergencyComplete();
+       }
+    } else if (robotState === 'ctr_to_emergency') {
+       handleEmergencyComplete();
     } else if (robotState === 'crowd_control') {
       setIsPlaying(false);
       setRobotState('waiting_for_police');
