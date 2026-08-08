@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState, useMemo } from 'react';
+import React, { useEffect, useRef, useState, useMemo, useCallback } from 'react';
 import type { MapData, GridPoint, Room } from '../types';
 import { calculatePath, calculateLongPath } from '../utils/simulationEngine';
 import { Play, RotateCcw, Activity, ShieldAlert, Crosshair, Maximize, Minimize, Bot, Power, Send, Construction, Pause, Users } from 'lucide-react';
@@ -32,7 +32,14 @@ export type DynamicObstacle = {
   isMoving: boolean;
 };
 
-export type RobotState = 'idle' | 'mission' | 'patrol' | 'charging' | 'emergency_response' | 'crowd_control' | 'evading_obstacle' | 'returning_home' | 'off';
+export type RobotState = 'idle' | 'mission' | 'patrol' | 'charging' | 'emergency_response' | 'crowd_control' | 'waiting_for_police' | 'evading_obstacle' | 'returning_home' | 'off';
+
+export type PoliceState = {
+  active: boolean;
+  path: GridPoint[];
+  targetPos: GridPoint | null;
+  phase: 'dispatching' | 'escorting' | 'idle';
+};
 
 
 const CameraController = ({ isFollowing, robotPosRef, robotRotRef, controlsRef, triggerReset, onResetDone, gridSize, isMapView }: any) => {
@@ -393,6 +400,78 @@ const Butterflies = () => {
           <meshBasicMaterial color={i % 2 === 0 ? "#fcd34d" : "#60a5fa"} />
         </Box>
       ))}
+    </group>
+  );
+};
+
+const PoliceVehicle = ({ policeState, policeStateRef, gridSize, isMapView, onReachDestination }: any) => {
+  const ref = useRef<THREE.Group>(null);
+  const internalIndex = useRef(0);
+
+  useEffect(() => {
+    internalIndex.current = 0;
+  }, [policeState.path]);
+
+  useFrame((_state, delta) => {
+    const state = policeStateRef.current;
+    if (!ref.current || state.path.length === 0 || !state.active) return;
+
+    const currentPos = ref.current.position;
+    const targetNode = state.path[Math.min(internalIndex.current, state.path.length - 1)];
+    const [tx, ty, tz] = getGridPosition(targetNode, gridSize, 0.2, isMapView);
+    const targetVector = new THREE.Vector3(tx, ty, tz);
+    
+    const dist = currentPos.distanceTo(targetVector);
+    if (dist < 0.1) {
+      if (internalIndex.current < state.path.length - 1) {
+        internalIndex.current++;
+      } else {
+        if (state.active) {
+           onReachDestination(state.phase);
+        }
+      }
+    } else {
+      const speed = isMapView ? 12 : 6;
+      currentPos.lerp(targetVector, delta * speed);
+      
+      const dir = targetVector.clone().sub(currentPos).normalize();
+      if (dir.lengthSq() > 0.001) {
+        const targetRot = Math.atan2(dir.x, dir.z);
+        ref.current.rotation.y += (targetRot - ref.current.rotation.y) * 0.1;
+      }
+    }
+  });
+
+  if (!policeState.active) return null;
+
+  return (
+    <group ref={ref}>
+      <Box args={[0.8, 0.6, 1.8]} position={[0, 0.3, 0]} castShadow>
+        <meshStandardMaterial color="#1e3a8a" />
+      </Box>
+      <Box args={[0.8, 0.3, 0.8]} position={[0, 0.75, -0.2]} castShadow>
+        <meshStandardMaterial color="#ffffff" />
+      </Box>
+      <PointLight position={[-0.3, 1, -0.2]} color="#ef4444" intensity={2} distance={5} />
+      <PointLight position={[0.3, 1, -0.2]} color="#3b82f6" intensity={2} distance={5} />
+      {policeState.phase === 'escorting' && (
+        <group position={[0, 0, 1.5]}>
+           {Array.from({ length: 15 }).map((_, j) => {
+              const ox = (Math.random() - 0.5) * 1.5;
+              const oz = (Math.random() - 0.5) * 1.5 + 1;
+              return (
+                <group key={`follow-${j}`} position={[ox, 0, oz]}>
+                  <Box args={[0.3, 1, 0.3]} castShadow position={[0, 0.5, 0]}>
+                    <meshStandardMaterial color={['#ef4444', '#3b82f6', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899', '#6366f1'][j % 7]} roughness={0.8} />
+                  </Box>
+                  <Sphere args={[0.2]} position={[0, 1.1, 0]} castShadow>
+                    <meshStandardMaterial color="#fcd34d" />
+                  </Sphere>
+                </group>
+              );
+            })}
+        </group>
+      )}
     </group>
   );
 };
@@ -1283,6 +1362,10 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
   const [userBlockers, setUserBlockers] = useState<GridPoint[]>([]);
   const [crowds, setCrowds] = useState<GridPoint[]>([]);
 
+  const [policeState, setPoliceState] = useState<PoliceState>({ active: false, path: [], targetPos: null, phase: 'idle' });
+  const policeStateRef = useRef<PoliceState>(policeState);
+  useEffect(() => { policeStateRef.current = policeState; }, [policeState]);
+
   // Recalculate path dynamically if obstacles are added while moving
   useEffect(() => {
     if (isPlaying && path.length > 0 && currentPosIndex < path.length && mapData) {
@@ -1860,6 +1943,29 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
     }, 1500);
   };
 
+  const handlePoliceReachDestination = useCallback((phase: string) => {
+    if (phase === 'dispatching') {
+       addExplanation('Police arrived! Escorting crowd out of the campus. Resuming robot operations...');
+       
+       setCrowds(prev => prev.filter(c => c.x !== policeStateRef.current.targetPos?.x || c.y !== policeStateRef.current.targetPos?.y));
+       
+       if (mapData && policeStateRef.current.targetPos) {
+         const returnPath = calculatePath(policeStateRef.current.targetPos, mapData.start, [...(mapData.obstacles || []), ...userBlockers], mapData);
+         setPoliceState(prev => ({
+           ...prev,
+           path: returnPath,
+           phase: 'escorting'
+         }));
+       }
+       
+       handleEmergencyComplete();
+       
+    } else if (phase === 'escorting') {
+       setPoliceState({ active: false, path: [], targetPos: null, phase: 'idle' });
+       addExplanation('Crowd successfully escorted out of the campus.');
+    }
+  }, [mapData, userBlockers]);
+
   const handleCrowdEmergency = (targetPos: GridPoint) => {
     if (!isOn) {
       addExplanation("Crowd detected while OFF! Emergency wake-up sequence initiated.");
@@ -2108,8 +2214,23 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
   const handleMissionComplete = () => {
     if (robotState === 'charging') {
       handleChargeComplete();
-    } else if (robotState === 'emergency_response' || robotState === 'crowd_control') {
+    } else if (robotState === 'emergency_response') {
       handleEmergencyComplete();
+    } else if (robotState === 'crowd_control') {
+      setIsPlaying(false);
+      setRobotState('waiting_for_police');
+      addExplanation('Robot reached crowd. Maintaining perimeter and dispatching police...');
+      
+      const currentLoc = path[path.length - 1] || mapData?.start;
+      if (currentLoc && mapData) {
+        const pPath = calculatePath(mapData.start, currentLoc, [...(mapData.obstacles || []), ...userBlockers], mapData);
+        setPoliceState({
+          active: true,
+          path: pPath,
+          targetPos: currentLoc,
+          phase: 'dispatching'
+        });
+      }
     } else if (robotState === 'returning_home') {
       setIsPlaying(false);
       setRobotState('off');
@@ -2458,6 +2579,7 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
           <RoadsRender roads={mapData.roads || []} gridSize={gridSize} />
           <BlockersRender blockers={userBlockers} gridSize={gridSize} roads={mapData.roads || []} />
           <CrowdsRender crowds={crowds} gridSize={gridSize} />
+          <PoliceVehicle policeState={policeState} policeStateRef={policeStateRef} gridSize={gridSize} isMapView={isMapView} onReachDestination={handlePoliceReachDestination} />
 
           {/* Starting Gate */}
           {mapData.start && (
@@ -2755,9 +2877,13 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
         )}
       </div>
 
-      {robotState === 'crowd_control' && (
+      {(robotState === 'crowd_control' || robotState === 'waiting_for_police' || policeState.phase === 'escorting') && (
         <div className="fixed bottom-6 left-1/2 -translate-x-1/2 bg-red-600 text-white px-6 py-3 rounded-full font-bold flex items-center gap-3 shadow-[0_0_20px_rgba(220,38,38,0.8)] border border-red-400 z-[9999] animate-pulse">
-          <span className="text-xl">🚔</span> Calling Police...
+          <span className="text-xl">🚔</span> {
+            policeState.phase === 'escorting' ? 'Police escorting crowd...' :
+            robotState === 'waiting_for_police' ? 'Waiting for Police to arrive...' : 
+            'Calling Police...'
+          }
         </div>
       )}
     </div>
