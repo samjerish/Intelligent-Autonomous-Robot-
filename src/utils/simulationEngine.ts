@@ -167,7 +167,7 @@ export function calculatePath(start: GridPoint, end: GridPoint, obstacles: GridP
       ) {
         let floorCost = neighbor.f !== current.pos.f ? 5 : 1;
         if (!isRoad) {
-           floorCost += 500;
+           floorCost += 10;
         }
         
         let proximityCost = 0;
