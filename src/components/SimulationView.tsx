@@ -1385,9 +1385,23 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
       }
     } else {
       setIsOn(true);
-      setRobotState('patrol'); // Initialize directly into patrol mode
       setBattery(100);
-      addExplanation("Powering ON. System initialized. Beginning patrol.");
+      addExplanation("Powering ON. System initialized. Beginning patrol immediately.");
+      if (mapData && mapData.rooms && mapData.rooms.length > 0) {
+        const currentLoc = path.length > 0 && currentPosIndex < path.length ? path[currentPosIndex] : mapData.start;
+        const randomRoom = mapData.rooms[Math.floor(Math.random() * mapData.rooms.length)];
+        const patrolPath = calculatePath(currentLoc, randomRoom.door || randomRoom.start, [...(mapData.obstacles || []), ...userBlockers], mapData);
+        if (patrolPath.length > 0) {
+          setPath(patrolPath);
+          setCurrentPosIndex(0);
+          setRobotState('patrol');
+          setIsPlaying(true);
+        } else {
+          setRobotState('idle');
+        }
+      } else {
+        setRobotState('patrol');
+      }
     }
   };
 
@@ -2286,9 +2300,10 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
             ref={controlsRef}
             enabled={!isFollowing}
             enableDamping
+            enablePan={false}
             dampingFactor={0.08}
             target={[0, 2, 0]}
-            maxPolarAngle={Math.PI / 2.15}
+            maxPolarAngle={Math.PI / 2.8}
             minDistance={20}
             maxDistance={gridSize.y * 1.1}
           />
