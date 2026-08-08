@@ -1950,7 +1950,8 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
        setCrowds(prev => prev.filter(c => c.x !== policeStateRef.current.targetPos?.x || c.y !== policeStateRef.current.targetPos?.y));
        
        if (mapData && policeStateRef.current.targetPos) {
-         const returnPath = calculatePath(policeStateRef.current.targetPos, mapData.start, [...(mapData.obstacles || []), ...userBlockers], mapData);
+         let returnPath = calculatePath(policeStateRef.current.targetPos, mapData.start, [...(mapData.obstacles || []), ...userBlockers], mapData);
+         if (returnPath.length === 0) returnPath = [policeStateRef.current.targetPos, mapData.start]; // Fallback to direct teleport/slide if blocked
          setPoliceState(prev => ({
            ...prev,
            path: returnPath,
