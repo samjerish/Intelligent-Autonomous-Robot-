@@ -1122,22 +1122,10 @@ const NaturalLandscape = ({ isNight, gridSize }: { isNight: boolean; gridSize: G
   const snowColor = isNight ? '#c4c4d0' : '#f0f4ff';
   const mountainColor = isNight ? '#374151' : '#6b7280';
   const rockColor = isNight ? '#292524' : '#57534e';
-  const seaColor = isNight ? '#1e3a5f' : '#1d4ed8';
-  const riverColor = isNight ? '#1e40af' : '#3b82f6';
+  const waterColor = isNight ? '#1e40af' : '#60a5fa';
 
   return (
     <group>
-      {/* --- SEA: large water plane, sits below ground level on far sides --- */}
-      <mesh position={[0, -2.5, -gz * 1.9]} rotation={[-Math.PI / 2, 0, 0]}>
-        <planeGeometry args={[gx * 5, gz * 1.5]} />
-        <meshStandardMaterial color={seaColor} roughness={0.05} metalness={0.4} transparent opacity={0.88} />
-      </mesh>
-      {/* Sea foam / shore */}
-      <mesh position={[0, -1.5, -half_z * 1.35]} rotation={[-Math.PI / 2, 0, 0]}>
-        <planeGeometry args={[gx * 2.5, gz * 0.15]} />
-        <meshStandardMaterial color="#bfdbfe" roughness={0.5} transparent opacity={0.6} />
-      </mesh>
-
       {/* --- RIVERS: two sinuous blue strips in the outer belt --- */}
       {/* West river flowing south */}
       <mesh position={[-half_x * 1.15, 0.03, 0]} rotation={[-Math.PI / 2, 0, 0]}>
@@ -1199,6 +1187,16 @@ const EnvironmentMap = ({ mapData, isNight, isTargeting, onMapClick }: { mapData
         onPointerOut={() => { if (isTargeting) document.body.style.cursor = 'auto'; }}
       >
         <meshStandardMaterial color={isNight ? '#14532d' : '#4ade80'} roughness={0.9} />
+      </Plane>
+
+      {/* Extended outer ground base (Land fully) */}
+      <Plane
+        args={[gridSize.x * 20, gridSize.y * 20]}
+        rotation={[-Math.PI / 2, 0, 0]}
+        position={[0, -0.02, 0]}
+        receiveShadow
+      >
+        <meshStandardMaterial color={isNight ? '#052e16' : '#16a34a'} roughness={1} />
       </Plane>
 
       {/* Natural surrounding landscape (mountains, rocks, rivers, sea, trees) */}
