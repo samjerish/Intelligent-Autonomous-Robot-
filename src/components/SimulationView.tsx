@@ -1728,6 +1728,28 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
   }, [isPlaying, mapData]);
 
   const prevIsIdleMode = useRef(isIdleMode);
+  const hasAutoStartedRef = useRef(false);
+
+  // Auto-Start Patrol Logic
+  useEffect(() => {
+    if (mapData && !hasAutoStartedRef.current) {
+      hasAutoStartedRef.current = true;
+      setIsOn(true);
+      const startInitialPatrol = async () => {
+        addExplanation('System online. Initiating default autonomous patrol.');
+        const currentLoc = mapData.start;
+        const randomRoom = mapData.rooms[Math.floor(Math.random() * mapData.rooms.length)];
+        const patrolPath = await calculatePathAsync(currentLoc, randomRoom.door || randomRoom.start, [...(mapData.obstacles || [])], mapData);
+        if (patrolPath.length > 0) {
+          setPath(patrolPath);
+          setCurrentPosIndex(0);
+          setRobotState('patrol');
+          setIsPlaying(true);
+        }
+      };
+      setTimeout(() => startInitialPatrol(), 1500); 
+    }
+  }, [mapData]);
 
   // Auto-Patrol Logic (Manual Wake-up)
   useEffect(() => {
@@ -2085,7 +2107,7 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
     
     if (emergencyPath.length > 0) {
       setPath(emergencyPath);
-      setActivePathColor('#00ffff');
+      setActivePathColor('#ef4444');
       setCurrentPosIndex(0);
       setRobotState('emergency_response');
       setIsPlaying(true);
