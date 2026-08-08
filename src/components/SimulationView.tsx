@@ -2134,23 +2134,16 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
 
   const handleEmergencyComplete = async () => {
     if (!mapData) return;
-    addExplanation(`Arrived at emergency location. Providing assistance for 5 seconds...`);
+    addExplanation(`Arrived at emergency location. Providing assistance for 2.5 seconds...`);
     setIsPlaying(false);
     
     if (emergencyTimeoutRef.current) {
       clearTimeout(emergencyTimeoutRef.current);
     }
     
-    emergencyTimeoutRef.current = setTimeout(() => {
-      // Dispatch local request to trigger the global confirmation modal for completion
-      window.dispatchEvent(new CustomEvent('local_emergency_request', { detail: {x: 0, y: 0} }));
+    emergencyTimeoutRef.current = setTimeout(async () => {
       emergencyTimeoutRef.current = null;
-    }, 5000);
-  };
-
-  useEffect(() => {
-    const handleRemoteApprove = async () => {
-      if (!mapData) return;
+      
       if (turnOffAfterEmergencyRef.current) {
          addExplanation("Emergency override complete. Returning to Robot Home to power off.");
          turnOffAfterEmergencyRef.current = false;
@@ -2166,34 +2159,30 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
            setIsPlaying(true);
          }
       } else {
-         addExplanation(`Emergency resolved. Returning to patrol mode.`);
-         const currentLoc = path[path.length - 1] || mapData.start;
-         const randomRoom = mapData.rooms[Math.floor(Math.random() * mapData.rooms.length)];
-         const patrolPath = await calculatePathAsync(currentLoc, randomRoom.door || randomRoom.start, [...(mapData.obstacles || []), ...userBlockers], mapData);
-         if (patrolPath.length > 0) {
-           setPath(patrolPath);
-           setCurrentPosIndex(0);
-           setRobotState('patrol');
-           setIsPlaying(true);
+         const orig = originalMissionRef.current;
+         if (orig && orig.path.length > 0) {
+           addExplanation(`Emergency resolved. Returning to previous mission...`);
+           const target = orig.path[orig.path.length - 1];
+           const currentLoc = path[path.length - 1] || mapData!.start;
+           resumeMissionTo(currentLoc, target);
          } else {
-           setRobotState('idle'); 
+           addExplanation(`Emergency resolved. Returning to patrol mode.`);
+           const currentLoc = path[path.length - 1] || mapData.start;
+           const randomRoom = mapData.rooms[Math.floor(Math.random() * mapData.rooms.length)];
+           const patrolPath = await calculatePathAsync(currentLoc, randomRoom.door || randomRoom.start, [...(mapData.obstacles || []), ...userBlockers], mapData);
+           if (patrolPath.length > 0) {
+             setPath(patrolPath);
+             setCurrentPosIndex(0);
+             setRobotState('patrol');
+             setIsPlaying(true);
+           } else {
+             setRobotState('idle'); 
+           }
          }
       }
       originalMissionRef.current = null;
-    };
-
-    const handleRemoteDeny = () => {
-      addExplanation("Holding position at emergency location.");
-    };
-
-    window.addEventListener('remote_emergency_approve', handleRemoteApprove);
-    window.addEventListener('remote_emergency_deny', handleRemoteDeny);
-
-    return () => {
-      window.removeEventListener('remote_emergency_approve', handleRemoteApprove);
-      window.removeEventListener('remote_emergency_deny', handleRemoteDeny);
-    };
-  }, [mapData, isOn, robotState, path, currentPosIndex]);
+    }, 2500);
+  };
 
   const handleObstacleDetected = async (obsPos: GridPoint) => {
     if (isRecalculating.current) return;
