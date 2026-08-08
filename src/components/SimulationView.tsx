@@ -2650,6 +2650,7 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
             </div>
           </div>
         </div>
+        )}
       </div>
     </div>
     </div>
