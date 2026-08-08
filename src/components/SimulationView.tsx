@@ -1747,7 +1747,7 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
           setRobotState('patrol');
           setIsPlaying(true);
         }
-      }, 0);
+      }, 2500);
     }
     prevIsIdleMode.current = isIdleMode;
     return () => clearTimeout(timeout);
@@ -2431,7 +2431,7 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
             setRobotState('idle');
           }
           isRecalculating.current = false;
-        }, 800);
+        }, 2500);
       } else {
         setIsPlaying(false);
         setRobotState('idle');
