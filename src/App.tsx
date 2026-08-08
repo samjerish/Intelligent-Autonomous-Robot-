@@ -48,7 +48,7 @@ function App() {
   });
   const [showRobotFeatures, setShowRobotFeatures] = useState(false);
   const [pendingEmergency, setPendingEmergency] = useState<{x: number, y: number} | null>(null);
-  const [showReject, setShowReject] = useState(true);
+  const [showEmergencyPrompt, setShowEmergencyPrompt] = useState(false);
   const [localIp, setLocalIp] = useState('');
   const [isOn, setIsOn] = useState(false);
   const [showQR, setShowQR] = useState(false);
@@ -76,9 +76,7 @@ function App() {
 
   useEffect(() => {
     if (pendingEmergency) {
-      setShowReject(true);
-      const timer = setTimeout(() => setShowReject(false), 5000);
-      return () => clearTimeout(timer);
+      addEmergencyAlert(`CRITICAL: Emergency reported at ${targetRoom.name}`);
     }
   }, [pendingEmergency]);
 
@@ -219,11 +217,7 @@ function App() {
      window.dispatchEvent(new CustomEvent('remote_emergency_approve', { detail: pendingEmergency }));
   };
 
-  const handleEmergencyReject = () => {
-     setPendingEmergency(null);
-     socketRef.current?.emit('update_state', { pendingEmergency: null, emergencyApprove: false });
-     window.dispatchEvent(new CustomEvent('remote_emergency_deny', { detail: pendingEmergency }));
-  };
+  // Removed handleEmergencyReject
 
   /*
   const handleEmergencyDeny = () => {
@@ -508,14 +502,6 @@ function App() {
               >
                 AUTHORIZE
               </button>
-              {showReject && (
-                <button 
-                  onClick={handleEmergencyReject}
-                  className="flex-1 py-4 md:py-2.5 rounded-xl font-bold bg-red-600 text-white hover:bg-red-500 shadow-[0_0_20px_rgba(239,68,68,0.5)] md:shadow-[0_0_15px_rgba(239,68,68,0.4)] md:bg-red-600/90 transition-all text-base md:text-xs tracking-wider"
-                >
-                  REJECT
-                </button>
-              )}
             </div>
           </div>
         </div>
