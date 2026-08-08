@@ -94,10 +94,13 @@ export function calculatePath(start: GridPoint, end: GridPoint, obstacles: GridP
         neighbor.f >= 0 && neighbor.f < (gridSize.f || 1) &&
         !isObstacle(neighbor.x, neighbor.y, neighbor.f) &&
         !closedList.has(`${neighbor.x},${neighbor.y},${neighbor.f}`) &&
-        isRoad &&
         isAllowedDirection(current.pos, neighbor)
       ) {
-        const floorCost = neighbor.f !== current.pos.f ? 5 : 1;
+        let floorCost = neighbor.f !== current.pos.f ? 5 : 1;
+        if (!isRoad) {
+           floorCost += 500; // massive penalty for leaving the road, ensuring it only happens to bypass blocks
+        }
+        
         let proximityCost = 0;
         
         for (let dx = -1; dx <= 1; dx++) {
