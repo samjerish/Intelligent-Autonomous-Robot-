@@ -189,15 +189,133 @@ const getGridPointFromVector3 = (point: THREE.Vector3, gridSize: GridPoint): Gri
 
 const RoadsRender = ({ roads, gridSize }: { roads: GridPoint[], gridSize: GridPoint }) => {
   if (!roads || roads.length === 0) return null;
+
+  // Detect road center-lines by finding the median y for horizontal runs and median x for vertical runs.
+  // We compute center-line dash positions by scanning contiguous runs.
+  const centerLineDashes: { x: number; z: number; rotY: number }[] = [];
+
+  // Group road cells by row (same y → horizontal road band)
+  const byRow = new Map<number, number[]>();
+  const byCol = new Map<number, number[]>();
+  roads.forEach(r => {
+    if (!byRow.has(r.y)) byRow.set(r.y, []);
+    byRow.get(r.y)!.push(r.x);
+    if (!byCol.has(r.x)) byCol.set(r.x, []);
+    byCol.get(r.x)!.push(r.y);
+  });
+
+  // Find horizontal bands (rows that span many x values)
+  const hBands = new Map<number, { xMin: number; xMax: number; }[]>();
+  byRow.forEach((xs, y) => {
+    if (xs.length < 4) return; // skip tiny rows
+    xs.sort((a, b) => a - b);
+    // group into contiguous runs
+    let runStart = xs[0];
+    let prev = xs[0];
+    for (let i = 1; i <= xs.length; i++) {
+      if (i === xs.length || xs[i] > prev + 1) {
+        if (prev - runStart > 2) {
+          if (!hBands.has(y)) hBands.set(y, []);
+          hBands.get(y)!.push({ xMin: runStart, xMax: prev });
+        }
+        runStart = xs[i];
+      }
+      prev = xs[i];
+    }
+  });
+
+  // Find vertical bands (columns that span many y values)
+  const vBands = new Map<number, { yMin: number; yMax: number; }[]>();
+  byCol.forEach((ys, x) => {
+    if (ys.length < 4) return;
+    ys.sort((a, b) => a - b);
+    let runStart = ys[0];
+    let prev = ys[0];
+    for (let i = 1; i <= ys.length; i++) {
+      if (i === ys.length || ys[i] > prev + 1) {
+        if (prev - runStart > 2) {
+          if (!vBands.has(x)) vBands.set(x, []);
+          vBands.get(x)!.push({ yMin: runStart, yMax: prev });
+        }
+        runStart = ys[i];
+      }
+      prev = ys[i];
+    }
+  });
+
+  // For each horizontal band, find the center Y row and generate dashes along X
+  // Group rows into bands by proximity
+  const hBandGroups: { yCenter: number; xMin: number; xMax: number }[] = [];
+  const processedYs = new Set<number>();
+  byRow.forEach((xs, y) => {
+    if (processedYs.has(y) || xs.length < 4) return;
+    // find all rows within 3 cells
+    const grouped = Array.from(byRow.entries()).filter(([ry, rxs]) =>
+      Math.abs(ry - y) <= 4 && rxs.length >= 4
+    );
+    grouped.forEach(([ry]) => processedYs.add(ry));
+    const ys = grouped.map(([ry]) => ry);
+    const yCenter = Math.round((Math.min(...ys) + Math.max(...ys)) / 2);
+    const allXs = grouped.flatMap(([, rxs]) => rxs);
+    const xMin = Math.min(...allXs);
+    const xMax = Math.max(...allXs);
+    hBandGroups.push({ yCenter, xMin, xMax });
+  });
+
+  const vBandGroups: { xCenter: number; yMin: number; yMax: number }[] = [];
+  const processedXs = new Set<number>();
+  byCol.forEach((ys, x) => {
+    if (processedXs.has(x) || ys.length < 4) return;
+    const grouped = Array.from(byCol.entries()).filter(([rx, rys]) =>
+      Math.abs(rx - x) <= 4 && rys.length >= 4
+    );
+    grouped.forEach(([rx]) => processedXs.add(rx));
+    const xs = grouped.map(([rx]) => rx);
+    const xCenter = Math.round((Math.min(...xs) + Math.max(...xs)) / 2);
+    const allYs = grouped.flatMap(([, rys]) => rys);
+    const yMin = Math.min(...allYs);
+    const yMax = Math.max(...allYs);
+    vBandGroups.push({ xCenter, yMin, yMax });
+  });
+
+  // Generate horizontal dashes
+  hBandGroups.forEach(({ yCenter, xMin, xMax }) => {
+    const DASH_STEP = 3;
+    for (let cx = xMin + 1; cx < xMax - 1; cx += DASH_STEP) {
+      const [wx, , wz] = getGridPosition({ x: cx, y: yCenter, f: 0 }, gridSize, 0.06);
+      centerLineDashes.push({ x: wx, z: wz, rotY: 0 });
+    }
+  });
+
+  // Generate vertical dashes
+  vBandGroups.forEach(({ xCenter, yMin, yMax }) => {
+    const DASH_STEP = 3;
+    for (let cy = yMin + 1; cy < yMax - 1; cy += DASH_STEP) {
+      const [wx, , wz] = getGridPosition({ x: xCenter, y: cy, f: 0 }, gridSize, 0.06);
+      centerLineDashes.push({ x: wx, z: wz, rotY: Math.PI / 2 });
+    }
+  });
+
   return (
-    <Instances limit={roads.length} receiveShadow>
-      <boxGeometry args={[CELL_SIZE, 0.05, CELL_SIZE]} />
-      <meshStandardMaterial color="#64748b" opacity={0.9} transparent />
-      {roads.map((road, i) => {
-        const [x, y, z] = getGridPosition(road, gridSize, 0.025);
-        return <Instance key={i} position={[x, y, z]} />;
-      })}
-    </Instances>
+    <>
+      {/* Road surface */}
+      <Instances limit={roads.length} receiveShadow>
+        <boxGeometry args={[CELL_SIZE, 0.05, CELL_SIZE]} />
+        <meshStandardMaterial color="#475569" opacity={0.95} transparent />
+        {roads.map((road, i) => {
+          const [x, y, z] = getGridPosition(road, gridSize, 0.025);
+          return <Instance key={i} position={[x, y, z]} />;
+        })}
+      </Instances>
+
+      {/* Dashed center lines */}
+      {centerLineDashes.map((d, i) => (
+        <mesh key={`cl-${i}`} position={[d.x, 0.055, d.z]} rotation={[0, d.rotY, 0]}>
+          <boxGeometry args={[CELL_SIZE * 0.12, 0.02, CELL_SIZE * 0.65]} />
+          <meshStandardMaterial color="#fbbf24" emissive="#fbbf24" emissiveIntensity={0.6} />
+        </mesh>
+      ))}
+    </>
   );
 };
 
@@ -1971,8 +2089,8 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
             }} 
           />
           {rooms?.map((room: Room) => {
-            const width = (room.end.x - room.start.x + 1) * 0.75;
-            const depth = (room.end.y - room.start.y + 1) * 0.75;
+            const width = (room.end.x - room.start.x + 1) * 0.65;
+            const depth = (room.end.y - room.start.y + 1) * 0.65;
             const height = 3;
             const x = (room.start.x + room.end.x) / 2 - gridSize.x / 2;
             const z = (room.start.y + room.end.y) / 2 - gridSize.y / 2;
