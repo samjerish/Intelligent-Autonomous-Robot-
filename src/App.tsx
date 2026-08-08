@@ -39,12 +39,8 @@ function App() {
   const safeGetSession = (key: string) => {
     try { return sessionStorage.getItem(key); } catch(e) { return null; }
   };
-  const [showIntro, setShowIntro] = useState(() => {
-    return safeGetSession('hasSeenIntro') !== 'true';
-  });
-  const [introRendered, setIntroRendered] = useState(() => {
-    return safeGetSession('hasSeenIntro') !== 'true';
-  });
+  const [showIntro, setShowIntro] = useState(false);
+  const [introRendered, setIntroRendered] = useState(false);
   const [showRobotFeatures, setShowRobotFeatures] = useState(false);
   const [pendingEmergency, setPendingEmergency] = useState<{x: number, y: number} | null>(null);
   const [localIp, setLocalIp] = useState('');
