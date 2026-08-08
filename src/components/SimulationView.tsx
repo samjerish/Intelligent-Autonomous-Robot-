@@ -2108,7 +2108,7 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
   const handleMissionComplete = () => {
     if (robotState === 'charging') {
       handleChargeComplete();
-    } else if (robotState === 'emergency_response') {
+    } else if (robotState === 'emergency_response' || robotState === 'crowd_control') {
       handleEmergencyComplete();
     } else if (robotState === 'returning_home') {
       setIsPlaying(false);
