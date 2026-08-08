@@ -921,14 +921,14 @@ const Robot = ({
     if (pauseTimeRef.current > 0) return; // Wait if still paused
 
     if (isPlaying) {
-      // --- Sensor Logic: Check for dynamic obstacles ahead ---
       if (dynamicObstaclesRef && dynamicObstaclesRef.current.length > 0) {
         const upcomingPath = path.slice(currentIndex, currentIndex + 4);
         for (const obs of dynamicObstaclesRef.current) {
-          const obsTarget = obs.path[Math.min(obs.currentIndex, obs.path.length - 1)];
+          const obsUpcoming = obs.path.slice(obs.currentIndex, obs.currentIndex + 5);
           for (const p of upcomingPath) {
-            if ((p.x === obs.pos.x && p.y === obs.pos.y) || (p.x === obsTarget.x && p.y === obsTarget.y)) {
-              onObstacleDetected([obs.pos, obsTarget]);
+            const collision = (p.x === obs.pos.x && p.y === obs.pos.y) || obsUpcoming.some(op => op.x === p.x && op.y === p.y);
+            if (collision) {
+              onObstacleDetected([obs.pos, ...obsUpcoming]);
               return; // Pause movement this frame
             }
           }
@@ -1766,7 +1766,9 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
       setCurrentPosIndex(0);
       setIsPlaying(true);
       addExplanation(`Successfully found alternative route avoiding obstacle! Resuming mission.`);
-      isRecalculating.current = false;
+      setTimeout(() => {
+        isRecalculating.current = false;
+      }, 1500);
     } else {
       let pullOverTile: GridPoint | null = null;
       const neighbors = [

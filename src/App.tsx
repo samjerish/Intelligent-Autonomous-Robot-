@@ -36,9 +36,6 @@ function App() {
   const [currentMission, setCurrentMission] = useState<MissionHistoryItem | null>(null);
 
   const [initialMapData, setInitialMapData] = useState<any>(null);
-  const safeGetSession = (key: string) => {
-    try { return sessionStorage.getItem(key); } catch(e) { return null; }
-  };
   const [showIntro, setShowIntro] = useState(false);
   const [introRendered, setIntroRendered] = useState(false);
   const [showRobotFeatures, setShowRobotFeatures] = useState(false);
