@@ -104,15 +104,15 @@ const generateUniversityLayout = () => {
     }
   };
 
-  // Horizontal arteries — 8 cells wide (robot needs room to divert inline)
-  addRoadRect(0, 18, 119, 25);
-  addRoadRect(0, 48, 119, 55);
-  addRoadRect(0, 78, 119, 85);
+  // Horizontal arteries — 6 cells wide
+  addRoadRect(0, 19, 119, 24);
+  addRoadRect(0, 49, 119, 54);
+  addRoadRect(0, 79, 119, 84);
 
-  // Vertical main roads — 6 cells wide
-  addRoadRect(23, 0, 30, 99);
-  addRoadRect(61, 0, 68, 99);
-  addRoadRect(88, 0, 95, 99);
+  // Vertical main roads — 4 cells wide
+  addRoadRect(24, 0, 27, 99);
+  addRoadRect(62, 0, 65, 99);
+  addRoadRect(89, 0, 92, 99);
 
   const isInsideRoom = (x, y) => {
     return rooms.some(r => x >= r.start.x && x <= r.end.x && y >= r.start.y && y <= r.end.y);
