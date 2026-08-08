@@ -16,7 +16,6 @@ import {
   Instance,
   Sphere,
   Cylinder,
-  RoundedBox,
 } from '@react-three/drei';
 import * as THREE from 'three';
 
@@ -1816,7 +1815,7 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
             )}
           </div>
         </div>
-        <Canvas shadows gl={{ antialias: true }} dpr={[1, 2]}>
+        <Canvas shadows gl={{ antialias: true }} dpr={[1, 1.2]}>
           {/* Camera */}
           {isMapView ? (
             <OrthographicCamera makeDefault position={[0, 100, 0]} zoom={6} near={0.1} far={1000} />
