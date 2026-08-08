@@ -1843,13 +1843,9 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
     
     if (isEmergencySideTask) {
       const emergencyLoc = path.length > 0 ? path[path.length - 1] : mapData.start;
+      emergencyLocationRef.current = emergencyLoc;
       const fPath = calculatePath(currentLoc, target, [...(mapData.obstacles || []), ...userBlockers], mapData);
-      const rPath = calculatePath(target, emergencyLoc, [...(mapData.obstacles || []), ...userBlockers], mapData);
-      if (fPath.length > 0 && rPath.length > 0) {
-        initialPath = [...fPath, fPath[fPath.length - 1], ...rPath.slice(1)];
-      } else {
-        initialPath = fPath;
-      }
+      initialPath = fPath;
       setActivePathColor('#00ffff');
     } else {
       const fPath = calculatePath(currentLoc, target, [...(mapData.obstacles || []), ...userBlockers], mapData);
@@ -1879,13 +1875,12 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
       }
       
       if (isEmergencySideTask) {
-         setRobotState('emergency_response');
+         setRobotState('emergency_to_ctr');
          if (emergencyTimeoutRef.current) {
            clearTimeout(emergencyTimeoutRef.current);
            emergencyTimeoutRef.current = null;
          }
          setIsPlaying(true);
-         window.dispatchEvent(new CustomEvent('local_emergency_request', { detail: null }));
       } else {
          setRobotState('mission');
          setIsPlaying(true);
@@ -2214,24 +2209,7 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
     if (robotState === 'charging') {
       handleChargeComplete();
     } else if (robotState === 'emergency_response') {
-      if (originalMissionRef.current && mapData) {
-        const ctrTarget = originalMissionRef.current.path[originalMissionRef.current.path.length - 1];
-        const currentLoc = path[path.length - 1] || mapData.start;
-        emergencyLocationRef.current = currentLoc;
-        
-        addExplanation(`Emergency area secured. Proceeding to original mission target before returning...`);
-        const eToCPath = calculatePath(currentLoc, ctrTarget, [...(mapData.obstacles || []), ...userBlockers], mapData);
-        if (eToCPath.length > 0) {
-           setPath(eToCPath);
-           setCurrentPosIndex(0);
-           setRobotState('emergency_to_ctr');
-           setIsPlaying(true);
-        } else {
-           handleEmergencyComplete();
-        }
-      } else {
-        handleEmergencyComplete();
-      }
+      handleEmergencyComplete();
     } else if (robotState === 'emergency_to_ctr') {
        if (emergencyLocationRef.current && mapData) {
           addExplanation(`Mission target reached. Waiting 2.5 seconds before returning to emergency location...`);
