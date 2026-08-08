@@ -1463,9 +1463,10 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
     }
   }, [robotState]);
 
+  const isEmergencyMode = robotState === 'emergency_response' || robotState === 'emergency_to_ctr' || robotState === 'ctr_to_emergency';
+
   useEffect(() => {
-    const isEmergency = robotState === 'emergency_response' || robotState === 'emergency_to_ctr' || robotState === 'ctr_to_emergency';
-    if (isEmergency) {
+    if (isEmergencyMode) {
       let intervalId: ReturnType<typeof setInterval>;
       let audioCtx: AudioContext | null = null;
       let oscillator: OscillatorNode | null = null;
@@ -1490,7 +1491,7 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
           }
         }, 500);
         
-        gainNode.gain.setValueAtTime(0.05, audioCtx.currentTime); // very low volume so it's not annoying
+        gainNode.gain.setValueAtTime(0.015, audioCtx.currentTime); // very low volume
         oscillator.start();
       } catch (e) {
         console.error("Audio playback failed", e);
@@ -1506,7 +1507,8 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
         }
       };
     }
-  }, [robotState]);
+  }, [isEmergencyMode]);
+
 
   const isOnRef = useRef(isOn);
   useEffect(() => { isOnRef.current = isOn; }, [isOn]);
