@@ -2076,8 +2076,13 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
         }, 800);
       } else {
         setIsPlaying(false);
-        setRobotState('idle');
-        addExplanation('Mission complete. Waiting 2.5s before returning to patrol mode.');
+        if (isIdleMode) {
+          setRobotState('idle');
+          addExplanation('Mission complete. Idle mode active, standing by.');
+        } else {
+          setRobotState('patrol');
+          addExplanation('Mission complete. Waiting 2.5s before returning to patrol mode.');
+        }
       }
     }
   };
