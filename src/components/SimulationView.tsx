@@ -452,8 +452,8 @@ const PoliceVehicle = ({ policeState, policeStateRef, gridSize, isMapView, onRea
       <Box args={[0.8, 0.3, 0.8]} position={[0, 0.75, -0.2]} castShadow>
         <meshStandardMaterial color="#ffffff" />
       </Box>
-      <PointLight position={[-0.3, 1, -0.2]} color="#ef4444" intensity={2} distance={5} />
-      <PointLight position={[0.3, 1, -0.2]} color="#3b82f6" intensity={2} distance={5} />
+      <pointLight position={[-0.3, 1, -0.2]} color="#ef4444" intensity={2} distance={5} />
+      <pointLight position={[0.3, 1, -0.2]} color="#3b82f6" intensity={2} distance={5} />
       {policeState.phase === 'escorting' && (
         <group position={[0, 0, 1.5]}>
            {Array.from({ length: 15 }).map((_, j) => {
