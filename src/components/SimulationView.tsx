@@ -1014,6 +1014,25 @@ const PathLine = ({ path, currentIndex, gridSize, isMapView, color = "#00ffff", 
   );
 };
 
+
+// --- Forest Tree helper (tint changes for night mode) ---
+const ForestTree = ({ x, z, scale = 1, isNight = false }: { x: number; z: number; scale?: number; isNight?: boolean }) => (
+  <group position={[x, 0, z]} scale={scale}>
+    <Cylinder args={[0.12, 0.16, 0.9, 6]} position={[0, 0.45, 0]} castShadow>
+      <meshStandardMaterial color={isNight ? '#3b1e0a' : '#7c4b1e'} roughness={0.9} />
+    </Cylinder>
+    <Cylinder args={[0, 0.75, 1.2, 6]} position={[0, 1.4, 0]} castShadow>
+      <meshStandardMaterial color={isNight ? '#064e1e' : '#15803d'} roughness={0.8} />
+    </Cylinder>
+    <Cylinder args={[0, 0.6, 1.0, 6]} position={[0, 2.1, 0]} castShadow>
+      <meshStandardMaterial color={isNight ? '#065f26' : '#16a34a'} roughness={0.8} />
+    </Cylinder>
+    <Cylinder args={[0, 0.4, 0.8, 6]} position={[0, 2.7, 0]} castShadow>
+      <meshStandardMaterial color={isNight ? '#14532d' : '#4ade80'} roughness={0.8} />
+    </Cylinder>
+  </group>
+);
+
 // --- Natural Landscape ---
 // Placed only OUTSIDE the campus boundary (outer belt).
 // Contains: sea, rivers, mountains, rocks, trees.
@@ -2222,9 +2241,7 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
           ) : (
             <PerspectiveCamera makeDefault position={[0, gridSize.y * 0.9, gridSize.y * 1.35]} fov={60} near={0.5} far={2000} />
           )}
-          {/* Sky Dome */}
-          {!isMapView && <SkyDome isNight={isNight} gridSize={gridSize} />}
-          {/* Lighting — adapts to day/night */}
+          {/* Lighting — adapts to day/night from real local time */}
           <ambientLight intensity={isNight ? 0.12 : 0.7} color={isNight ? '#c7d2fe' : '#ffffff'} />
           <directionalLight
             position={isNight ? [-30, 40, -30] : [30, 50, 30]}
