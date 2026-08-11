@@ -2533,7 +2533,7 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
         </div>
         <Canvas shadows gl={{ antialias: true }} dpr={[1, 2]}>
           {/* Sky background from real time */}
-          <color attach="background" args={[isNight ? '#05081a' : '#87ceeb']} />
+          <color attach="background" args={['#000000']} />
           {/* Camera — zoomed out to fit entire model + surrounding landscape */}
           {isMapView ? (
             <OrthographicCamera makeDefault position={[0, 100, 0]} zoom={4} near={0.1} far={2000} />
