@@ -779,7 +779,7 @@ const BuildingModel = React.memo(({ room, width, height, depth }: { room: Room, 
           <meshStandardMaterial color="#334155" />
         </Box>
         <Box args={[width * 1.02, height * 0.4, depth * 0.8]} position={[0, height * 0.1, 0]}>
-           <meshStandardMaterial color="#bae6fd" metalness={0.8} roughness={0.2} emissive="#bae6fd" emissiveIntensity={0.2} />
+           <meshStandardMaterial color="#bae6fd" roughness={0.8} emissive="#bae6fd" emissiveIntensity={0.05} />
         </Box>
       </group>
     );
