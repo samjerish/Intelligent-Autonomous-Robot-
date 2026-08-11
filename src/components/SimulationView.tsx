@@ -587,19 +587,22 @@ const BuildingModel = React.memo(({ room, width, height, depth }: { room: Room, 
   } else if (type === 'library') {
     return (
       <group>
-        <Box args={[width, height * 1.8, depth]} position={[0, height * 0.4, 0]} castShadow receiveShadow>
-          <meshStandardMaterial color="#e2e8f0" />
+        {/* Modern Solid Base */}
+        <Box args={[width * 0.9, height * 0.8, depth * 0.9]} position={[0, -height * 0.1, 0]} castShadow receiveShadow>
+          <meshStandardMaterial color="#cbd5e1" roughness={0.8} />
         </Box>
-        {/* Greek style columns */}
-        {[-width/2 + 0.5, 0, width/2 - 0.5].map((x, i) => (
-          <Cylinder key={i} args={[0.2, 0.2, height * 1.8]} position={[x, height * 0.4, depth/2 + 0.1]} castShadow>
-            <meshStandardMaterial color="#ffffff" />
-          </Cylinder>
-        ))}
-        {/* Pediment */}
-        <Cylinder args={[width/2, width/2, depth + 0.5, 3]} position={[0, height * 1.4, 0]} rotation={[width > depth ? 0 : Math.PI / 2, 0, Math.PI / 2]} castShadow>
-           <meshStandardMaterial color="#94a3b8" />
-        </Cylinder>
+        {/* Glass upper section */}
+        <Box args={[width * 1.05, height * 1.2, depth * 1.05]} position={[0, height * 0.9, 0]} castShadow>
+          <meshStandardMaterial color="#0ea5e9" transparent opacity={0.3} metalness={0.6} roughness={0.2} />
+        </Box>
+        {/* Inner solid core for depth */}
+        <Box args={[width * 0.8, height * 1.15, depth * 0.8]} position={[0, height * 0.9, 0]}>
+          <meshStandardMaterial color="#475569" roughness={0.9} />
+        </Box>
+        {/* Modern slanted roof feature */}
+        <Box args={[width * 1.1, height * 0.2, depth * 1.1]} position={[0, height * 1.6, 0]} rotation={[0.08, 0, 0]} castShadow receiveShadow>
+          <meshStandardMaterial color="#1e293b" roughness={0.8} />
+        </Box>
       </group>
     );
   } else if (type === 'auditorium') {

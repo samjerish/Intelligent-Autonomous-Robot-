@@ -72,8 +72,8 @@ const generateUniversityLayout = () => {
   addBuilding('Boys Hostel', 96, 30, 15, 18, cHostel, 'hostel', 103, 48);
 
   // Row 3: y 54..79
-  addBuilding('Swimming Pool', 5, 56, 15, 10, cSports, 'sports', 12, 66);
-  addBuilding('Tennis Court', 5, 68, 15, 10, cSports, 'sports', 12, 78);
+  addBuilding('Innovation Lab', 5, 56, 15, 10, cAcademic, 'classroom', 12, 66);
+  addBuilding('Data Center', 5, 68, 15, 10, cAmenities, 'utility', 12, 78);
   addBuilding('Cricket Nets', 30, 56, 12, 12, cSports, 'sports', 36, 68);
   addBuilding('Hockey Field', 45, 56, 12, 12, cSports, 'sports', 51, 68);
   addBuilding('Sports Ground', 30, 70, 25, 9, cSports, 'sports', 42, 79);
