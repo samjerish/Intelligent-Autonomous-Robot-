@@ -58,8 +58,8 @@ const generateUniversityLayout = () => {
   addBuilding('Girls Hostel', 76, 2, 12, 12, cHostel, 'hostel', 82, 14);
   addBuilding('Administrative Building', 96, 2, 20, 12, cAdmin, 'admin', 106, 14);
   
-  // Gateway Security Room near the Gateway at x=62, y=86
-  addBuilding('Security Room', 55, 84, 6, 6, cAdmin, 'admin', 60, 86);
+  // Gateway Security Room with some space before the Gateway
+  addBuilding('Security Room', 45, 84, 8, 6, cAdmin, 'security', 52, 86);
 
   // Row 2: y 24..49
   addBuilding('Library', 5, 28, 15, 10, cLibrary, 'library', 12, 38);
@@ -113,6 +113,9 @@ const generateUniversityLayout = () => {
   addRoadRect(25, 0, 28, 99);
   addRoadRect(63, 0, 66, 99);
   addRoadRect(90, 0, 93, 99);
+  
+  // Road to Security Room
+  addRoadRect(53, 85, 62, 87);
 
   const isInsideRoom = (x, y) => {
     return rooms.some(r => x >= r.start.x && x <= r.end.x && y >= r.start.y && y <= r.end.y);
