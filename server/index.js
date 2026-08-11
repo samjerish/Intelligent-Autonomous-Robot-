@@ -59,7 +59,7 @@ const generateUniversityLayout = () => {
   addBuilding('Administrative Building', 96, 2, 20, 12, cAdmin, 'admin', 106, 14);
   
   // Gateway Security Room near the Gateway at x=62, y=86
-  addBuilding('Security Room', 55, 84, 6, 6, cAdmin, 'admin', 61, 86);
+  addBuilding('Security Room', 55, 84, 6, 6, cAdmin, 'admin', 60, 86);
 
   // Row 2: y 24..49
   addBuilding('Library', 5, 28, 15, 10, cLibrary, 'library', 12, 38);
