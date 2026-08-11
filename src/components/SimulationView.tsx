@@ -506,18 +506,43 @@ const BuildingModel = React.memo(({ room, width, height, depth }: { room: Room, 
   } else if (type === 'security') {
     return (
       <group>
-        {/* Base of the security cabin */}
-        <Box args={[width, height * 0.4, depth]} position={[0, -height * 0.3, 0]} castShadow receiveShadow>
-          <meshStandardMaterial color="#475569" metalness={0.5} roughness={0.5} />
+        {/* Main Body (Gray/White Prefab Walls) */}
+        <Box args={[width, height, depth]} position={[0, 0, 0]} castShadow receiveShadow>
+          <meshStandardMaterial color="#e2e8f0" roughness={0.9} />
         </Box>
-        {/* Glass windows */}
-        <Box args={[width * 0.95, height * 0.4, depth * 0.95]} position={[0, height * 0.1, 0]} castShadow>
-          <meshStandardMaterial color="#38bdf8" transparent opacity={0.4} metalness={0.9} roughness={0.1} />
+        
+        {/* Blue Overhanging Roof */}
+        <Box args={[width * 1.2, height * 0.1, depth * 1.2]} position={[0, height * 0.55, 0]} castShadow receiveShadow>
+          <meshStandardMaterial color="#3b82f6" roughness={0.8} />
         </Box>
-        {/* Roof */}
-        <Box args={[width * 1.1, height * 0.1, depth * 1.1]} position={[0, height * 0.35, 0]} castShadow receiveShadow>
-          <meshStandardMaterial color="#1e293b" metalness={0.2} roughness={0.8} />
+
+        {/* Front Door - Frame */}
+        <Box args={[width * 0.3, height * 0.7, depth * 1.02]} position={[width * 0.2, -height * 0.15, 0]}>
+          <meshStandardMaterial color="#2563eb" />
         </Box>
+        {/* Front Door - Glass/Inner */}
+        <Box args={[width * 0.25, height * 0.65, depth * 1.03]} position={[width * 0.2, -height * 0.15, 0]}>
+          <meshStandardMaterial color="#1e293b" metalness={0.8} roughness={0.2} />
+        </Box>
+
+        {/* Front Window - Frame */}
+        <Box args={[width * 0.4, height * 0.4, depth * 1.02]} position={[-width * 0.2, 0, 0]}>
+          <meshStandardMaterial color="#2563eb" />
+        </Box>
+        {/* Front Window - Glass */}
+        <Box args={[width * 0.35, height * 0.35, depth * 1.03]} position={[-width * 0.2, 0, 0]}>
+          <meshStandardMaterial color="#38bdf8" transparent opacity={0.6} metalness={0.9} roughness={0.1} />
+        </Box>
+
+        {/* Side Window (Right) - Frame */}
+        <Box args={[width * 1.02, height * 0.4, depth * 0.6]} position={[0, 0, depth * 0.2]}>
+          <meshStandardMaterial color="#2563eb" />
+        </Box>
+        {/* Side Window (Right) - Glass */}
+        <Box args={[width * 1.03, height * 0.35, depth * 0.55]} position={[0, 0, depth * 0.2]}>
+          <meshStandardMaterial color="#38bdf8" transparent opacity={0.6} metalness={0.9} roughness={0.1} />
+        </Box>
+
         {/* Boom barrier base */}
         <Cylinder args={[0.05, 0.05, 0.5]} position={[width * 0.6, -height * 0.25, depth * 0.6]} castShadow>
           <meshStandardMaterial color="#ef4444" />
