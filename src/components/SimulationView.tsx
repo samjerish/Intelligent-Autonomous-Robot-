@@ -557,7 +557,7 @@ const BuildingModel = React.memo(({ room, width, height, depth }: { room: Room, 
     return (
       <group>
         <Box args={[width, height * 0.7, depth]} position={[0, -height * 0.15, 0]} castShadow receiveShadow>
-          <meshStandardMaterial color="#475569" metalness={0.6} roughness={0.4} />
+          <meshStandardMaterial color="#475569" roughness={0.8} />
         </Box>
         <Cylinder args={[Math.min(width, depth) * 0.2, Math.min(width, depth) * 0.25, height * 0.8, 16]} position={[-width * 0.25, height * 0.1, 0]} castShadow>
            <meshStandardMaterial color="#64748b" />
@@ -574,7 +574,7 @@ const BuildingModel = React.memo(({ room, width, height, depth }: { room: Room, 
     return (
       <group>
         <Box args={[width, height * 1.5, depth]} position={[0, height * 0.25, 0]} castShadow receiveShadow>
-          <meshStandardMaterial color="#bae6fd" metalness={0.9} roughness={0.1} opacity={0.8} transparent emissive="#0ea5e9" emissiveIntensity={0.2} />
+          <meshStandardMaterial color="#bae6fd" roughness={0.7} opacity={0.8} transparent emissive="#0ea5e9" emissiveIntensity={0.05} />
         </Box>
         <Box args={[width * 1.05, height * 1.55, depth * 0.8]} position={[0, height * 0.25, 0]} castShadow>
            <meshStandardMaterial color="#1e293b" />
