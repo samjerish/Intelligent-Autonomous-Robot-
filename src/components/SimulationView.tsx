@@ -1335,8 +1335,7 @@ const EnvironmentMap = React.memo(({ mapData, isNight, isTargeting, onMapClick }
         <meshStandardMaterial color={isNight ? '#052e16' : '#16a34a'} roughness={1} />
       </Plane>
 
-      {/* Natural surrounding landscape (mountains, rocks, rivers, sea, trees) */}
-      <NaturalLandscape isNight={isNight} gridSize={gridSize} />
+      {/* Natural surrounding landscape (mountains, rocks, rivers, sea, trees) removed */}
     </group>
   );
 });
