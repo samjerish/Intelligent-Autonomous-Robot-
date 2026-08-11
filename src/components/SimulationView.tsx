@@ -522,7 +522,7 @@ const BuildingModel = React.memo(({ room, width, height, depth }: { room: Room, 
         </Box>
         {/* Front Door - Glass/Inner */}
         <Box args={[width * 0.25, height * 0.65, depth * 1.03]} position={[width * 0.2, -height * 0.15, 0]}>
-          <meshStandardMaterial color="#1e293b" metalness={0.8} roughness={0.2} />
+          <meshStandardMaterial color={baseColor} roughness={0.8} />
         </Box>
 
         {/* Front Window - Frame */}
