@@ -503,6 +503,31 @@ const BuildingModel = React.memo(({ room, width, height, depth }: { room: Room, 
         </group>
       </group>
     );
+  } else if (type === 'security') {
+    return (
+      <group>
+        {/* Base of the security cabin */}
+        <Box args={[width, height * 0.4, depth]} position={[0, -height * 0.3, 0]} castShadow receiveShadow>
+          <meshStandardMaterial color="#475569" metalness={0.5} roughness={0.5} />
+        </Box>
+        {/* Glass windows */}
+        <Box args={[width * 0.95, height * 0.4, depth * 0.95]} position={[0, height * 0.1, 0]} castShadow>
+          <meshStandardMaterial color="#38bdf8" transparent opacity={0.4} metalness={0.9} roughness={0.1} />
+        </Box>
+        {/* Roof */}
+        <Box args={[width * 1.1, height * 0.1, depth * 1.1]} position={[0, height * 0.35, 0]} castShadow receiveShadow>
+          <meshStandardMaterial color="#1e293b" metalness={0.2} roughness={0.8} />
+        </Box>
+        {/* Boom barrier base */}
+        <Cylinder args={[0.05, 0.05, 0.5]} position={[width * 0.6, -height * 0.25, depth * 0.6]} castShadow>
+          <meshStandardMaterial color="#ef4444" />
+        </Cylinder>
+        {/* Boom barrier arm */}
+        <Box args={[width * 1.5, 0.05, 0.05]} position={[width * 1.35, -height * 0.05, depth * 0.6]} castShadow>
+          <meshStandardMaterial color="#facc15" />
+        </Box>
+      </group>
+    );
   } else if (type === 'utility') {
     return (
       <group>
