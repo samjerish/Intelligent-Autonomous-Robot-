@@ -2168,21 +2168,6 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
         const reversePath = [];
         for (let i = currentPosIndex; i >= currentPosIndex - reverseSteps; i--) {
             reversePath.push(path[i]);
-        }
-        if (robotState !== 'evading_obstacle' && robotState !== 'charging' && robotState !== 'emergency_response') {
-            originalMissionRef.current = { path: [...path], index: currentPosIndex };
-        }
-        setPath(reversePath);
-        setCurrentPosIndex(0);
-        setRobotState('evading_obstacle');
-        setIsPlaying(true);
-        isRecalculating.current = false;
-      } else {
-        addExplanation(`Blocked at starting position. Waiting for obstacle to clear...`);
-        if (robotState !== 'evading_obstacle' && robotState !== 'charging' && robotState !== 'emergency_response') {
-            originalMissionRef.current = { path: [...path], index: currentPosIndex };
-        }
-        setRobotState('evading_obstacle');
         setIsPlaying(false);
         setTimeout(() => {
           isRecalculating.current = false;
@@ -2267,17 +2252,6 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
       setIsPlaying(false);
       setRobotState('off');
       addExplanation('Robot safely arrived at Robot Home. Power OFF and charging.');
-    } else if (robotState === 'evading_obstacle') {
-      addExplanation('Evaded obstacle. Retrying route to target...');
-      const orig = originalMissionRef.current;
-      if (orig && orig.path.length > 0) {
-        const target = orig.path[orig.path.length - 1];
-        const currentLoc = path[path.length - 1] || mapData!.start;
-        resumeMissionTo(currentLoc, target);
-      } else {
-        setRobotState('idle');
-      }
-      originalMissionRef.current = null;
     } else {
       if (mapData && mapData.tasks && currentTaskIndexRef.current < mapData.tasks.length - 1) {
         const prevTask = mapData.tasks[currentTaskIndexRef.current];
