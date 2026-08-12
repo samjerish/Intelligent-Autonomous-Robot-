@@ -13,6 +13,10 @@
   animation: glitch 0.2s cubic-bezier(.25, .46, .45, .94) both infinite;
 }
 
+@keyframes shimmer {
+  100% { transform: translateX(100%); }
+}
+
 
 @theme {
   --color-brand: #3b82f6; /* Blue 500 */
