@@ -1,7 +1,8 @@
 import React, { useEffect, useRef, useState, useMemo, useCallback } from 'react';
 import type { MapData, GridPoint, Room } from '../types';
 import { calculatePath, calculateLongPath } from '../utils/simulationEngine';
-import { Play, RotateCcw, Activity, ShieldAlert, Crosshair, Maximize, Minimize, Bot, Power, Send, Construction, Pause, Users } from 'lucide-react';
+import { Play, RotateCcw, Activity, ShieldAlert, Crosshair, Maximize, Minimize, Bot, Power, Send, Construction, Pause, Users, Utensils, Cross } from 'lucide-react';
+import { DeliveryModal } from './DeliveryModal';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import {
   OrbitControls,
@@ -1334,6 +1335,12 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
   const [battery, setBattery] = useState(100);
   const [robotState, setRobotState] = useState<RobotState>('off');
   const [isOn, setIsOn] = useState(false);
+  const [modalType, setModalType] = useState<'food' | 'medical' | null>(null);
+
+  const handleDeliverySubmit = (missionText: string) => {
+    if (onDispatchMission) onDispatchMission(missionText);
+    setModalType(null);
+  };
   const batteryRef = useRef(100);
   const robotStateRef = useRef<RobotState>('idle');
   const originalMissionRef = useRef<{path: GridPoint[], index: number} | null>(null);
@@ -2849,6 +2856,12 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
                 <button onClick={() => dispatchQuickMission('Clean Room')} className="w-full flex items-center gap-2 px-3 py-1.5 bg-green-500/10 text-green-400 hover:bg-green-500 hover:text-white rounded-lg text-xs font-medium transition-colors border border-green-500/20 shadow-sm">
                   <Crosshair className="w-3 h-3" /> Send Cleaner
                 </button>
+                <button onClick={() => setModalType('food')} className="w-full flex items-center gap-2 px-3 py-1.5 bg-orange-500/10 text-orange-400 hover:bg-orange-500 hover:text-white rounded-lg text-xs font-medium transition-colors border border-orange-500/20 shadow-sm">
+                  <Utensils className="w-3 h-3" /> Order Food to Room
+                </button>
+                <button onClick={() => setModalType('medical')} className="w-full flex items-center gap-2 px-3 py-1.5 bg-rose-500/10 text-rose-400 hover:bg-rose-500 hover:text-white rounded-lg text-xs font-medium transition-colors border border-rose-500/20 shadow-sm">
+                  <Cross className="w-3 h-3" /> Request Medical Help
+                </button>
               </div>
             </div>
           )}
@@ -2881,6 +2894,15 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
             'Calling Police...'
           }
         </div>
+      )}
+
+      {modalType && (
+        <DeliveryModal
+          type={modalType}
+          initialDestination={selectedRoom ? selectedRoom.name : ''}
+          onClose={() => setModalType(null)}
+          onSubmit={handleDeliverySubmit}
+        />
       )}
     </div>
   );
