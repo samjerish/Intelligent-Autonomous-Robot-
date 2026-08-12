@@ -2160,20 +2160,25 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
       setCurrentPosIndex(0);
       setIsPlaying(true);
       addExplanation(`Successfully found alternative route avoiding obstacle! Resuming mission.`);
-      isRecalculating.current = false;
+      setTimeout(() => isRecalculating.current = false, 500);
     } else {
-      const reverseSteps = Math.min(currentPosIndex, 4);
+      addExplanation(`Path completely blocked! Reversing to evade obstacle...`);
+      const reverseSteps = Math.min(currentPosIndex, 2);
       if (reverseSteps > 0) {
-        addExplanation(`Path completely blocked! Reversing ${reverseSteps} steps to evade obstacle...`);
         const reversePath = [];
         for (let i = currentPosIndex; i >= currentPosIndex - reverseSteps; i--) {
             reversePath.push(path[i]);
-        setIsPlaying(false);
-        setTimeout(() => {
-          isRecalculating.current = false;
-          setIsPlaying(true); // retry loop
-        }, 3000);
+        }
+        setPath(reversePath);
+        setCurrentPosIndex(0);
       }
+      setIsPlaying(false);
+      
+      // Wait for 1 second to give dynamic obstacles space, then retry
+      setTimeout(() => {
+        isRecalculating.current = false;
+        setIsPlaying(true);
+      }, 1000);
     }
   };
 
