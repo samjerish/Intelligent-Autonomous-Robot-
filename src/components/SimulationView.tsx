@@ -1335,6 +1335,8 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
   const [battery, setBattery] = useState(100);
   const [robotState, setRobotState] = useState<RobotState>('off');
   const [isOn, setIsOn] = useState(false);
+  const [activeCCTab, setActiveCCTab] = useState<'dashboard' | 'tools' | 'locations'>('dashboard');
+  const [modalType, setModalType] = useState<'food' | 'medical' | null>(null);
   const [modalType, setModalType] = useState<'food' | 'medical' | null>(null);
 
   const handleDeliverySubmit = (missionText: string) => {
@@ -2700,188 +2702,239 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
 
         {/* Body — hidden when minimized */}
         {!isCCMinimized && (
-        <div className="flex-1 overflow-y-auto">
-        <div className="p-4 border-b border-white/10">
-          <div className="flex items-center justify-between mb-3">
-            <h4 className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Mission Telemetry</h4>
-            <div className="flex gap-2">
-              <button
-                onClick={() => {
-                  const nextIdle = !isIdleMode;
-                  setIsIdleMode(nextIdle);
-                  if (nextIdle) {
-                    // Find nearest room to park safely out of traffic
-                    if (mapData && mapData.rooms && mapData.rooms.length > 0) {
-                      let nearestRoom = mapData.rooms[0];
-                      let minDist = Infinity;
-                      const currentLoc = path.length > 0 && currentPosIndex < path.length ? path[currentPosIndex] : mapData.start;
-                      mapData.rooms.forEach(r => {
-                          const dist = Math.abs(r.door.x - currentLoc.x) + Math.abs(r.door.y - currentLoc.y);
-                          if (dist < minDist) { minDist = dist; nearestRoom = r; }
-                      });
-                      const allObstacles = [...(mapData.obstacles || []), ...userBlockers];
-                      const parkPath = calculatePath(currentLoc, nearestRoom.door || nearestRoom.start, allObstacles, mapData);
-                      if (parkPath.length > 0) {
-                         setPath(parkPath);
-                         setCurrentPosIndex(0);
-                         setIsPlaying(true);
-                         setRobotState('idle'); 
-                         addExplanation(`Idle mode activated. Parking safely at ${nearestRoom.name}.`);
-                      } else {
-                         setIsPlaying(false);
-                         setRobotState('idle');
-                         addExplanation("Idle mode activated. Halting immediately.");
-                      }
-                    }
-                  } else {
-                    setRobotState('patrol');
-                    addExplanation("Idle mode deactivated. Resuming patrol.");
-                  }
-                }}
-                className={`px-3 py-1 rounded text-[10px] font-bold flex items-center gap-1 transition-colors ${isIdleMode ? 'bg-gray-500 text-white' : 'bg-gray-500/20 text-gray-400 hover:bg-gray-500/40'}`}
-                title="Toggle Idle Mode"
-              >
-                <Pause className="w-3 h-3" /> IDLE
-              </button>
-              <button 
-                onClick={togglePower}
-                className={`px-3 py-1 rounded text-[10px] font-bold transition-colors ${isOn ? 'bg-red-500/20 text-red-400 hover:bg-red-500/40' : 'bg-green-500/20 text-green-400 hover:bg-green-500/40'}`}
-              >
-                {isOn ? 'POWER OFF' : 'POWER ON'}
-              </button>
-            </div>
+        <div className="flex-1 flex flex-col overflow-hidden">
+          {/* Tabs */}
+          <div className="flex border-b border-white/10 bg-black/60 shrink-0">
+            <button onClick={() => setActiveCCTab('dashboard')} className={`flex-1 py-3 text-[10px] font-bold uppercase tracking-widest transition-colors ${activeCCTab === 'dashboard' ? 'text-cyan-400 border-b-2 border-cyan-400 bg-white/5' : 'text-gray-500 hover:text-gray-300 hover:bg-white/5'}`}>Dashboard</button>
+            <button onClick={() => setActiveCCTab('tools')} className={`flex-1 py-3 text-[10px] font-bold uppercase tracking-widest transition-colors ${activeCCTab === 'tools' ? 'text-cyan-400 border-b-2 border-cyan-400 bg-white/5' : 'text-gray-500 hover:text-gray-300 hover:bg-white/5'}`}>Tools</button>
+            <button onClick={() => setActiveCCTab('locations')} className={`flex-1 py-3 text-[10px] font-bold uppercase tracking-widest transition-colors ${activeCCTab === 'locations' ? 'text-cyan-400 border-b-2 border-cyan-400 bg-white/5' : 'text-gray-500 hover:text-gray-300 hover:bg-white/5'}`}>Locations</button>
           </div>
-          
-          <div className="grid grid-cols-2 gap-2 mb-4 transition-all duration-500">
-            <div className="bg-white/5 border border-white/10 rounded-lg p-2">
-              <span className="text-[9px] text-gray-400 block mb-0.5">BATTERY</span>
-              <div className="flex items-center gap-1.5 mt-1">
-                <div className="flex-1 h-1.5 bg-gray-800 rounded-full overflow-hidden">
-                  <div className={`h-full ${battery > 60 ? 'bg-green-500' : battery > 30 ? 'bg-yellow-500' : 'bg-red-500'}`} style={{ width: `${battery}%` }} />
+
+          <div className="flex-1 overflow-y-auto custom-scrollbar relative">
+            {/* DASHBOARD TAB */}
+            {activeCCTab === 'dashboard' && (
+              <div className="p-4 space-y-6 animate-in fade-in duration-300">
+                <div className="flex items-center justify-between">
+                  <h4 className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Mission Telemetry</h4>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => {
+                        const nextIdle = !isIdleMode;
+                        setIsIdleMode(nextIdle);
+                        if (nextIdle) {
+                          if (mapData && mapData.rooms && mapData.rooms.length > 0) {
+                            let nearestRoom = mapData.rooms[0];
+                            let minDist = Infinity;
+                            const currentLoc = path.length > 0 && currentPosIndex < path.length ? path[currentPosIndex] : mapData.start;
+                            mapData.rooms.forEach(r => {
+                                const dist = Math.abs(r.door.x - currentLoc.x) + Math.abs(r.door.y - currentLoc.y);
+                                if (dist < minDist) { minDist = dist; nearestRoom = r; }
+                            });
+                            const allObstacles = [...(mapData.obstacles || []), ...userBlockers];
+                            const parkPath = calculatePath(currentLoc, nearestRoom.door || nearestRoom.start, allObstacles, mapData);
+                            if (parkPath.length > 0) {
+                               setPath(parkPath);
+                               setCurrentPosIndex(0);
+                               setIsPlaying(true);
+                               setRobotState('idle'); 
+                               addExplanation(`Idle mode activated. Parking safely at ${nearestRoom.name}.`);
+                            } else {
+                               setIsPlaying(false);
+                               setRobotState('idle');
+                               addExplanation("Idle mode activated. Halting immediately.");
+                            }
+                          }
+                        } else {
+                          setRobotState('patrol');
+                          addExplanation("Idle mode deactivated. Resuming patrol.");
+                        }
+                      }}
+                      className={`px-3 py-1.5 rounded-lg text-[10px] font-bold flex items-center gap-1.5 transition-colors border ${isIdleMode ? 'bg-gray-500/20 text-white border-gray-500/50' : 'bg-transparent text-gray-500 border-white/10 hover:bg-white/5'}`}
+                      title="Toggle Idle Mode"
+                    >
+                      <Pause className="w-3.5 h-3.5" /> IDLE
+                    </button>
+                    <button 
+                      onClick={togglePower}
+                      className={`px-3 py-1.5 rounded-lg text-[10px] font-bold transition-colors border ${isOn ? 'bg-red-500/10 text-red-400 border-red-500/30 hover:bg-red-500/20' : 'bg-green-500/10 text-green-400 border-green-500/30 hover:bg-green-500/20'}`}
+                    >
+                      {isOn ? 'POWER OFF' : 'POWER ON'}
+                    </button>
+                  </div>
                 </div>
-                <span className="text-[10px] font-bold text-white">{battery}%</span>
-              </div>
-            </div>
-            <div className="bg-white/5 border border-white/10 rounded-lg p-2 flex flex-col justify-center">
-              <span className="text-[9px] text-gray-500 block mb-0.5">STATUS</span>
-              <span className={`text-xs font-bold uppercase ${
-                robotState === 'charging' ? 'text-yellow-400' : 
-                robotState === 'patrol' ? 'text-blue-400' : 
-                robotState === 'mission' ? 'text-green-400' : 
-                robotState === 'emergency_response' ? 'text-red-500 animate-pulse' : 
-                'text-gray-300'
-              }`}>
-                {robotState.replace('_', ' ')}
-              </span>
-            </div>
-            <div className="bg-white/5 border border-white/10 rounded-lg p-2">
-              <span className="text-[9px] text-gray-500 block mb-0.5">DISTANCE</span>
-              <span className="text-sm font-bold text-white">{path.length > 0 ? path.length - currentPosIndex : '--'} <span className="text-[10px] font-normal text-gray-500">m</span></span>
-            </div>
-            <div className="bg-white/5 border border-white/10 rounded-lg p-2">
-              <span className="text-[9px] text-gray-500 block mb-0.5">ETA</span>
-              <span className="text-sm font-bold text-white">{path.length > 0 ? Math.ceil((path.length - currentPosIndex) * 0.5) : '--'} <span className="text-[10px] font-normal text-gray-500">min</span></span>
-            </div>
-          </div>
-
-          <div className="flex gap-2">
-            <button
-              onClick={() => startSimulation()}
-              disabled={isPlaying || (path.length > 0 && currentPosIndex >= path.length - 1)}
-              className="flex-1 flex items-center justify-center gap-2 px-4 py-2 bg-cyan-600 text-white rounded-lg font-medium hover:bg-cyan-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors shadow-sm text-xs"
-            >
-              <Play className="w-3.5 h-3.5" /> {isPlaying ? 'Simulating...' : 'Execute'}
-            </button>
-            <button
-              onClick={() => setIsEmergencyTargeting(!isEmergencyTargeting)}
-              className={`px-3 py-2 border rounded-lg transition-colors flex items-center justify-center gap-2 font-bold text-xs ${isEmergencyTargeting ? 'bg-red-500 text-white border-red-500' : 'bg-red-500/10 text-red-500 border-red-500/30 hover:bg-red-500/20'}`}
-              title="Target Emergency"
-            >
-              <ShieldAlert className="w-4 h-4" />
-            </button>
-            <button
-              onClick={() => {
-                setIsPlacingBlocker(!isPlacingBlocker);
-                if (!isPlacingBlocker) { setIsEmergencyTargeting(false); setIsPlacingCrowd(false); }
-              }}
-              className={`px-3 py-2 border rounded-lg transition-colors flex items-center justify-center gap-2 font-bold text-xs ${isPlacingBlocker ? 'bg-orange-500 text-white border-orange-500' : 'bg-orange-500/10 text-orange-500 border-orange-500/30 hover:bg-orange-500/20'}`}
-              title="Toggle Road Blocker"
-            >
-              <Construction className="w-4 h-4" />
-            </button>
-            <button
-              onClick={() => {
-                setIsPlacingCrowd(!isPlacingCrowd);
-                if (!isPlacingCrowd) { setIsEmergencyTargeting(false); setIsPlacingBlocker(false); }
-              }}
-              className={`px-3 py-2 border rounded-lg transition-colors flex items-center justify-center gap-2 font-bold text-xs ${isPlacingCrowd ? 'bg-purple-500 text-white border-purple-500' : 'bg-purple-500/10 text-purple-500 border-purple-500/30 hover:bg-purple-500/20'}`}
-              title="Toggle Crowd Placement"
-            >
-              <Users className="w-4 h-4" />
-            </button>
-            <button
-              onClick={resetSimulation}
-              className="p-2.5 bg-white/5 border border-white/10 rounded-lg hover:bg-white/10 transition-colors"
-              title="Reset Robot"
-            >
-              <RotateCcw className="w-4 h-4 text-gray-400" />
-            </button>
-          </div>
-        </div>
-
-        <div className={`p-4 border-b border-white/10 bg-black/20 transition-all duration-500 ${!isOn ? 'opacity-30 pointer-events-none grayscale' : ''}`}>
-          <h4 className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-3">Room Inspector</h4>
-          {selectedRoom && (
-            <div className="animate-in fade-in slide-in-from-bottom-4 duration-300 mb-4">
-              <div className="bg-white/5 border border-white/10 rounded-xl p-3 mb-3">
-                <h5 className="font-bold text-white text-sm mb-1">{selectedRoom.name}</h5>
-                <span className="inline-block px-1.5 py-0.5 rounded text-[9px] font-bold bg-black/40 text-gray-300 border border-white/10">Floor {selectedRoom.start.f}</span>
                 
-                <div className="mt-3 grid grid-cols-2 gap-2">
-                  <div className="text-[10px] text-gray-400">Occupancy: <span className="text-white font-bold">{(selectedRoom.name.length + selectedRoom.start.x) % 12 || 2}</span></div>
-                  <div className="text-[10px] text-gray-400">Status: <span className="text-green-400 font-bold">Clear</span></div>
+                <div className="grid grid-cols-2 gap-3 transition-all duration-500">
+                  <div className="bg-white/5 border border-white/10 rounded-xl p-3 shadow-inner">
+                    <span className="text-[9px] font-bold text-gray-400 uppercase tracking-widest block mb-1">BATTERY</span>
+                    <div className="flex items-center gap-2 mt-1">
+                      <div className="flex-1 h-2 bg-gray-800 rounded-full overflow-hidden">
+                        <div className={`h-full ${battery > 60 ? 'bg-green-500' : battery > 30 ? 'bg-yellow-500' : 'bg-red-500'}`} style={{ width: `${battery}%` }} />
+                      </div>
+                      <span className="text-xs font-black text-white">{battery}%</span>
+                    </div>
+                  </div>
+                  <div className="bg-white/5 border border-white/10 rounded-xl p-3 shadow-inner flex flex-col justify-center">
+                    <span className="text-[9px] font-bold text-gray-400 uppercase tracking-widest block mb-1">STATUS</span>
+                    <span className={`text-sm font-black uppercase tracking-wider truncate ${
+                      robotState === 'charging' ? 'text-yellow-400' : 
+                      robotState === 'patrol' ? 'text-blue-400' : 
+                      robotState === 'mission' ? 'text-green-400' : 
+                      robotState === 'emergency_response' ? 'text-red-500 animate-pulse' : 
+                      'text-gray-300'
+                    }`}>
+                      {robotState.replace('_', ' ')}
+                    </span>
+                  </div>
+                  <div className="bg-white/5 border border-white/10 rounded-xl p-3 shadow-inner">
+                    <span className="text-[9px] font-bold text-gray-400 uppercase tracking-widest block mb-1">DISTANCE</span>
+                    <span className="text-lg font-black text-white">{path.length > 0 ? path.length - currentPosIndex : '--'} <span className="text-[10px] font-bold text-gray-500">m</span></span>
+                  </div>
+                  <div className="bg-white/5 border border-white/10 rounded-xl p-3 shadow-inner">
+                    <span className="text-[9px] font-bold text-gray-400 uppercase tracking-widest block mb-1">ETA</span>
+                    <span className="text-lg font-black text-white">{path.length > 0 ? Math.ceil((path.length - currentPosIndex) * 0.5) : '--'} <span className="text-[10px] font-bold text-gray-500">min</span></span>
+                  </div>
+                </div>
+
+                <div className="flex gap-3 pt-2">
+                  <button
+                    onClick={() => startSimulation()}
+                    disabled={isPlaying || (path.length > 0 && currentPosIndex >= path.length - 1)}
+                    className="flex-1 flex items-center justify-center gap-2 px-4 py-3 bg-cyan-600/20 text-cyan-400 border border-cyan-500/50 rounded-xl font-bold hover:bg-cyan-600 hover:text-white disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-[0_0_15px_rgba(8,145,178,0.2)] hover:shadow-[0_0_20px_rgba(8,145,178,0.5)] text-sm uppercase tracking-widest"
+                  >
+                    <Play className="w-4 h-4" /> {isPlaying ? 'Simulating...' : 'Execute'}
+                  </button>
+                  <button
+                    onClick={resetSimulation}
+                    className="p-3 bg-white/5 border border-white/10 rounded-xl hover:bg-white/10 transition-colors group"
+                    title="Reset Robot"
+                  >
+                    <RotateCcw className="w-5 h-5 text-gray-400 group-hover:text-white group-hover:-rotate-90 transition-all duration-300" />
+                  </button>
                 </div>
               </div>
-              
-              <div className="space-y-1.5">
-                <button onClick={() => dispatchQuickMission('Navigate')} className="w-full flex items-center gap-2 px-3 py-1.5 bg-brand/10 text-brand hover:bg-brand hover:text-white rounded-lg text-xs font-medium transition-colors border border-brand/20 shadow-sm">
-                  <Play className="w-3 h-3" /> Navigate to Room
-                </button>
-                <button onClick={() => dispatchQuickMission('Deliver Documents')} className="w-full flex items-center gap-2 px-3 py-1.5 bg-blue-500/10 text-blue-400 hover:bg-blue-500 hover:text-white rounded-lg text-xs font-medium transition-colors border border-blue-500/20 shadow-sm">
-                  <Crosshair className="w-3 h-3" /> Dispatch Documents
-                </button>
-                <button onClick={() => handleEmergencyCall(selectedRoom.door || selectedRoom.start)} className="w-full flex items-center gap-2 px-3 py-1.5 bg-red-500/10 text-red-400 hover:bg-red-500 hover:text-white rounded-lg text-xs font-medium transition-colors border border-red-500/20 shadow-sm">
-                  <ShieldAlert className="w-3 h-3" /> Trigger Emergency Call
-                </button>
-                <button onClick={() => dispatchQuickMission('Clean Room')} className="w-full flex items-center gap-2 px-3 py-1.5 bg-green-500/10 text-green-400 hover:bg-green-500 hover:text-white rounded-lg text-xs font-medium transition-colors border border-green-500/20 shadow-sm">
-                  <Crosshair className="w-3 h-3" /> Send Cleaner
-                </button>
-                <button onClick={() => setModalType('food')} className="w-full flex items-center gap-2 px-3 py-1.5 bg-orange-500/10 text-orange-400 hover:bg-orange-500 hover:text-white rounded-lg text-xs font-medium transition-colors border border-orange-500/20 shadow-sm">
-                  <Utensils className="w-3 h-3" /> Order Food to Room
-                </button>
-                <button onClick={() => setModalType('medical')} className="w-full flex items-center gap-2 px-3 py-1.5 bg-rose-500/10 text-rose-400 hover:bg-rose-500 hover:text-white rounded-lg text-xs font-medium transition-colors border border-rose-500/20 shadow-sm">
-                  <Cross className="w-3 h-3" /> Request Medical Help
-                </button>
-              </div>
-            </div>
-          )}
+            )}
 
-          <div className="flex flex-col gap-2">
-            <div className="text-[10px] text-gray-400 mb-1">Building Directory</div>
-            <div className="grid grid-cols-2 gap-2 max-h-48 overflow-y-auto custom-scrollbar pr-1">
-              {rooms?.map(room => (
-                <button 
-                  key={room.id}
-                  onClick={() => setSelectedRoom(room)}
-                  className={`w-full text-left px-3 py-2 rounded border transition-colors text-xs flex justify-between items-center ${selectedRoom?.id === room.id ? 'bg-brand/20 border-brand text-white' : 'bg-white/5 hover:bg-white/10 border-white/5 text-gray-300'}`}
-                >
-                  <span className="truncate mr-2">{room.name}</span>
-                  <span className="text-[9px] text-gray-500 flex-shrink-0">Fl {room.start.f}</span>
-                </button>
-              ))}
-            </div>
+            {/* TOOLS TAB */}
+            {activeCCTab === 'tools' && (
+              <div className="p-4 space-y-4 animate-in fade-in duration-300">
+                <h4 className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Environment Tools</h4>
+                <div className="flex flex-col gap-3">
+                  <button
+                    onClick={() => setIsEmergencyTargeting(!isEmergencyTargeting)}
+                    className={`w-full p-4 border rounded-xl transition-all flex items-center gap-4 text-left ${isEmergencyTargeting ? 'bg-red-500/20 text-red-400 border-red-500 shadow-[0_0_20px_rgba(239,68,68,0.3)]' : 'bg-white/5 text-gray-400 border-white/10 hover:bg-white/10 hover:text-white'}`}
+                  >
+                    <div className={`p-2 rounded-lg ${isEmergencyTargeting ? 'bg-red-500 text-white' : 'bg-white/10'}`}>
+                      <ShieldAlert className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <div className="font-bold uppercase tracking-wider text-sm">Target Emergency</div>
+                      <div className="text-[10px] opacity-70 mt-0.5 font-mono">Click on map to spawn an emergency</div>
+                    </div>
+                  </button>
+
+                  <button
+                    onClick={() => {
+                      setIsPlacingBlocker(!isPlacingBlocker);
+                      if (!isPlacingBlocker) { setIsEmergencyTargeting(false); setIsPlacingCrowd(false); }
+                    }}
+                    className={`w-full p-4 border rounded-xl transition-all flex items-center gap-4 text-left ${isPlacingBlocker ? 'bg-orange-500/20 text-orange-400 border-orange-500 shadow-[0_0_20px_rgba(249,115,22,0.3)]' : 'bg-white/5 text-gray-400 border-white/10 hover:bg-white/10 hover:text-white'}`}
+                  >
+                    <div className={`p-2 rounded-lg ${isPlacingBlocker ? 'bg-orange-500 text-white' : 'bg-white/10'}`}>
+                      <Construction className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <div className="font-bold uppercase tracking-wider text-sm">Place Road Blocker</div>
+                      <div className="text-[10px] opacity-70 mt-0.5 font-mono">Simulate a blocked route</div>
+                    </div>
+                  </button>
+
+                  <button
+                    onClick={() => {
+                      setIsPlacingCrowd(!isPlacingCrowd);
+                      if (!isPlacingCrowd) { setIsEmergencyTargeting(false); setIsPlacingBlocker(false); }
+                    }}
+                    className={`w-full p-4 border rounded-xl transition-all flex items-center gap-4 text-left ${isPlacingCrowd ? 'bg-purple-500/20 text-purple-400 border-purple-500 shadow-[0_0_20px_rgba(168,85,247,0.3)]' : 'bg-white/5 text-gray-400 border-white/10 hover:bg-white/10 hover:text-white'}`}
+                  >
+                    <div className={`p-2 rounded-lg ${isPlacingCrowd ? 'bg-purple-500 text-white' : 'bg-white/10'}`}>
+                      <Users className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <div className="font-bold uppercase tracking-wider text-sm">Place Crowd</div>
+                      <div className="text-[10px] opacity-70 mt-0.5 font-mono">Trigger crowd control mode</div>
+                    </div>
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* LOCATIONS TAB */}
+            {activeCCTab === 'locations' && (
+              <div className={`flex flex-col h-full animate-in fade-in duration-300 ${!isOn ? 'opacity-30 pointer-events-none grayscale' : ''}`}>
+                {selectedRoom ? (
+                  <div className="p-4 flex-1 overflow-y-auto">
+                    <button onClick={() => setSelectedRoom(null)} className="text-[10px] font-bold text-gray-400 hover:text-white uppercase tracking-widest flex items-center gap-1 mb-4 transition-colors">
+                      <span>←</span> BACK TO DIRECTORY
+                    </button>
+                    
+                    <div className="bg-gradient-to-br from-white/10 to-white/5 border border-white/10 rounded-2xl p-5 mb-5 shadow-xl backdrop-blur-md">
+                      <h5 className="font-black text-white text-xl mb-2 tracking-wide truncate">{selectedRoom.name}</h5>
+                      <div className="flex gap-2">
+                        <span className="px-2 py-1 rounded text-[10px] font-bold uppercase tracking-wider bg-black/40 text-cyan-300 border border-cyan-500/30">Floor {selectedRoom.start.f}</span>
+                        <span className="px-2 py-1 rounded text-[10px] font-bold uppercase tracking-wider bg-black/40 text-green-400 border border-green-500/30">Clear</span>
+                      </div>
+                      <div className="mt-4 pt-4 border-t border-white/10">
+                         <div className="text-xs text-gray-400 font-mono">Est. Occupancy: <span className="text-white font-bold">{(selectedRoom.name.length + selectedRoom.start.x) % 12 || 2}</span></div>
+                      </div>
+                    </div>
+                    
+                    <h4 className="text-[10px] font-bold text-gray-500 uppercase tracking-widest mb-3">Quick Dispatch</h4>
+                    <div className="grid grid-cols-2 gap-3">
+                      <button onClick={() => dispatchQuickMission('Navigate')} className="flex flex-col items-center justify-center gap-2 p-4 bg-brand/10 text-brand hover:bg-brand hover:text-white rounded-xl transition-all border border-brand/20 shadow-sm hover:shadow-[0_0_15px_rgba(34,211,238,0.4)] group">
+                        <Play className="w-6 h-6 group-hover:scale-110 transition-transform" /> 
+                        <span className="text-[10px] font-bold uppercase tracking-wider text-center">Navigate</span>
+                      </button>
+                      <button onClick={() => dispatchQuickMission('Deliver Documents')} className="flex flex-col items-center justify-center gap-2 p-4 bg-blue-500/10 text-blue-400 hover:bg-blue-500 hover:text-white rounded-xl transition-all border border-blue-500/20 shadow-sm hover:shadow-[0_0_15px_rgba(59,130,246,0.4)] group">
+                        <Crosshair className="w-6 h-6 group-hover:scale-110 transition-transform" /> 
+                        <span className="text-[10px] font-bold uppercase tracking-wider text-center">Docs</span>
+                      </button>
+                      <button onClick={() => setModalType('food')} className="flex flex-col items-center justify-center gap-2 p-4 bg-orange-500/10 text-orange-400 hover:bg-orange-500 hover:text-white rounded-xl transition-all border border-orange-500/20 shadow-sm hover:shadow-[0_0_15px_rgba(249,115,22,0.4)] group">
+                        <Utensils className="w-6 h-6 group-hover:scale-110 transition-transform" /> 
+                        <span className="text-[10px] font-bold uppercase tracking-wider text-center">Food</span>
+                      </button>
+                      <button onClick={() => dispatchQuickMission('Clean Room')} className="flex flex-col items-center justify-center gap-2 p-4 bg-green-500/10 text-green-400 hover:bg-green-500 hover:text-white rounded-xl transition-all border border-green-500/20 shadow-sm hover:shadow-[0_0_15px_rgba(34,197,94,0.4)] group">
+                        <Bot className="w-6 h-6 group-hover:scale-110 transition-transform" /> 
+                        <span className="text-[10px] font-bold uppercase tracking-wider text-center">Clean</span>
+                      </button>
+                      <button onClick={() => setModalType('medical')} className="flex flex-col items-center justify-center gap-2 p-4 bg-rose-500/10 text-rose-400 hover:bg-rose-500 hover:text-white rounded-xl transition-all border border-rose-500/20 shadow-sm hover:shadow-[0_0_15px_rgba(244,63,94,0.4)] group">
+                        <Cross className="w-6 h-6 group-hover:scale-110 transition-transform" /> 
+                        <span className="text-[10px] font-bold uppercase tracking-wider text-center">Medical</span>
+                      </button>
+                      <button onClick={() => handleEmergencyCall(selectedRoom.door || selectedRoom.start)} className="flex flex-col items-center justify-center gap-2 p-4 bg-red-500/10 text-red-500 hover:bg-red-500 hover:text-white rounded-xl transition-all border border-red-500/30 shadow-sm hover:shadow-[0_0_15px_rgba(239,68,68,0.5)] group">
+                        <ShieldAlert className="w-6 h-6 group-hover:scale-110 transition-transform" /> 
+                        <span className="text-[10px] font-bold uppercase tracking-wider text-center">SOS</span>
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="p-4 flex-1 flex flex-col min-h-0">
+                    <h4 className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-3 shrink-0">Building Directory</h4>
+                    <div className="flex-1 overflow-y-auto custom-scrollbar pr-2 space-y-2">
+                      {rooms?.map(room => (
+                        <button 
+                          key={room.id}
+                          onClick={() => setSelectedRoom(room)}
+                          className="w-full text-left px-4 py-3 rounded-xl border border-white/5 bg-white/5 hover:bg-white/10 text-gray-300 hover:text-white transition-all text-xs flex justify-between items-center group shadow-sm"
+                        >
+                          <span className="truncate mr-2 font-medium">{room.name}</span>
+                          <span className="text-[10px] text-gray-500 flex-shrink-0 group-hover:text-cyan-400 transition-colors font-bold uppercase tracking-widest">Fl {room.start.f}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
-        </div>
         </div>
         )}
       </div>
