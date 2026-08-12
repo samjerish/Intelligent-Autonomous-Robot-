@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Utensils, Cross, X, Send, Navigation2, Sparkles } from 'lucide-react';
+import { Utensils, Cross, X, Send, Activity, Navigation2 } from 'lucide-react';
 
 interface DeliveryModalProps {
   type: 'food' | 'medical';
@@ -8,27 +8,8 @@ interface DeliveryModalProps {
   onSubmit: (missionText: string) => void;
 }
 
-const FOOD_MENU = [
-  { id: 'pizza', name: 'Pizza', icon: '🍕' },
-  { id: 'burger', name: 'Burger', icon: '🍔' },
-  { id: 'coffee', name: 'Coffee', icon: '☕' },
-  { id: 'salad', name: 'Salad', icon: '🥗' },
-  { id: 'wrap', name: 'Wrap', icon: '🌯' },
-  { id: 'donut', name: 'Donut', icon: '🍩' },
-];
-
-const MEDICAL_MENU = [
-  { id: 'first_aid', name: 'First Aid Kit', icon: '🩹' },
-  { id: 'painkillers', name: 'Painkillers', icon: '💊' },
-  { id: 'inhaler', name: 'Inhaler', icon: '🫁' },
-  { id: 'ice_pack', name: 'Ice Pack', icon: '🧊' },
-  { id: 'crutches', name: 'Crutches', icon: '🩼' },
-  { id: 'sanitizer', name: 'Sanitizer', icon: '🧼' },
-];
-
 export const DeliveryModal: React.FC<DeliveryModalProps> = ({ type, initialDestination = '', onClose, onSubmit }) => {
   const [item, setItem] = useState('');
-  const [isCustom, setIsCustom] = useState(false);
   const [destination, setDestination] = useState(initialDestination);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -36,8 +17,7 @@ export const DeliveryModal: React.FC<DeliveryModalProps> = ({ type, initialDesti
   const Icon = isFood ? Utensils : Cross;
   const title = isFood ? 'Food Delivery Request' : 'Medical Assistance';
   const source = isFood ? 'Food Court' : 'Medical Center';
-  
-  const currentMenu = isFood ? FOOD_MENU : MEDICAL_MENU;
+  const itemPlaceholder = isFood ? 'e.g., Pizza, Coffee, Burger' : 'e.g., First Aid Kit, Paracetamol';
 
   // Dynamic Tailwind styles depending on type
   const bgGradient = isFood ? 'from-orange-500/20' : 'from-rose-500/20';
@@ -47,15 +27,12 @@ export const DeliveryModal: React.FC<DeliveryModalProps> = ({ type, initialDesti
   const largeWatermark = isFood ? 'text-orange-500/5' : 'text-rose-500/5';
   const inputFocus = isFood ? 'focus:border-orange-500 focus:ring-1 focus:ring-orange-500' : 'focus:border-rose-500 focus:ring-1 focus:ring-rose-500';
   const iconFocus = isFood ? 'group-focus-within:text-orange-400' : 'group-focus-within:text-rose-400';
-  
-  const activeCardClass = isFood 
-    ? 'bg-orange-500/20 border-orange-500 shadow-[0_0_15px_rgba(249,115,22,0.3)] scale-[1.03]' 
-    : 'bg-rose-500/20 border-rose-500 shadow-[0_0_15px_rgba(244,63,94,0.3)] scale-[1.03]';
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (item.trim() && destination.trim()) {
       setIsSubmitting(true);
+      // Brief timeout to show off the fancy button spinner state before dispatching
       setTimeout(() => {
         const missionText = `pick up ${item.trim()} from ${source} and deliver to ${destination.trim()}`;
         onSubmit(missionText);
@@ -88,74 +65,24 @@ export const DeliveryModal: React.FC<DeliveryModalProps> = ({ type, initialDesti
         </div>
 
         <form onSubmit={handleSubmit} className="relative z-10 flex flex-col gap-5 mt-2">
-          
-          <div className="flex flex-col gap-3">
-            <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest">
-              {isFood ? 'Select a Craving' : 'Select Required Item'}
+          <div className="flex flex-col gap-2 group">
+            <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest group-focus-within:text-white transition-colors">
+              {isFood ? 'What food would you like?' : 'What medical item is needed?'}
             </label>
-            
-            <div className="grid grid-cols-3 gap-3">
-              {currentMenu.map(menuItem => (
-                <button
-                  key={menuItem.id}
-                  type="button"
-                  onClick={() => {
-                    setItem(menuItem.name);
-                    setIsCustom(false);
-                  }}
-                  className={`flex flex-col items-center justify-center gap-2 p-3 rounded-2xl border transition-all duration-300 ${
-                    item === menuItem.name && !isCustom
-                      ? activeCardClass
-                      : 'bg-white/5 border-white/10 hover:bg-white/10 hover:scale-[1.02]'
-                  }`}
-                >
-                  <span className="text-3xl drop-shadow-lg">{menuItem.icon}</span>
-                  <span className={`text-[10px] font-bold uppercase tracking-wider ${item === menuItem.name && !isCustom ? 'text-white' : 'text-gray-400'}`}>
-                    {menuItem.name}
-                  </span>
-                </button>
-              ))}
-            </div>
-
-            {/* Custom Item Toggle & Input */}
-            <div className="mt-2">
-              {!isCustom ? (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setIsCustom(true);
-                    setItem('');
-                  }}
-                  className="text-xs font-bold text-gray-400 hover:text-white underline underline-offset-4 decoration-white/20 transition-colors"
-                >
-                  Or request something else...
-                </button>
-              ) : (
-                <div className="flex flex-col gap-2 group animate-in slide-in-from-top-2">
-                  <div className="flex justify-between items-center">
-                    <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest group-focus-within:text-white transition-colors">
-                      Custom Request
-                    </label>
-                    <button type="button" onClick={() => setIsCustom(false)} className="text-[10px] text-gray-500 hover:text-white uppercase">Cancel</button>
-                  </div>
-                  <div className="relative">
-                    <input
-                      type="text"
-                      required
-                      autoFocus
-                      value={item}
-                      onChange={e => setItem(e.target.value)}
-                      placeholder="Type what you need..."
-                      className={`w-full bg-black/50 border border-white/10 rounded-xl pl-11 pr-4 py-3.5 text-sm text-white placeholder-gray-600 focus:outline-none ${inputFocus} transition-all`}
-                    />
-                    <Sparkles className={`absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-500 ${iconFocus} transition-colors`} />
-                  </div>
-                </div>
-              )}
+            <div className="relative">
+              <input
+                type="text"
+                required
+                value={item}
+                onChange={e => setItem(e.target.value)}
+                placeholder={itemPlaceholder}
+                className={`w-full bg-black/50 border border-white/10 rounded-xl pl-11 pr-4 py-3.5 text-sm text-white placeholder-gray-600 focus:outline-none ${inputFocus} transition-all`}
+              />
+              <Activity className={`absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-500 ${iconFocus} transition-colors`} />
             </div>
           </div>
 
-          <div className="flex flex-col gap-2 group mt-2">
+          <div className="flex flex-col gap-2 group">
             <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest group-focus-within:text-white transition-colors">
               Delivery Destination
             </label>
