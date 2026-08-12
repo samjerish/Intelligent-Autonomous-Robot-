@@ -1219,17 +1219,20 @@ const PathLine = ({ path, currentIndex, gridSize, isMapView, color = "#00ffff", 
 
 const EnvironmentMap = React.memo(({ mapData, isNight, isTargeting, onMapClick }: { mapData: MapData, isNight: boolean, isTargeting?: boolean, onMapClick?: (p: THREE.Vector3) => void }) => {
   const { gridSize } = mapData;
+  const margin = 10; // Space between grid edge and compound wall
+  const compSizeX = gridSize.x + margin * 2;
+  const compSizeY = gridSize.y + margin * 2;
   const wallThickness = 1.5;
   const wallHeight = 6;
-  const halfX = gridSize.x / 2;
-  const halfY = gridSize.y / 2;
+  const halfX = compSizeX / 2;
+  const halfY = compSizeY / 2;
   const wallColor = isNight ? '#0f172a' : '#e2e8f0';
 
   return (
     <group>
       {/* Campus grass ground — clickable for targeting */}
       <Plane
-        args={[gridSize.x, gridSize.y]}
+        args={[compSizeX, compSizeY]}
         rotation={[-Math.PI / 2, 0, 0]}
         position={[0, 0, 0]}
         receiveShadow
@@ -1242,30 +1245,21 @@ const EnvironmentMap = React.memo(({ mapData, isNight, isTargeting, onMapClick }
         <meshStandardMaterial color={isNight ? '#14532d' : '#4ade80'} roughness={0.9} />
       </Plane>
 
-      {/* Extended outer ground base (Land fully) */}
-      <Plane
-        args={[gridSize.x * 2.5, gridSize.y * 2.5]}
-        rotation={[-Math.PI / 2, 0, 0]}
-        position={[0, -0.02, 0]}
-      >
-        <meshStandardMaterial color={isNight ? '#052e16' : '#16a34a'} roughness={1} />
-      </Plane>
-
       {/* Compound Boundary Walls */}
       {/* Back Wall */}
-      <Box args={[gridSize.x + wallThickness*2, wallHeight, wallThickness]} position={[0, wallHeight/2, halfY + wallThickness/2]} castShadow receiveShadow>
+      <Box args={[compSizeX + wallThickness*2, wallHeight, wallThickness]} position={[0, wallHeight/2, halfY + wallThickness/2]} castShadow receiveShadow>
         <meshStandardMaterial color={wallColor} />
       </Box>
       {/* Front Wall */}
-      <Box args={[gridSize.x + wallThickness*2, wallHeight, wallThickness]} position={[0, wallHeight/2, -halfY - wallThickness/2]} castShadow receiveShadow>
+      <Box args={[compSizeX + wallThickness*2, wallHeight, wallThickness]} position={[0, wallHeight/2, -halfY - wallThickness/2]} castShadow receiveShadow>
         <meshStandardMaterial color={wallColor} />
       </Box>
       {/* Right Wall */}
-      <Box args={[wallThickness, wallHeight, gridSize.y]} position={[halfX + wallThickness/2, wallHeight/2, 0]} castShadow receiveShadow>
+      <Box args={[wallThickness, wallHeight, compSizeY]} position={[halfX + wallThickness/2, wallHeight/2, 0]} castShadow receiveShadow>
         <meshStandardMaterial color={wallColor} />
       </Box>
       {/* Left Wall */}
-      <Box args={[wallThickness, wallHeight, gridSize.y]} position={[-halfX - wallThickness/2, wallHeight/2, 0]} castShadow receiveShadow>
+      <Box args={[wallThickness, wallHeight, compSizeY]} position={[-halfX - wallThickness/2, wallHeight/2, 0]} castShadow receiveShadow>
         <meshStandardMaterial color={wallColor} />
       </Box>
 
