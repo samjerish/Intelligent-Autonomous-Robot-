@@ -3,13 +3,14 @@ import { Utensils, Cross, X, Send } from 'lucide-react';
 
 interface DeliveryModalProps {
   type: 'food' | 'medical';
+  initialDestination?: string;
   onClose: () => void;
   onSubmit: (missionText: string) => void;
 }
 
-export const DeliveryModal: React.FC<DeliveryModalProps> = ({ type, onClose, onSubmit }) => {
+export const DeliveryModal: React.FC<DeliveryModalProps> = ({ type, initialDestination = '', onClose, onSubmit }) => {
   const [item, setItem] = useState('');
-  const [destination, setDestination] = useState('');
+  const [destination, setDestination] = useState(initialDestination);
 
   const isFood = type === 'food';
   const Icon = isFood ? Utensils : Cross;
