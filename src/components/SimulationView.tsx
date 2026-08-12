@@ -1337,7 +1337,6 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
   const [isOn, setIsOn] = useState(false);
   const [activeCCTab, setActiveCCTab] = useState<'dashboard' | 'tools' | 'locations'>('dashboard');
   const [modalType, setModalType] = useState<'food' | 'medical' | null>(null);
-  const [modalType, setModalType] = useState<'food' | 'medical' | null>(null);
 
   const handleDeliverySubmit = (missionText: string) => {
     if (onDispatchMission) onDispatchMission(missionText);
