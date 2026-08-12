@@ -17,7 +17,6 @@ import {
   Sphere,
   Cylinder,
   RoundedBox,
-  Text,
 } from '@react-three/drei';
 import * as THREE from 'three';
 
@@ -1219,20 +1218,11 @@ const PathLine = ({ path, currentIndex, gridSize, isMapView, color = "#00ffff", 
 
 const EnvironmentMap = React.memo(({ mapData, isNight, isTargeting, onMapClick }: { mapData: MapData, isNight: boolean, isTargeting?: boolean, onMapClick?: (p: THREE.Vector3) => void }) => {
   const { gridSize } = mapData;
-  const margin = 10; // Space between grid edge and compound wall
-  const compSizeX = gridSize.x + margin * 2;
-  const compSizeY = gridSize.y + margin * 2;
-  const wallThickness = 1.5;
-  const wallHeight = 6;
-  const halfX = compSizeX / 2;
-  const halfY = compSizeY / 2;
-  const wallColor = isNight ? '#0f172a' : '#e2e8f0';
-
   return (
     <group>
       {/* Campus grass ground — clickable for targeting */}
       <Plane
-        args={[compSizeX, compSizeY]}
+        args={[gridSize.x, gridSize.y]}
         rotation={[-Math.PI / 2, 0, 0]}
         position={[0, 0, 0]}
         receiveShadow
@@ -1245,38 +1235,16 @@ const EnvironmentMap = React.memo(({ mapData, isNight, isTargeting, onMapClick }
         <meshStandardMaterial color={isNight ? '#14532d' : '#4ade80'} roughness={0.9} />
       </Plane>
 
-      {/* Compound Boundary Walls */}
-      {/* Back Wall */}
-      <Box args={[compSizeX + wallThickness*2, wallHeight, wallThickness]} position={[0, wallHeight/2, halfY + wallThickness/2]} castShadow receiveShadow>
-        <meshStandardMaterial color={wallColor} />
-      </Box>
-      {/* Front Wall */}
-      <Box args={[compSizeX + wallThickness*2, wallHeight, wallThickness]} position={[0, wallHeight/2, -halfY - wallThickness/2]} castShadow receiveShadow>
-        <meshStandardMaterial color={wallColor} />
-      </Box>
-      {/* Right Wall */}
-      <Box args={[wallThickness, wallHeight, compSizeY]} position={[halfX + wallThickness/2, wallHeight/2, 0]} castShadow receiveShadow>
-        <meshStandardMaterial color={wallColor} />
-      </Box>
-      {/* Left Wall */}
-      <Box args={[wallThickness, wallHeight, compSizeY]} position={[-halfX - wallThickness/2, wallHeight/2, 0]} castShadow receiveShadow>
-        <meshStandardMaterial color={wallColor} />
-      </Box>
-
-      {/* ASPIRE Text on the inner front wall */}
-      <Text
-        position={[0, wallHeight/2 + 0.5, -halfY + 0.1]}
-        rotation={[0, 0, 0]}
-        fontSize={8}
-        fontWeight="900"
-        color="#0ea5e9"
-        anchorX="center"
-        anchorY="middle"
-        outlineWidth={0.2}
-        outlineColor="#ffffff"
+      {/* Extended outer ground base (Land fully) */}
+      <Plane
+        args={[gridSize.x * 1.5, gridSize.y * 1.5]}
+        rotation={[-Math.PI / 2, 0, 0]}
+        position={[0, -0.02, 0]}
       >
-        ASPIRE
-      </Text>
+        <meshStandardMaterial color={isNight ? '#052e16' : '#16a34a'} roughness={1} />
+      </Plane>
+
+      {/* Natural surrounding landscape (mountains, rocks, rivers, sea, trees) removed */}
     </group>
   );
 });
@@ -2481,11 +2449,11 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
         <Canvas shadows gl={{ antialias: true }} dpr={[1, 2]}>
           {/* Sky background from real time */}
           <color attach="background" args={['#000000']} />
-          {/* Camera — adjusted for a clean, isometric-like default view */}
+          {/* Camera — zoomed out to fit entire model + surrounding landscape */}
           {isMapView ? (
             <OrthographicCamera makeDefault position={[0, 100, 0]} zoom={4} near={0.1} far={2000} />
           ) : (
-            <PerspectiveCamera makeDefault position={[gridSize.x * 0.7, gridSize.y * 0.7, gridSize.y * 0.9]} fov={50} near={0.5} far={2000} />
+            <PerspectiveCamera makeDefault position={[0, gridSize.y * 0.9, gridSize.y * 1.35]} fov={60} near={0.5} far={2000} />
           )}
           {/* Lighting — adapts to day/night from real local time */}
           <ambientLight intensity={isNight ? 0.12 : 0.7} color={isNight ? '#c7d2fe' : '#ffffff'} />
@@ -2522,10 +2490,10 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
             enableDamping
             enablePan={false}
             dampingFactor={0.08}
-            target={[0, 0, 0]}
-            maxPolarAngle={Math.PI / 2.1}
-            minDistance={10}
-            maxDistance={gridSize.y * 1.5}
+            target={[0, 2, 0]}
+            maxPolarAngle={Math.PI / 2.8}
+            minDistance={20}
+            maxDistance={gridSize.y * 1.1}
           />
           
           <EnvironmentMap 
