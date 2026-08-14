@@ -2250,6 +2250,10 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
       handleChargeComplete();
     } else if (robotState === 'emergency_response') {
       handleEmergencyComplete();
+    } else if (robotState === 'emergency_idle_move') {
+      setIsPlaying(false);
+      setRobotState('emergency_response');
+      window.dispatchEvent(new CustomEvent('local_emergency_request', { detail: {x: 0, y: 0} }));
     } else if (robotState === 'emergency_to_ctr') {
        if (emergencyLocationRef.current && mapData) {
           addExplanation(`Mission target reached. Waiting 2.5 seconds before returning to emergency location...`);
