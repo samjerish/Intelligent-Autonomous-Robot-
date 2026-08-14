@@ -308,7 +308,7 @@ function App() {
   const activeMapData = currentMission?.selectedStrategyId ? currentMission.result.mapData : initialMapData;
 
   return (
-    <div className="flex flex-col h-screen bg-[#050505] text-text overflow-hidden font-sans relative">
+    <div className="flex h-screen bg-red-500 text-white overflow-hidden relative">
       {introRendered && <IntroSequence onComplete={handleIntroComplete} />}
       
       {/* Futuristic Navbar */}
