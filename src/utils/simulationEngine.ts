@@ -1,20 +1,6 @@
 import type { GridPoint, MapData } from '../types';
 
-export function getObstaclePenalty(x: number, y: number, f: number, obstacles: GridPoint[]) {
-  const obstacleSet = new Set(obstacles?.map(o => `${o.x},${o.y},${o.f}`));
-  let penalty = 0;
-  for (let dx = -1; dx <= 1; dx++) {
-    for (let dy = -1; dy <= 1; dy++) {
-      if (dx === 0 && dy === 0) continue;
-      if (obstacleSet.has(`${x + dx},${y + dy},${f}`)) {
-        penalty += 20; // 20 penalty for adjacent cells
-      } else if (obstacleSet.has(`${x + dx * 2},${y + dy * 2},${f}`)) {
-        penalty += 5; // 5 penalty for 2-cells away
-      }
-    }
-  }
-  return penalty;
-}export function calculatePath(start: GridPoint, end: GridPoint, obstacles: GridPoint[], mapData: MapData, requireRoads: boolean = false): GridPoint[] {
+export function calculatePath(start: GridPoint, end: GridPoint, obstacles: GridPoint[], mapData: MapData, requireRoads: boolean = false): GridPoint[] {
   // 3D A* pathfinding implementation
   const { gridSize, stairs } = mapData;
 
@@ -25,6 +11,21 @@ export function getObstaclePenalty(x: number, y: number, f: number, obstacles: G
   const obstacleSet = new Set(obstacles?.map(o => `${o.x},${o.y},${o.f}`));
   const isObstacle = (x: number, y: number, f: number) => {
     return obstacleSet.has(`${x},${y},${f}`);
+  };
+
+  const getObstaclePenalty = (x: number, y: number, f: number) => {
+    let penalty = 0;
+    for (let dx = -1; dx <= 1; dx++) {
+      for (let dy = -1; dy <= 1; dy++) {
+        if (dx === 0 && dy === 0) continue;
+        if (obstacleSet.has(`${x + dx},${y + dy},${f}`)) {
+          penalty += 20; // 20 penalty for adjacent cells
+        } else if (obstacleSet.has(`${x + dx * 2},${y + dy * 2},${f}`)) {
+          penalty += 5; // 5 penalty for 2-cells away
+        }
+      }
+    }
+    return penalty;
   };
 
   const openList = [{ pos: start, g: 0, h: manhattanDistance(start, end), parent: null as any }];
@@ -91,11 +92,10 @@ export function getObstaclePenalty(x: number, y: number, f: number, obstacles: G
         // Changing floors has a higher cost to simulate stair climbing
         let gCost = neighbor.f !== current.pos.f ? 5 : 1;
         
-        if (requireRoads && isRoad) {
-          gCost -= 1; 
+        // Add penalty for proximity to obstacles to maintain a minimum gap
+        if (neighbor.x !== end.x || neighbor.y !== end.y || neighbor.f !== end.f) {
+           gCost += getObstaclePenalty(neighbor.x, neighbor.y, neighbor.f);
         }
-
-        gCost += getObstaclePenalty(neighbor.x, neighbor.y, neighbor.f, obstacles);
 
         const g = current.g + gCost;
         const h = manhattanDistance(neighbor, end);
