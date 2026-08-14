@@ -2686,21 +2686,21 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
 
 
       {/* ── Control Panel (Floating Overlay) ── */}
-      <div className={`absolute right-4 top-4 bottom-4 bg-white/5 backdrop-blur-md border border-white/10 rounded-3xl hidden md:flex flex-col z-[100] shadow-[0_0_50px_rgba(0,0,0,0.3)] text-gray-200 pointer-events-auto transition-all duration-500 ease-out ${isCCMinimized ? 'w-16 overflow-hidden border-white/10 bg-white/5 shadow-none' : 'w-[400px] overflow-hidden'}`}>
-        <div className="p-5 border-b border-white/10 bg-white/5 flex-none flex justify-between items-center relative overflow-hidden">
+      <div className={`absolute right-4 top-4 bottom-4 bg-[#0a192f]/40 backdrop-blur-md border border-cyan-500/30 rounded-tl-[40px] rounded-br-[40px] rounded-tr-lg rounded-bl-lg hidden md:flex flex-col z-[100] shadow-[0_0_50px_rgba(6,182,212,0.15)] text-gray-200 pointer-events-auto transition-all duration-500 ease-out ${isCCMinimized ? 'w-16 overflow-hidden border-cyan-500/10 bg-[#0a192f]/20 shadow-none rounded-2xl' : 'w-[400px] overflow-hidden'}`}>
+        <div className="p-5 border-b border-cyan-500/30 bg-gradient-to-r from-cyan-900/30 to-transparent flex-none flex justify-between items-center relative overflow-hidden">
           {/* Subtle top glow */}
-          <div className="absolute top-0 left-0 right-0 h-[1px] bg-gradient-to-r from-transparent via-white/30 to-transparent"></div>
+          <div className="absolute top-0 left-0 right-0 h-[1px] bg-gradient-to-r from-transparent via-cyan-400/80 to-transparent"></div>
           {!isCCMinimized && (
-            <h3 className="font-black text-sm tracking-widest flex items-center gap-2 text-white uppercase drop-shadow-md">
-              <Activity className="w-4 h-4 text-cyan-400" />
-              Control Center
+            <h3 className="font-black text-sm tracking-[0.3em] flex items-center gap-2 text-cyan-400 uppercase drop-shadow-[0_0_10px_rgba(6,182,212,0.8)] font-mono">
+              <Activity className="w-4 h-4" />
+              [ SYS_CTRL ]
             </h3>
           )}
           <div className={`flex gap-2 ${isCCMinimized ? 'w-full justify-center' : ''}`}>
             {!isCCMinimized && (
               <button 
                 onClick={() => setIsCTROpen(!isCTROpen)}
-                className="p-2 rounded-xl bg-white/5 hover:bg-white/20 border border-white/10 text-cyan-400 transition-all shadow-sm"
+                className="p-2 rounded-lg bg-cyan-950/40 hover:bg-cyan-900/60 border border-cyan-500/30 text-cyan-400 transition-all shadow-[0_0_15px_rgba(6,182,212,0.2)] hover:shadow-[0_0_20px_rgba(6,182,212,0.5)]"
                 title="Open Console"
               >
                 <Bot className="w-4 h-4" />
@@ -2708,7 +2708,7 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
             )}
             <button
               onClick={() => setIsCCMinimized(!isCCMinimized)}
-              className="p-2 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 text-gray-300 transition-all hover:border-white/20"
+              className="p-2 rounded-lg bg-cyan-950/40 hover:bg-cyan-900/60 border border-cyan-500/30 text-cyan-400 transition-all hover:border-cyan-400/60 shadow-[0_0_15px_rgba(6,182,212,0.2)]"
               title={isCCMinimized ? 'Expand Control Center' : 'Minimize Control Center'}
             >
               {isCCMinimized ? <Maximize className="w-5 h-5" /> : <Minimize className="w-4 h-4" />}
@@ -2718,11 +2718,11 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
 
         {/* Body — hidden when minimized */}
         {!isCCMinimized && (
-        <div className="flex-1 overflow-y-auto">
-        <div className="p-5 border-b border-white/10 relative">
-          <div className="absolute top-0 right-0 w-32 h-32 bg-white/5 rounded-full blur-3xl pointer-events-none"></div>
+        <div className="flex-1 overflow-y-auto custom-scrollbar">
+        <div className="p-5 border-b border-cyan-500/20 relative">
+          <div className="absolute top-0 right-0 w-32 h-32 bg-cyan-500/10 rounded-full blur-3xl pointer-events-none"></div>
           <div className="flex items-center justify-between mb-4 relative z-10">
-            <h4 className="text-[11px] font-black text-gray-300 uppercase tracking-[0.2em]">Robot Status</h4>
+            <h4 className="text-[11px] font-black text-cyan-400 uppercase tracking-[0.3em] font-mono"><span className="text-cyan-500/50 mr-2">{"//"}</span>ROBOT STATUS</h4>
             <div className="flex gap-2">
               <button
                 onClick={() => {
@@ -2772,38 +2772,38 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
           </div>
           
           <div className="grid grid-cols-2 gap-3 mb-5 transition-all duration-500 relative z-10">
-            <div className="col-span-2 bg-black/10 backdrop-blur-md border border-white/10 rounded-2xl p-4 flex flex-col justify-between hover:border-white/30 transition-colors group relative overflow-hidden">
-              <div className="absolute top-0 right-0 w-24 h-24 bg-white/5 rounded-full blur-3xl transition-all pointer-events-none"></div>
+            <div className="col-span-2 bg-[#020815]/60 backdrop-blur-md border border-cyan-500/30 rounded-tl-2xl rounded-br-2xl rounded-tr-sm rounded-bl-sm p-4 flex flex-col justify-between hover:border-cyan-400/60 transition-colors group relative overflow-hidden shadow-[inset_0_0_20px_rgba(6,182,212,0.05)]">
+              <div className="absolute top-0 right-0 w-24 h-24 bg-cyan-500/10 rounded-full blur-3xl transition-all pointer-events-none"></div>
               <div className="flex justify-between items-center mb-2">
-                 <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest">BATTERY</span>
-                 <span className="text-xl font-black text-white leading-none tracking-tighter">{battery.toFixed(1)}<span className="text-[10px] text-gray-400 font-normal ml-0.5">%</span></span>
+                 <span className="text-[10px] font-black text-cyan-400/80 uppercase tracking-widest font-mono">{"[ BATTERY ]"}</span>
+                 <span className="text-xl font-black text-white leading-none tracking-tighter font-mono">{battery.toFixed(1)}<span className="text-[10px] text-cyan-500/70 font-normal ml-0.5">%</span></span>
               </div>
-              <div className="flex-1 h-2 bg-black/40 rounded-full overflow-hidden mt-1 ring-1 ring-white/10 shadow-inner">
-                <div className={`h-full transition-all duration-1000 rounded-full ${battery > 60 ? 'bg-gradient-to-r from-emerald-500 to-green-400 shadow-[0_0_10px_rgba(16,185,129,0.5)]' : battery > 30 ? 'bg-gradient-to-r from-yellow-500 to-amber-400 shadow-[0_0_10px_rgba(245,158,11,0.5)]' : 'bg-gradient-to-r from-red-600 to-red-400 shadow-[0_0_10px_rgba(239,68,68,0.5)]'}`} style={{ width: `${battery}%` }} />
+              <div className="flex-1 h-1.5 bg-cyan-950/50 rounded-none overflow-hidden mt-1 ring-1 ring-cyan-500/30">
+                <div className={`h-full transition-all duration-1000 ${battery > 60 ? 'bg-cyan-400 shadow-[0_0_10px_rgba(34,211,238,0.8)]' : battery > 30 ? 'bg-yellow-400 shadow-[0_0_10px_rgba(250,204,21,0.8)]' : 'bg-red-500 shadow-[0_0_10px_rgba(239,68,68,0.8)]'}`} style={{ width: `${battery}%` }} />
               </div>
             </div>
             
-            <div className="col-span-2 bg-black/10 backdrop-blur-md border border-white/10 rounded-2xl p-4 flex flex-col justify-center hover:border-white/30 transition-colors relative overflow-hidden">
-              <span className="text-[10px] font-black text-gray-400 uppercase tracking-[0.15em] block mb-1">STATUS</span>
-              <span className={`text-xl font-black uppercase tracking-wider mt-1 ${
-                robotState === 'charging' ? 'text-yellow-400 drop-shadow-[0_0_8px_rgba(250,204,21,0.5)]' : 
-                robotState === 'patrol' ? 'text-cyan-400 drop-shadow-[0_0_8px_rgba(34,211,238,0.5)]' : 
-                robotState === 'mission' ? 'text-emerald-400 drop-shadow-[0_0_8px_rgba(52,211,153,0.5)]' : 
-                robotState === 'emergency_response' ? 'text-red-500 animate-pulse drop-shadow-[0_0_8px_rgba(239,68,68,0.8)]' : 
+            <div className="col-span-2 bg-[#020815]/60 backdrop-blur-md border border-cyan-500/30 rounded-tl-2xl rounded-br-2xl rounded-tr-sm rounded-bl-sm p-4 flex flex-col justify-center hover:border-cyan-400/60 transition-colors relative overflow-hidden shadow-[inset_0_0_20px_rgba(6,182,212,0.05)]">
+              <span className="text-[10px] font-black text-cyan-400/80 uppercase tracking-[0.2em] block mb-1 font-mono">{"[ STATUS ]"}</span>
+              <span className={`text-xl font-black uppercase tracking-wider mt-1 font-mono ${
+                robotState === 'charging' ? 'text-yellow-400 drop-shadow-[0_0_10px_rgba(250,204,21,0.8)]' : 
+                robotState === 'patrol' ? 'text-cyan-400 drop-shadow-[0_0_10px_rgba(34,211,238,0.8)]' : 
+                robotState === 'mission' ? 'text-emerald-400 drop-shadow-[0_0_10px_rgba(52,211,153,0.8)]' : 
+                robotState === 'emergency_response' ? 'text-red-500 animate-pulse drop-shadow-[0_0_10px_rgba(239,68,68,0.8)]' : 
                 'text-gray-300'
               }`}>
                 {robotState.replace('_', ' ')}
               </span>
             </div>
             
-            <div className="bg-black/10 backdrop-blur-md border border-white/10 rounded-2xl p-4 flex flex-col justify-between hover:border-white/30 transition-colors">
-              <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest block mb-2">DISTANCE</span>
-              <span className="text-2xl font-black text-white leading-none">{path.length > 0 ? path.length - currentPosIndex : '--'} <span className="text-[10px] font-normal text-gray-500 ml-0.5">m</span></span>
+            <div className="bg-[#020815]/60 backdrop-blur-md border border-cyan-500/30 rounded-tl-2xl rounded-br-2xl rounded-tr-sm rounded-bl-sm p-4 flex flex-col justify-between hover:border-cyan-400/60 transition-colors shadow-[inset_0_0_20px_rgba(6,182,212,0.05)]">
+              <span className="text-[10px] font-black text-cyan-400/80 uppercase tracking-widest block mb-2 font-mono">{"[ DISTANCE ]"}</span>
+              <span className="text-2xl font-black text-white leading-none font-mono">{path.length > 0 ? path.length - currentPosIndex : '--'} <span className="text-[10px] font-normal text-cyan-500/70 ml-0.5">m</span></span>
             </div>
             
-            <div className="bg-black/10 backdrop-blur-md border border-white/10 rounded-2xl p-4 flex flex-col justify-between hover:border-white/30 transition-colors">
-              <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest block mb-2">TIME LEFT</span>
-              <span className="text-2xl font-black text-white leading-none">{path.length > 0 ? Math.ceil((path.length - currentPosIndex) * 0.5) : '--'} <span className="text-[10px] font-normal text-gray-500 ml-0.5">min</span></span>
+            <div className="bg-[#020815]/60 backdrop-blur-md border border-cyan-500/30 rounded-tl-2xl rounded-br-2xl rounded-tr-sm rounded-bl-sm p-4 flex flex-col justify-between hover:border-cyan-400/60 transition-colors shadow-[inset_0_0_20px_rgba(6,182,212,0.05)]">
+              <span className="text-[10px] font-black text-cyan-400/80 uppercase tracking-widest block mb-2 font-mono">{"[ TIME LEFT ]"}</span>
+              <span className="text-2xl font-black text-white leading-none font-mono">{path.length > 0 ? Math.ceil((path.length - currentPosIndex) * 0.5) : '--'} <span className="text-[10px] font-normal text-cyan-500/70 ml-0.5">min</span></span>
             </div>
           </div>
 
@@ -2811,14 +2811,14 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
             <button
               onClick={() => startSimulation()}
               disabled={isPlaying || (path.length > 0 && currentPosIndex >= path.length - 1)}
-              className="w-full flex items-center justify-center gap-3 px-4 py-4 bg-gradient-to-r from-cyan-500 to-blue-600 text-white rounded-xl font-black uppercase tracking-[0.2em] hover:from-cyan-400 hover:to-blue-500 disabled:opacity-50 disabled:grayscale transition-all shadow-[0_0_20px_rgba(6,182,212,0.3)] hover:shadow-[0_0_30px_rgba(6,182,212,0.5)] border border-cyan-400/50"
+              className="w-full flex items-center justify-center gap-3 px-4 py-4 bg-cyan-600/20 text-cyan-400 rounded-tl-xl rounded-br-xl rounded-tr-sm rounded-bl-sm font-black uppercase tracking-[0.2em] hover:bg-cyan-500/40 disabled:opacity-50 disabled:grayscale transition-all shadow-[0_0_15px_rgba(6,182,212,0.2)] hover:shadow-[0_0_30px_rgba(6,182,212,0.5)] border border-cyan-400/50 font-mono"
             >
-              <Play className="w-5 h-5" /> {isPlaying ? 'Simulating' : 'Execute Mission'}
+              <Play className="w-5 h-5" /> {isPlaying ? 'SIMULATING' : 'EXEC_MISSION'}
             </button>
             <div className="flex w-full gap-2.5">
               <button
                 onClick={() => setIsEmergencyTargeting(!isEmergencyTargeting)}
-                className={`flex-1 py-3.5 border rounded-xl transition-all flex items-center justify-center shadow-lg ${isEmergencyTargeting ? 'bg-red-500 text-white border-red-400 shadow-[0_0_20px_rgba(239,68,68,0.5)] scale-[0.98]' : 'bg-[#150a0a] text-red-500 border-red-500/20 hover:bg-red-500/10 hover:border-red-500/40'}`}
+                className={`flex-1 py-3.5 border rounded-tl-xl rounded-br-xl rounded-tr-sm rounded-bl-sm transition-all flex items-center justify-center shadow-lg ${isEmergencyTargeting ? 'bg-red-500/20 text-red-400 border-red-400 shadow-[0_0_20px_rgba(239,68,68,0.5)] scale-[0.98]' : 'bg-[#0a0505]/60 text-red-500/70 border-red-500/20 hover:bg-red-500/10 hover:border-red-500/40'}`}
                 title="Target Emergency"
               >
                 <ShieldAlert className="w-5 h-5" />
@@ -2828,7 +2828,7 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
                   setIsPlacingBlocker(!isPlacingBlocker);
                   if (!isPlacingBlocker) { setIsEmergencyTargeting(false); setIsPlacingCrowd(false); }
                 }}
-                className={`flex-1 py-3.5 border rounded-xl transition-all flex items-center justify-center shadow-lg ${isPlacingBlocker ? 'bg-orange-500 text-white border-orange-400 shadow-[0_0_20px_rgba(249,115,22,0.5)] scale-[0.98]' : 'bg-[#150d0a] text-orange-500 border-orange-500/20 hover:bg-orange-500/10 hover:border-orange-500/40'}`}
+                className={`flex-1 py-3.5 border rounded-tl-xl rounded-br-xl rounded-tr-sm rounded-bl-sm transition-all flex items-center justify-center shadow-lg ${isPlacingBlocker ? 'bg-orange-500/20 text-orange-400 border-orange-400 shadow-[0_0_20px_rgba(249,115,22,0.5)] scale-[0.98]' : 'bg-[#0a0705]/60 text-orange-500/70 border-orange-500/20 hover:bg-orange-500/10 hover:border-orange-500/40'}`}
                 title="Toggle Road Blocker"
               >
                 <Construction className="w-5 h-5" />
@@ -2838,24 +2838,24 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
                   setIsPlacingCrowd(!isPlacingCrowd);
                   if (!isPlacingCrowd) { setIsEmergencyTargeting(false); setIsPlacingBlocker(false); }
                 }}
-                className={`flex-1 py-3.5 border rounded-xl transition-all flex items-center justify-center shadow-lg ${isPlacingCrowd ? 'bg-purple-500 text-white border-purple-400 shadow-[0_0_20px_rgba(168,85,247,0.5)] scale-[0.98]' : 'bg-[#100a15] text-purple-500 border-purple-500/20 hover:bg-purple-500/10 hover:border-purple-500/40'}`}
+                className={`flex-1 py-3.5 border rounded-tl-xl rounded-br-xl rounded-tr-sm rounded-bl-sm transition-all flex items-center justify-center shadow-lg ${isPlacingCrowd ? 'bg-purple-500/20 text-purple-400 border-purple-400 shadow-[0_0_20px_rgba(168,85,247,0.5)] scale-[0.98]' : 'bg-[#08050a]/60 text-purple-500/70 border-purple-500/20 hover:bg-purple-500/10 hover:border-purple-500/40'}`}
                 title="Toggle Crowd Placement"
               >
                 <Users className="w-5 h-5" />
               </button>
               <button
                 onClick={resetSimulation}
-                className="flex-[1.2] py-3.5 bg-white/5 border border-white/10 rounded-xl hover:bg-white/10 hover:border-white/30 transition-all flex items-center justify-center active:scale-[0.98]"
+                className="flex-[1.2] py-3.5 bg-cyan-950/20 border border-cyan-500/30 rounded-tl-xl rounded-br-xl rounded-tr-sm rounded-bl-sm hover:bg-cyan-900/40 hover:border-cyan-400/50 transition-all flex items-center justify-center active:scale-[0.98]"
                 title="Reset Robot"
               >
-                <RotateCcw className="w-5 h-5 text-gray-400" />
+                <RotateCcw className="w-5 h-5 text-cyan-500" />
               </button>
             </div>
           </div>
         </div>
 
-        <div className={`p-4 border-b border-white/10 bg-black/20 transition-all duration-500 ${!isOn ? 'opacity-30 pointer-events-none grayscale' : ''}`}>
-          <h4 className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-3">Room Inspector</h4>
+        <div className={`p-5 border-b border-cyan-500/20 bg-cyan-950/10 transition-all duration-500 ${!isOn ? 'opacity-30 pointer-events-none grayscale' : ''}`}>
+          <h4 className="text-[11px] font-black text-cyan-400 uppercase tracking-[0.3em] font-mono mb-4"><span className="text-cyan-500/50 mr-2">{"//"}</span>Room Inspector</h4>
           {selectedRoom && (
             <div className="animate-in fade-in slide-in-from-bottom-4 duration-300 mb-4">
               <div className="bg-white/5 border border-white/10 rounded-xl p-3 mb-3">
