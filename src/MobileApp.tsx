@@ -8,7 +8,9 @@ import { MobileEmergencyPanel } from './components/mobile/MobileEmergencyPanel';
 import { Activity, Gamepad2, Map as MapIcon, Terminal, AlertTriangle } from 'lucide-react';
 
 export default function MobileApp() {
-  const [token, setToken] = useState<string | null>(null);
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [passwordInput, setPasswordInput] = useState('');
+  const [error, setError] = useState(false);
   const [activeTab, setActiveTab] = useState('dashboard');
   const [isConnected, setIsConnected] = useState(false);
   const socketRef = useRef<Socket | null>(null);
@@ -17,13 +19,6 @@ export default function MobileApp() {
   const [pendingEmergency, setPendingEmergency] = useState<{x: number, y: number} | null>(null);
 
   useEffect(() => {
-    // Parse token from URL
-    const params = new URLSearchParams(window.location.search);
-    const urlToken = params.get('token');
-    
-    if (urlToken) {
-      setToken(urlToken);
-    }
 
     fetch(`/api/map`)
       .then(res => res.json())
@@ -58,15 +53,39 @@ export default function MobileApp() {
     };
   }, []);
 
-  if (!token) {
+  if (!isAuthenticated) {
     return (
       <div className="min-h-screen bg-[#020817] flex items-center justify-center p-4">
-        <div className="bg-red-500/10 border border-red-500/50 rounded-lg p-6 text-center max-w-sm">
-          <AlertTriangle className="w-12 h-12 text-red-500 mx-auto mb-4" />
-          <h1 className="text-xl font-bold text-red-500 mb-2">Unauthorized Access</h1>
-          <p className="text-sm text-gray-400">
-            Please scan the QR code from the Desktop Control Center to pair your device.
-          </p>
+        <div className="bg-[#0a1122] border border-cyan-500/30 rounded-2xl p-8 w-full max-w-sm shadow-2xl flex flex-col items-center">
+          <Gamepad2 className="w-16 h-16 text-cyan-500 mb-6" />
+          <h1 className="text-2xl font-black text-white mb-2 uppercase tracking-widest text-center">Mobile Control</h1>
+          <p className="text-sm text-gray-400 mb-8 text-center">Enter the security password to access the robot controls.</p>
+          
+          <form 
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (passwordInput === '1234') {
+                setIsAuthenticated(true);
+                setError(false);
+              } else {
+                setError(true);
+              }
+            }}
+            className="w-full"
+          >
+            <input
+              type="password"
+              value={passwordInput}
+              onChange={(e) => setPasswordInput(e.target.value)}
+              placeholder="Enter Password"
+              className={`w-full bg-[#020817] border ${error ? 'border-red-500' : 'border-cyan-500/50'} rounded-xl px-4 py-3 text-white text-center text-xl tracking-widest outline-none focus:border-cyan-400 transition-colors mb-4`}
+            />
+            {error && <p className="text-red-500 text-xs font-bold uppercase text-center mb-4">Incorrect Password</p>}
+            
+            <button type="submit" className="w-full bg-cyan-600 hover:bg-cyan-500 text-white font-black uppercase tracking-widest py-3 rounded-xl transition-all shadow-[0_0_15px_rgba(6,182,212,0.3)]">
+              Connect
+            </button>
+          </form>
         </div>
       </div>
     );
@@ -75,7 +94,7 @@ export default function MobileApp() {
   const sendCommand = (action: string, payload: any = {}) => {
     if (socketRef.current) {
       socketRef.current.emit('mobile_command', {
-        token,
+        token: 'mobile-auth',
         action,
         ...payload
       });
@@ -125,7 +144,7 @@ export default function MobileApp() {
           </div>
         </div>
         <div className="px-2 py-1 bg-white/5 rounded border border-white/10 text-xs font-mono text-cyan-500/50">
-          ID: {token.slice(0,6)}
+          ID: MOBILE
         </div>
       </header>
 

@@ -441,10 +441,10 @@ function App() {
           <div className="bg-[#0f172a] border border-white/10 p-8 rounded-2xl shadow-2xl flex flex-col items-center gap-6" onClick={e => e.stopPropagation()}>
             <h2 className="text-xl font-bold text-cyan-400 tracking-wider uppercase">Mobile Pairing</h2>
             <div className="bg-white p-4 rounded-xl shadow-lg flex flex-col items-center">
-              <QRCode value={`http://${localIp}:5173/mobile?token=${pairingToken}`} size={220} />
+              <QRCode value={`${window.location.origin}/mobile`} size={220} />
               <div className="mt-4 flex items-center justify-between w-full px-2">
-                <span className="text-xs text-black/50 font-bold uppercase tracking-widest">TOKEN</span>
-                <span className="text-sm font-mono font-bold text-cyan-600">{pairingToken}</span>
+                <span className="text-xs text-black/50 font-bold uppercase tracking-widest">PASSWORD</span>
+                <span className="text-sm font-mono font-bold text-cyan-600">1234</span>
               </div>
             </div>
             <p className="text-sm text-gray-400 font-mono text-center max-w-xs">
