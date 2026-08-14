@@ -136,33 +136,29 @@ export default function MobileApp() {
 
       {/* EMERGENCY APPROVAL MODAL */}
       {pendingEmergency && (
-        <div className="fixed inset-0 z-[600] flex items-center justify-center bg-black/80 backdrop-blur-xl">
-          <div className="w-full max-w-4xl mx-4 bg-[#0a0a0a] border border-red-500/50 rounded-2xl shadow-[0_0_80px_rgba(239,68,68,0.2)] overflow-hidden flex flex-col md:flex-row items-stretch animate-in zoom-in-95 duration-300">
-            {/* Left accent strip */}
-            <div className="w-full md:w-3 bg-red-600 h-2 md:h-auto shadow-[0_0_20px_rgba(239,68,68,0.8)]"></div>
+        <div className="fixed bottom-[80px] left-1/2 -translate-x-1/2 z-[600] w-[95%] max-w-2xl bg-black/40 backdrop-blur-3xl border border-red-500/50 rounded-2xl shadow-[0_10px_50px_rgba(239,68,68,0.3)] overflow-hidden flex flex-col md:flex-row items-stretch animate-in slide-in-from-bottom-10 duration-300">
+          <div className="w-full md:w-2 bg-red-600 h-1 md:h-auto shadow-[0_0_10px_rgba(239,68,68,0.8)]"></div>
+          
+          <div className="flex-1 p-4 md:p-6 flex flex-col md:flex-row items-center justify-between gap-4">
+            <div className="flex flex-col md:flex-row items-center text-center md:text-left gap-4 flex-1">
+              <div className="w-12 h-12 bg-red-500/10 rounded-full flex items-center justify-center text-red-500 border border-red-500/30 flex-shrink-0 animate-pulse">
+                <svg xmlns="http://www.w3.org/2000/svg" className="w-6 h-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>
+              </div>
+              <div>
+                <h2 className="text-xl md:text-2xl font-black text-red-500 tracking-wider">Emergency Stopped</h2>
+                <p className="text-gray-300 mt-1 text-xs md:text-sm leading-relaxed">
+                  The robot is holding position. Click authorize to resume.
+                </p>
+              </div>
+            </div>
             
-            <div className="flex-1 p-6 md:p-8 flex flex-col md:flex-row items-center justify-between gap-6">
-              <div className="flex flex-col md:flex-row items-center text-center md:text-left gap-6 flex-1">
-                <div className="w-20 h-20 bg-red-500/10 rounded-full flex items-center justify-center text-red-500 border border-red-500/30 shadow-[inset_0_0_20px_rgba(239,68,68,0.2)] flex-shrink-0 animate-pulse">
-                  <svg xmlns="http://www.w3.org/2000/svg" className="w-10 h-10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>
-                </div>
-                <div>
-                  <h2 className="text-3xl md:text-4xl font-black text-red-500 uppercase tracking-widest drop-shadow-[0_2px_10px_rgba(239,68,68,0.5)]">Emergency Reached</h2>
-                  <p className="text-red-400 font-bold mt-2 text-lg uppercase tracking-wider">Awaiting Authorization</p>
-                  <p className="text-gray-400 mt-2 max-w-xl text-sm md:text-base leading-relaxed">
-                    The robot is holding position at the emergency location. Authorize to resume normal operations and clear the active emergency state.
-                  </p>
-                </div>
-              </div>
-              
-              <div className="w-full md:w-auto flex-shrink-0 flex flex-col gap-3">
-                <button 
-                  onClick={handleEmergencyApprove}
-                  className="w-full md:w-64 py-5 rounded-xl font-black text-lg bg-red-600 text-white hover:bg-red-500 hover:shadow-[0_0_30px_rgba(239,68,68,0.6)] shadow-[0_0_20px_rgba(239,68,68,0.4)] transition-all uppercase tracking-widest active:scale-95 border border-red-400/50"
-                >
-                  AUTHORIZE RESUME
-                </button>
-              </div>
+            <div className="w-full md:w-auto flex-shrink-0">
+              <button 
+                onClick={handleEmergencyApprove}
+                className="w-full md:w-48 py-3 rounded-xl font-bold text-sm bg-red-600 text-white hover:bg-red-500 transition-all uppercase tracking-wider active:scale-95 border border-red-400/50"
+              >
+                AUTHORIZE
+              </button>
             </div>
           </div>
         </div>
