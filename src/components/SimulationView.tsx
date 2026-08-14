@@ -2028,6 +2028,13 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
     addExplanation(`Arrived at emergency location. Providing assistance for 5 seconds...`);
     setIsPlaying(false);
     
+    // Hide (clear) any obstacles/crowds at the emergency location now that the robot is here
+    const targetLoc = path[path.length - 1];
+    if (targetLoc) {
+       setUserBlockers(prev => prev.filter(b => Math.abs(b.x - targetLoc.x) > 2 || Math.abs(b.y - targetLoc.y) > 2));
+       setCrowds(prev => prev.filter(c => Math.abs(c.x - targetLoc.x) > 2 || Math.abs(c.y - targetLoc.y) > 2));
+    }
+    
     if (emergencyTimeoutRef.current) {
       clearTimeout(emergencyTimeoutRef.current);
     }
