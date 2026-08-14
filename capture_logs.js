@@ -15,7 +15,9 @@ import puppeteer from 'puppeteer';
   });
 
   try {
-    await page.goto('http://localhost:5173', { waitUntil: 'networkidle0', timeout: 5000 });
+    await page.goto('http://localhost:5173', { waitUntil: 'domcontentloaded', timeout: 5000 });
+    // wait a bit for react to mount and throw
+    await new Promise(r => setTimeout(r, 2000));
   } catch (e) {
     console.log(`Navigation error: ${e.message}`);
   }
