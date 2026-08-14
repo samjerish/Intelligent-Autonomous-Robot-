@@ -162,25 +162,17 @@ export function calculateLongPath(start: GridPoint, end: GridPoint, obstacles: G
   }
 
   if (!detourPoint) {
-      const attemptPatrol = () => {
-        if (!mapData || !mapData.rooms) return;
-        const currentLoc = path.length > 0 && currentPosIndex < path.length ? path[currentPosIndex] : mapData.start;
-        const randomRoom = mapData.rooms[Math.floor(Math.random() * mapData.rooms.length)];
-        const patrolPath = calculatePath(currentLoc, randomRoom.door || randomRoom.start, [...(mapData.obstacles || []), ...userBlockers], mapData);
-        if (patrolPath.length > 0) {
-          setPath(patrolPath);
-          setCurrentPosIndex(0);
-          setRobotState('patrol');
-          setIsPlaying(true);
-        } else {
-          timeout = setTimeout(attemptPatrol, 1000);
-        }
-      };
+    return calculatePath(start, end, obstacles, mapData);
+  }
 
-      timeout = setTimeout(() => {
-        addExplanation(waitTime === 0 ? 'Idle mode disabled. Resuming patrol immediately.' : 'Idle detected. Initiating autonomous patrol mode.');
-        attemptPatrol();
-      }, waitTime);Path(start, end, obstacles, mapData);
+  const part1 = calculatePath(start, detourPoint, obstacles, mapData);
+  const part2 = calculatePath(detourPoint, end, obstacles, mapData);
+
+  if (part1.length > 0 && part2.length > 0) {
+    return [...part1, ...part2.slice(1)];
+  }
+
+  return calculatePath(start, end, obstacles, mapData);
 }
 
 self.onmessage = (e) => {

@@ -1607,10 +1607,9 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
     let timeout: any;
     if (!isIdleMode && (robotState === 'idle' || robotState === 'patrol') && !isPlaying && isOn) {
       const waitTime = (prevIsIdleMode.current && !isIdleMode) ? 0 : 2500;
-      timeout = setTimeout(() => {
+      const attemptPatrol = () => {
         if (!mapData || !mapData.rooms) return;
-        addExplanation(waitTime === 0 ? 'Idle mode disabled. Resuming patrol immediately.' : 'Idle detected. Initiating autonomous patrol mode.');
-        const currentLoc = path.length > 0 ? path[currentPosIndex] : mapData.start;
+        const currentLoc = path.length > 0 && currentPosIndex < path.length ? path[currentPosIndex] : mapData.start;
         const randomRoom = mapData.rooms[Math.floor(Math.random() * mapData.rooms.length)];
         const patrolPath = calculatePath(currentLoc, randomRoom.door || randomRoom.start, [...(mapData.obstacles || []), ...userBlockers], mapData);
         if (patrolPath.length > 0) {
@@ -1618,7 +1617,14 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
           setCurrentPosIndex(0);
           setRobotState('patrol');
           setIsPlaying(true);
+        } else {
+          timeout = setTimeout(attemptPatrol, 1000);
         }
+      };
+
+      timeout = setTimeout(() => {
+        addExplanation(waitTime === 0 ? 'Idle mode disabled. Resuming patrol immediately.' : 'Idle detected. Initiating autonomous patrol mode.');
+        attemptPatrol();
       }, waitTime);
     }
     prevIsIdleMode.current = isIdleMode;
