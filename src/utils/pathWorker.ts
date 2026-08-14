@@ -33,8 +33,24 @@ export function calculatePath(start: GridPoint, end: GridPoint, obstacles: GridP
     return stairs?.find(s => s.x === x && s.y === y && s.f === f);
   };
 
+  const obstacleSet = new Set(obstacles?.map(o => `${o.x},${o.y},${o.f}`));
   const isObstacle = (x: number, y: number, f: number) => {
-    return obstacles?.some(o => o.x === x && o.y === y && o.f === f);
+    return obstacleSet.has(`${x},${y},${f}`);
+  };
+
+  const getObstaclePenalty = (x: number, y: number, f: number) => {
+    let penalty = 0;
+    for (let dx = -1; dx <= 1; dx++) {
+      for (let dy = -1; dy <= 1; dy++) {
+        if (dx === 0 && dy === 0) continue;
+        if (obstacleSet.has(`${x + dx},${y + dy},${f}`)) {
+          penalty += 20; // 20 penalty for adjacent cells
+        } else if (obstacleSet.has(`${x + dx * 2},${y + dy * 2},${f}`)) {
+          penalty += 5; // 5 penalty for 2-cells away
+        }
+      }
+    }
+    return penalty;
   };
 
   const openList = [{ pos: start, g: 0, h: manhattanDistance(start, end), parent: null as any }];
@@ -102,16 +118,10 @@ export function calculatePath(start: GridPoint, end: GridPoint, obstacles: GridP
         }
         
         let proximityCost = 0;
-        
-        for (let dx = -1; dx <= 1; dx++) {
-          for (let dy = -1; dy <= 1; dy++) {
-            if (dx === 0 && dy === 0) continue;
-            if (isObstacle(neighbor.x + dx, neighbor.y + dy, neighbor.f)) {
-              proximityCost += 15;
-            }
-          }
+        if (neighbor.x !== end.x || neighbor.y !== end.y || neighbor.f !== end.f) {
+           proximityCost = getObstaclePenalty(neighbor.x, neighbor.y, neighbor.f);
         }
-        
+
         const g = current.g + floorCost + proximityCost;
         const h = manhattanDistance(neighbor, end);
         const existingNode = openList.find(n => n.pos.x === neighbor.x && n.pos.y === neighbor.y && n.pos.f === neighbor.f);
@@ -152,17 +162,25 @@ export function calculateLongPath(start: GridPoint, end: GridPoint, obstacles: G
   }
 
   if (!detourPoint) {
-    return calculatePath(start, end, obstacles, mapData);
-  }
+      const attemptPatrol = () => {
+        if (!mapData || !mapData.rooms) return;
+        const currentLoc = path.length > 0 && currentPosIndex < path.length ? path[currentPosIndex] : mapData.start;
+        const randomRoom = mapData.rooms[Math.floor(Math.random() * mapData.rooms.length)];
+        const patrolPath = calculatePath(currentLoc, randomRoom.door || randomRoom.start, [...(mapData.obstacles || []), ...userBlockers], mapData);
+        if (patrolPath.length > 0) {
+          setPath(patrolPath);
+          setCurrentPosIndex(0);
+          setRobotState('patrol');
+          setIsPlaying(true);
+        } else {
+          timeout = setTimeout(attemptPatrol, 1000);
+        }
+      };
 
-  const part1 = calculatePath(start, detourPoint, obstacles, mapData);
-  const part2 = calculatePath(detourPoint, end, obstacles, mapData);
-
-  if (part1.length > 0 && part2.length > 0) {
-    return [...part1, ...part2.slice(1)];
-  }
-
-  return calculatePath(start, end, obstacles, mapData);
+      timeout = setTimeout(() => {
+        addExplanation(waitTime === 0 ? 'Idle mode disabled. Resuming patrol immediately.' : 'Idle detected. Initiating autonomous patrol mode.');
+        attemptPatrol();
+      }, waitTime);Path(start, end, obstacles, mapData);
 }
 
 self.onmessage = (e) => {
