@@ -442,6 +442,11 @@ function App() {
             <h2 className="text-xl font-bold text-cyan-400 tracking-wider uppercase">Mobile Pairing</h2>
             <div className="bg-white p-4 rounded-xl shadow-lg flex flex-col items-center">
               <QRCode value={window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1' ? `http://${localIp}:5173/mobile` : `${window.location.origin}/mobile`} size={220} />
+              <div className="mt-4 flex flex-col items-center justify-center w-full px-2 gap-2">
+                <span className="text-[10px] text-black/50 font-mono text-center">
+                  {window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1' ? `http://${localIp}:5173/mobile` : `${window.location.origin}/mobile`}
+                </span>
+              </div>
               <div className="mt-4 flex items-center justify-between w-full px-2">
                 <span className="text-xs text-black/50 font-bold uppercase tracking-widest">PASSWORD</span>
                 <span className="text-sm font-mono font-bold text-cyan-600">1234</span>
