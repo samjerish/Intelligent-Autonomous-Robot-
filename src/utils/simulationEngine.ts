@@ -91,8 +91,7 @@ export function getObstaclePenalty(x: number, y: number, f: number, obstacles: G
         // Changing floors has a higher cost to simulate stair climbing
         let gCost = neighbor.f !== current.pos.f ? 5 : 1;
         
-        // Add penalty for proximity to obstacles to maintain a minimum gap
-        if (requireRoads && isRoad(neighbor.x, neighbor.y, neighbor.f)) {
+        if (requireRoads && isRoad) {
           gCost -= 1; 
         }
 
