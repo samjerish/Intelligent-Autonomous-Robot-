@@ -2461,7 +2461,7 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
         </div>
       </div>
 
-      <div className="absolute md:relative inset-0 opacity-0 md:opacity-100 pointer-events-none md:pointer-events-auto z-0 flex-1 w-full h-full">
+      <div className="absolute md:relative inset-0 z-0 flex-1 w-full h-full">
         {/* Top Left Options */}
         <div className="absolute top-4 left-4 z-10 hidden md:flex flex-col gap-2">
           {/* Main Options Row */}
