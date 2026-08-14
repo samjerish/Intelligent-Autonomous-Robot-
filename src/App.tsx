@@ -460,14 +460,12 @@ function App() {
         </div>
       )}
 
-      {/* EMERGENCY APPROVAL MODAL */}
+      {/* EMERGENCY APPROVAL BANNER */}
       {pendingEmergency && (
-        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-[600] w-[95%] max-w-2xl bg-black/40 backdrop-blur-3xl border border-red-500/50 rounded-2xl shadow-[0_10px_50px_rgba(239,68,68,0.3)] overflow-hidden flex flex-col md:flex-row items-stretch animate-in slide-in-from-bottom-10 duration-300">
-          <div className="w-full md:w-2 bg-red-600 h-1 md:h-auto shadow-[0_0_10px_rgba(239,68,68,0.8)]"></div>
-          
-          <div className="flex-1 p-4 md:p-6 flex flex-col md:flex-row items-center justify-between gap-4">
-            <div className="flex flex-col md:flex-row items-center text-center md:text-left gap-4 flex-1">
-              <div className="w-12 h-12 bg-red-500/10 rounded-full flex items-center justify-center text-red-500 border border-red-500/30 flex-shrink-0 animate-pulse">
+        <div className="fixed bottom-0 left-0 right-0 z-[600] bg-black/80 backdrop-blur-md border-t border-red-500/50 shadow-[0_-10px_30px_rgba(239,68,68,0.2)] p-4 flex items-center justify-center animate-in slide-in-from-bottom duration-300">
+          <div className="w-full max-w-4xl flex items-center justify-between gap-6">
+            <div className="flex items-center gap-4">
+              <div className="w-10 h-10 bg-red-500/10 rounded-full flex items-center justify-center text-red-500 border border-red-500/30 animate-pulse">
                 <svg xmlns="http://www.w3.org/2000/svg" className="w-6 h-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>
               </div>
               <div>
