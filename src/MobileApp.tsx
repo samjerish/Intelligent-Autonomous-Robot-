@@ -136,8 +136,8 @@ export default function MobileApp() {
 
       {/* EMERGENCY APPROVAL MODAL */}
       {pendingEmergency && (
-        <div className="fixed inset-0 z-[600] flex items-center justify-center bg-black/80 backdrop-blur-xl">
-          <div className="w-full max-w-4xl mx-4 bg-[#0a0a0a] border border-red-500/50 rounded-2xl shadow-[0_0_80px_rgba(239,68,68,0.2)] overflow-hidden flex flex-col md:flex-row items-stretch animate-in zoom-in-95 duration-300">
+        <div className="fixed bottom-[80px] left-1/2 -translate-x-1/2 z-[600] flex justify-center w-full max-w-4xl px-4 pointer-events-none">
+          <div className="w-full bg-[#0a0a0a]/90 backdrop-blur-md border border-red-500/50 rounded-2xl shadow-[0_0_80px_rgba(239,68,68,0.2)] overflow-hidden flex flex-col md:flex-row items-stretch animate-in slide-in-from-bottom-10 duration-300 pointer-events-auto">
             {/* Left accent strip */}
             <div className="w-full md:w-3 bg-red-600 h-2 md:h-auto shadow-[0_0_20px_rgba(239,68,68,0.8)]"></div>
             

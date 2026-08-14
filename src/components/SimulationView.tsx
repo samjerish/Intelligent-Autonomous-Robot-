@@ -2686,10 +2686,10 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
 
 
       {/* ── Control Panel (Floating Overlay) ── */}
-      <div className={`absolute right-4 top-4 bottom-4 bg-[#050a15]/80 backdrop-blur-2xl border border-cyan-500/20 rounded-3xl hidden md:flex flex-col z-[100] shadow-[0_0_50px_rgba(6,182,212,0.15)] text-gray-200 pointer-events-auto transition-all duration-500 ease-out ${isCCMinimized ? 'w-16 overflow-hidden border-white/10 bg-black/50 shadow-none' : 'w-[400px] overflow-hidden'}`}>
-        <div className="p-5 border-b border-white/5 bg-gradient-to-r from-cyan-950/30 to-transparent flex-none flex justify-between items-center relative overflow-hidden">
+      <div className={`absolute right-4 top-4 bottom-4 bg-white/5 backdrop-blur-md border border-white/10 rounded-3xl hidden md:flex flex-col z-[100] shadow-[0_0_50px_rgba(0,0,0,0.3)] text-gray-200 pointer-events-auto transition-all duration-500 ease-out ${isCCMinimized ? 'w-16 overflow-hidden border-white/10 bg-white/5 shadow-none' : 'w-[400px] overflow-hidden'}`}>
+        <div className="p-5 border-b border-white/10 bg-white/5 flex-none flex justify-between items-center relative overflow-hidden">
           {/* Subtle top glow */}
-          <div className="absolute top-0 left-0 right-0 h-[1px] bg-gradient-to-r from-transparent via-cyan-500/50 to-transparent"></div>
+          <div className="absolute top-0 left-0 right-0 h-[1px] bg-gradient-to-r from-transparent via-white/30 to-transparent"></div>
           {!isCCMinimized && (
             <h3 className="font-black text-sm tracking-widest flex items-center gap-2 text-white uppercase drop-shadow-md">
               <Activity className="w-4 h-4 text-cyan-400" />
@@ -2700,7 +2700,7 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
             {!isCCMinimized && (
               <button 
                 onClick={() => setIsCTROpen(!isCTROpen)}
-                className="p-2 rounded-xl bg-cyan-950/40 hover:bg-cyan-900/60 border border-cyan-500/20 text-cyan-400 transition-all shadow-[0_0_10px_rgba(6,182,212,0.1)] hover:shadow-[0_0_15px_rgba(6,182,212,0.3)]"
+                className="p-2 rounded-xl bg-white/5 hover:bg-white/20 border border-white/10 text-cyan-400 transition-all shadow-sm"
                 title="Open Console"
               >
                 <Bot className="w-4 h-4" />
@@ -2719,10 +2719,10 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
         {/* Body — hidden when minimized */}
         {!isCCMinimized && (
         <div className="flex-1 overflow-y-auto">
-        <div className="p-5 border-b border-white/5 relative">
-          <div className="absolute top-0 right-0 w-32 h-32 bg-cyan-500/5 rounded-full blur-3xl pointer-events-none"></div>
+        <div className="p-5 border-b border-white/10 relative">
+          <div className="absolute top-0 right-0 w-32 h-32 bg-white/5 rounded-full blur-3xl pointer-events-none"></div>
           <div className="flex items-center justify-between mb-4 relative z-10">
-            <h4 className="text-[11px] font-black text-cyan-500/80 uppercase tracking-[0.2em]">Mission Telemetry</h4>
+            <h4 className="text-[11px] font-black text-gray-300 uppercase tracking-[0.2em]">Robot Status</h4>
             <div className="flex gap-2">
               <button
                 onClick={() => {
@@ -2772,19 +2772,19 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
           </div>
           
           <div className="grid grid-cols-2 gap-3 mb-5 transition-all duration-500 relative z-10">
-            <div className="col-span-2 bg-gradient-to-br from-white/5 to-white/[0.02] border border-white/10 rounded-2xl p-4 flex flex-col justify-between hover:border-cyan-500/30 transition-colors group relative overflow-hidden">
-              <div className="absolute top-0 right-0 w-24 h-24 bg-cyan-500/10 rounded-full blur-3xl group-hover:bg-cyan-500/20 transition-all pointer-events-none"></div>
+            <div className="col-span-2 bg-black/10 backdrop-blur-md border border-white/10 rounded-2xl p-4 flex flex-col justify-between hover:border-white/30 transition-colors group relative overflow-hidden">
+              <div className="absolute top-0 right-0 w-24 h-24 bg-white/5 rounded-full blur-3xl transition-all pointer-events-none"></div>
               <div className="flex justify-between items-center mb-2">
-                 <span className="text-[10px] font-black text-cyan-500/80 uppercase tracking-widest">POWER CELL</span>
+                 <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest">BATTERY</span>
                  <span className="text-xl font-black text-white leading-none tracking-tighter">{battery.toFixed(1)}<span className="text-[10px] text-gray-400 font-normal ml-0.5">%</span></span>
               </div>
-              <div className="flex-1 h-2 bg-gray-900 rounded-full overflow-hidden mt-1 ring-1 ring-white/10 shadow-[inset_0_2px_4px_rgba(0,0,0,0.5)]">
+              <div className="flex-1 h-2 bg-black/40 rounded-full overflow-hidden mt-1 ring-1 ring-white/10 shadow-inner">
                 <div className={`h-full transition-all duration-1000 rounded-full ${battery > 60 ? 'bg-gradient-to-r from-emerald-500 to-green-400 shadow-[0_0_10px_rgba(16,185,129,0.5)]' : battery > 30 ? 'bg-gradient-to-r from-yellow-500 to-amber-400 shadow-[0_0_10px_rgba(245,158,11,0.5)]' : 'bg-gradient-to-r from-red-600 to-red-400 shadow-[0_0_10px_rgba(239,68,68,0.5)]'}`} style={{ width: `${battery}%` }} />
               </div>
             </div>
             
-            <div className="col-span-2 bg-gradient-to-br from-white/5 to-white/[0.02] border border-white/10 rounded-2xl p-4 flex flex-col justify-center hover:border-blue-500/30 transition-colors relative overflow-hidden">
-              <span className="text-[10px] font-black text-blue-400/80 uppercase tracking-[0.15em] block mb-1">SYSTEM STATE</span>
+            <div className="col-span-2 bg-black/10 backdrop-blur-md border border-white/10 rounded-2xl p-4 flex flex-col justify-center hover:border-white/30 transition-colors relative overflow-hidden">
+              <span className="text-[10px] font-black text-gray-400 uppercase tracking-[0.15em] block mb-1">STATUS</span>
               <span className={`text-xl font-black uppercase tracking-wider mt-1 ${
                 robotState === 'charging' ? 'text-yellow-400 drop-shadow-[0_0_8px_rgba(250,204,21,0.5)]' : 
                 robotState === 'patrol' ? 'text-cyan-400 drop-shadow-[0_0_8px_rgba(34,211,238,0.5)]' : 
@@ -2796,13 +2796,13 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
               </span>
             </div>
             
-            <div className="bg-gradient-to-br from-white/5 to-white/[0.02] border border-white/10 rounded-2xl p-4 flex flex-col justify-between hover:border-white/20 transition-colors">
-              <span className="text-[10px] font-black text-gray-500 uppercase tracking-widest block mb-2">WAYPOINT</span>
+            <div className="bg-black/10 backdrop-blur-md border border-white/10 rounded-2xl p-4 flex flex-col justify-between hover:border-white/30 transition-colors">
+              <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest block mb-2">DISTANCE</span>
               <span className="text-2xl font-black text-white leading-none">{path.length > 0 ? path.length - currentPosIndex : '--'} <span className="text-[10px] font-normal text-gray-500 ml-0.5">m</span></span>
             </div>
             
-            <div className="bg-gradient-to-br from-white/5 to-white/[0.02] border border-white/10 rounded-2xl p-4 flex flex-col justify-between hover:border-white/20 transition-colors">
-              <span className="text-[10px] font-black text-gray-500 uppercase tracking-widest block mb-2">ETA</span>
+            <div className="bg-black/10 backdrop-blur-md border border-white/10 rounded-2xl p-4 flex flex-col justify-between hover:border-white/30 transition-colors">
+              <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest block mb-2">TIME LEFT</span>
               <span className="text-2xl font-black text-white leading-none">{path.length > 0 ? Math.ceil((path.length - currentPosIndex) * 0.5) : '--'} <span className="text-[10px] font-normal text-gray-500 ml-0.5">min</span></span>
             </div>
           </div>
