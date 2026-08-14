@@ -9,7 +9,7 @@ export function MobileTerminal({ telemetry, sendCommand }: any) {
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [history]);
+  }, [history.length]);
 
   const handleExecute = (e?: React.FormEvent) => {
     if (e) e.preventDefault();

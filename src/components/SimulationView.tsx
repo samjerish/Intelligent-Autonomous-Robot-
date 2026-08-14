@@ -1366,10 +1366,10 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
         setActivePathColor('#22c55e'); // green
         break;
       case 'emergency_response':
-      case 'emergency_to_ctr': return 'orange';
-      case 'ctr_to_emergency': return 'orange';
-      case 'emergency_idle_move': return 'orange';
-      case 'crowd_control': return 'purple';
+      case 'emergency_to_ctr':
+      case 'ctr_to_emergency':
+      case 'emergency_idle_move':
+        setActivePathColor('#ef4444'); // red
         break;
       case 'charging':
       case 'returning_home':
