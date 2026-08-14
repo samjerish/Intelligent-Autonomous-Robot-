@@ -462,28 +462,25 @@ function App() {
 
       {/* EMERGENCY APPROVAL BANNER */}
       {pendingEmergency && (
-        <div className="fixed bottom-0 left-0 right-0 z-[600] bg-black/80 backdrop-blur-md border-t border-red-500/50 shadow-[0_-10px_30px_rgba(239,68,68,0.2)] p-4 flex items-center justify-center animate-in slide-in-from-bottom duration-300">
-          <div className="w-full max-w-4xl flex items-center justify-between gap-6">
-            <div className="flex items-center gap-4">
-              <div className="w-10 h-10 bg-red-500/10 rounded-full flex items-center justify-center text-red-500 border border-red-500/30 animate-pulse">
-                <svg xmlns="http://www.w3.org/2000/svg" className="w-6 h-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>
-              </div>
-              <div>
-                <h2 className="text-xl md:text-2xl font-black text-red-500 tracking-wider">Emergency Stopped</h2>
-                <p className="text-gray-300 mt-1 text-xs md:text-sm leading-relaxed">
-                  The robot is holding position. Click authorize to resume.
-                </p>
-              </div>
+        <div className="fixed bottom-8 left-1/2 -translate-x-1/2 z-[600] w-[90%] max-w-md bg-red-950/90 backdrop-blur-3xl border-2 border-red-500 rounded-3xl shadow-[0_0_80px_rgba(239,68,68,0.6)] p-6 flex flex-col items-center justify-center animate-in slide-in-from-bottom-10 zoom-in-95 duration-500">
+          <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_center,rgba(239,68,68,0.2),transparent)] rounded-3xl pointer-events-none"></div>
+          
+          <div className="flex flex-col items-center text-center gap-2 relative z-10 w-full">
+            <div className="w-16 h-16 bg-red-500 rounded-full flex items-center justify-center text-white shadow-[0_0_30px_rgba(239,68,68,0.8)] animate-pulse mb-2">
+              <svg xmlns="http://www.w3.org/2000/svg" className="w-8 h-8" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>
             </div>
             
-            <div className="w-full md:w-auto flex-shrink-0">
-              <button 
-                onClick={handleEmergencyApprove}
-                className="w-full md:w-48 py-3 rounded-xl font-bold text-sm bg-red-600 text-white hover:bg-red-500 transition-all uppercase tracking-wider active:scale-95 border border-red-400/50"
-              >
-                AUTHORIZE
-              </button>
-            </div>
+            <h2 className="text-2xl md:text-3xl font-black text-white tracking-widest uppercase drop-shadow-md">Emergency Halt</h2>
+            <p className="text-red-200 text-sm md:text-base font-bold tracking-wide">
+              Robot is holding position.
+            </p>
+            
+            <button 
+              onClick={handleEmergencyApprove}
+              className="w-full mt-4 py-4 rounded-2xl font-black text-lg bg-white text-red-600 hover:bg-gray-100 transition-all uppercase tracking-[0.2em] shadow-[0_10px_25px_rgba(0,0,0,0.5)] active:scale-95 border-b-4 border-red-200"
+            >
+              AUTHORIZE RESUME
+            </button>
           </div>
         </div>
       )}
