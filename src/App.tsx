@@ -312,7 +312,7 @@ function App() {
       {introRendered && <IntroSequence onComplete={handleIntroComplete} />}
       
       {/* Futuristic Navbar */}
-      <nav className={`flex items-center justify-between px-6 py-4 border-b border-white/5 bg-black/40 backdrop-blur-md z-40 transition-all duration-1000 ${showIntro ? 'opacity-0 translate-y-[-20px]' : 'opacity-100 translate-y-0'}`}>
+      <nav className={`flex items-center justify-between px-6 py-4 border-b border-white/5 bg-black/40 backdrop-blur-md z-40 transition-all duration-1000 translate-y-0`}>
         <div className="flex items-center gap-4">
           <div className="text-cyan-400 font-black tracking-widest text-xl drop-shadow-[0_0_8px_rgba(34,211,238,0.5)]">ASPIRE</div>
           <div className="w-px h-6 bg-white/10 hidden md:block"></div>
@@ -342,7 +342,7 @@ function App() {
       </nav>
 
       {/* Main Workspace Area */}
-      <div className={`flex flex-col md:flex-row flex-1 p-2 md:p-6 gap-2 md:gap-6 overflow-hidden transition-all duration-1000 delay-500 ${showIntro ? 'opacity-0 scale-95 blur-sm' : 'opacity-100 scale-100 blur-0'}`}>
+      <div className={`flex flex-col md:flex-row flex-1 p-2 md:p-6 gap-2 md:gap-6 overflow-hidden transition-all duration-1000 delay-500 scale-100 blur-0`}>
         {/* Ambient Grid for App */}
         {/* Removed outer background grid */}
         
