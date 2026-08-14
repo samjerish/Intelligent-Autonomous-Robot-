@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState, useMemo, useCallback } from 'react';
 import type { MapData, GridPoint, Room } from '../types';
-import { calculatePath, calculateLongPath } from '../utils/simulationEngine';
+import { calculatePath, calculateLongPath, getObstaclePenalty } from '../utils/simulationEngine';
 import { Play, RotateCcw, Activity, ShieldAlert, Crosshair, Maximize, Minimize, Bot, Power, Send, Construction, Pause, Users, Utensils, Cross } from 'lucide-react';
 import { DeliveryModal } from './DeliveryModal';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
@@ -1720,7 +1720,6 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
        return;
     }
     setCtrMessages(prev => [...prev, {sender: 'user', text: userMsg}]);
-    
     setTimeout(() => {
       let reply = "I am currently processing your request.";
       const lowerMsg = userMsg.toLowerCase();
@@ -2033,6 +2032,53 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
     }
     
     emergencyTimeoutRef.current = setTimeout(() => {
+      // "Make way" logic: If the robot is blocking the way (penalty > 0), find a nearby safe spot
+      const currentLoc = path[path.length - 1] || mapData.start;
+      const allObstacles = [...(mapData.obstacles || []), ...userBlockers];
+      const currentPenalty = getObstaclePenalty(currentLoc.x, currentLoc.y, currentLoc.f, allObstacles);
+      
+      let safeLoc = currentLoc;
+      
+      if (currentPenalty > 0) {
+        let bestPenalty = currentPenalty;
+        // Search up to 3 cells away for a safer spot
+        for (let r = 1; r <= 3; r++) {
+          for (let dx = -r; dx <= r; dx++) {
+            for (let dy = -r; dy <= r; dy++) {
+              if (Math.abs(dx) !== r && Math.abs(dy) !== r) continue;
+              
+              const nx = currentLoc.x + dx;
+              const ny = currentLoc.y + dy;
+              
+              if (nx >= 0 && nx < mapData.gridSize.x && ny >= 0 && ny < mapData.gridSize.y) {
+                const isObs = allObstacles.some(o => o.x === nx && o.y === ny && o.f === currentLoc.f);
+                if (!isObs) {
+                  const p = getObstaclePenalty(nx, ny, currentLoc.f, allObstacles);
+                  if (p < bestPenalty) {
+                    bestPenalty = p;
+                    safeLoc = { x: nx, y: ny, f: currentLoc.f };
+                  }
+                }
+              }
+            }
+          }
+          if (bestPenalty === 0) break; // found a perfectly clear spot
+        }
+      }
+      
+      if (safeLoc.x !== currentLoc.x || safeLoc.y !== currentLoc.y) {
+         addExplanation(`Moving slightly to avoid blocking obstacles while idle.`);
+         const movePath = calculatePath(currentLoc, safeLoc, allObstacles, mapData);
+         if (movePath.length > 0) {
+           setPath(movePath);
+           setCurrentPosIndex(0);
+           setRobotState('emergency_idle_move');
+           setIsPlaying(true);
+           emergencyTimeoutRef.current = null;
+           return;
+         }
+      }
+
       // Dispatch local request to trigger the global confirmation modal for completion
       window.dispatchEvent(new CustomEvent('local_emergency_request', { detail: {x: 0, y: 0} }));
       emergencyTimeoutRef.current = null;
