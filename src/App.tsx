@@ -125,8 +125,8 @@ function App() {
     });
 
     newSocket.on('mobile_command_received', (data) => {
-      // Validate token
-      if (data.token !== token) return;
+      // Validate token (now fixed for password-based auth)
+      if (data.token !== 'mobile-auth') return;
 
       if (data.action === 'toggle_power') {
          setIsOn(data.turnOn);
@@ -441,7 +441,7 @@ function App() {
           <div className="bg-[#0f172a] border border-white/10 p-8 rounded-2xl shadow-2xl flex flex-col items-center gap-6" onClick={e => e.stopPropagation()}>
             <h2 className="text-xl font-bold text-cyan-400 tracking-wider uppercase">Mobile Pairing</h2>
             <div className="bg-white p-4 rounded-xl shadow-lg flex flex-col items-center">
-              <QRCode value={`${window.location.origin}/mobile`} size={220} />
+              <QRCode value={window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1' ? `http://${localIp}:5173/mobile` : `${window.location.origin}/mobile`} size={220} />
               <div className="mt-4 flex items-center justify-between w-full px-2">
                 <span className="text-xs text-black/50 font-bold uppercase tracking-widest">PASSWORD</span>
                 <span className="text-sm font-mono font-bold text-cyan-600">1234</span>
