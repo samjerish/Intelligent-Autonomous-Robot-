@@ -478,10 +478,28 @@ const PoliceVehicle = ({ policeState, policeStateRef, gridSize, isMapView, onRea
 };
 
 const BuildingModel = React.memo(({ room, width, height, depth }: { room: Room, width: number, height: number, depth: number }) => {
-  const type = room.type || "unknown";
-  const nameLow = room.name.toLowerCase();
+  const { type, name } = room;
+  const nameLow = (name || '').toLowerCase();
   const baseColor = room.color || "#e2e8f0";
-  
+
+  const ecoTrees = useMemo(() => {
+    if (type !== 'park') return null;
+    return [...Array(nameLow.includes('eco') ? 15 : 4)].map((_, i) => {
+      const tx = (Math.random() - 0.5) * width * 0.8;
+      const tz = (Math.random() - 0.5) * depth * 0.8;
+      return (
+        <group key={i} position={[tx, -height/2 + 0.5, tz]}>
+          <Cylinder args={[0.1, 0.1, 0.8]} position={[0, -0.1, 0]}>
+             <meshStandardMaterial color="#78350f" />
+          </Cylinder>
+          <Cylinder args={[0.4, 0.6, 1.2]} position={[0, 0.8, 0]}>
+             <meshStandardMaterial color="#15803d" />
+          </Cylinder>
+        </group>
+      );
+    });
+  }, [type, width, depth, nameLow, height]);
+
   if (type === 'medical') {
     return (
       <group>
@@ -727,20 +745,7 @@ const BuildingModel = React.memo(({ room, width, height, depth }: { room: Room, 
           <meshStandardMaterial color="#22c55e" />
         </Box>
         {/* Many trees for Eco Park - useMemo so they don't jump around on re-renders */}
-        {useMemo(() => [...Array(nameLow.includes('eco') ? 15 : 4)].map((_, i) => {
-          const tx = (Math.random() - 0.5) * width * 0.8;
-          const tz = (Math.random() - 0.5) * depth * 0.8;
-          return (
-            <group key={i} position={[tx, -height/2 + 0.5, tz]}>
-              <Cylinder args={[0.1, 0.1, 0.8]} position={[0, -0.1, 0]}>
-                 <meshStandardMaterial color="#78350f" />
-              </Cylinder>
-              <Cylinder args={[0.4, 0.6, 1.2]} position={[0, 0.8, 0]}>
-                 <meshStandardMaterial color="#15803d" />
-              </Cylinder>
-            </group>
-          );
-        }), [width, depth, nameLow])}
+        {ecoTrees}
         {/* Butterflies */}
         <Butterflies />
       </group>
@@ -2347,6 +2352,27 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
     dispatchLocalMission(selectedRoom.door || selectedRoom.start, `${type} to ${selectedRoom.name}`);
   };
 
+  const renderedRooms = useMemo(() => {
+    if (!mapData || !mapData.rooms) return null;
+    return mapData.rooms.map((room: Room) => {
+      const width = (room.end.x - room.start.x + 1) * 0.75;
+      const depth = (room.end.y - room.start.y + 1) * 0.75;
+      const height = 3;
+      const x = (room.start.x + room.end.x) / 2 - mapData.gridSize.x / 2;
+      const z = (room.start.y + room.end.y) / 2 - mapData.gridSize.y / 2;
+      return (
+        <group key={room.id} position={[x, height / 2, z]} onClick={(e) => { e.stopPropagation(); setSelectedRoom(room); }}>
+          <BuildingModel room={room} width={width} height={height} depth={depth} />
+          <Html position={[0, height / 2 + 1.5, 0]} center style={{ pointerEvents: 'none' }}>
+            <div className="text-[10px] font-bold text-white bg-black/80 px-2 py-1 rounded shadow-lg whitespace-nowrap">
+              {room.name}
+            </div>
+          </Html>
+        </group>
+      );
+    });
+  }, [mapData, setSelectedRoom]);
+
   if (!mapData) return null;
   const { gridSize, rooms } = mapData;
 
@@ -2561,23 +2587,7 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
               handleEmergencyCall(gridP);
             }} 
           />
-          {useMemo(() => rooms?.map((room: Room) => {
-            const width = (room.end.x - room.start.x + 1) * 0.75;
-            const depth = (room.end.y - room.start.y + 1) * 0.75;
-            const height = 3;
-            const x = (room.start.x + room.end.x) / 2 - gridSize.x / 2;
-            const z = (room.start.y + room.end.y) / 2 - gridSize.y / 2;
-            return (
-              <group key={room.id} position={[x, height / 2, z]} onClick={(e) => { e.stopPropagation(); setSelectedRoom(room); }}>
-                <BuildingModel room={room} width={width} height={height} depth={depth} />
-                <Html position={[0, height / 2 + 1.5, 0]} center style={{ pointerEvents: 'none' }}>
-                  <div className="text-[10px] font-bold text-white bg-black/80 px-2 py-1 rounded shadow-lg whitespace-nowrap">
-                    {room.name}
-                  </div>
-                </Html>
-              </group>
-            );
-          }), [rooms, gridSize, setSelectedRoom])}
+          {renderedRooms}
           <RoadsRender roads={mapData.roads || []} gridSize={gridSize} />
           <BlockersRender blockers={userBlockers} gridSize={gridSize} roads={mapData.roads || []} />
           <CrowdsRender crowds={crowds} gridSize={gridSize} />

@@ -1,0 +1,243 @@
+
+  ! eslint(no-unused-vars): Identifier 'fs' is imported but never used.
+   ,-[testPath.ts:2:8]
+ 1 | import { calculatePath } from './src/utils/simulationEngine.ts';
+ 2 | import fs from 'fs';
+   :        ^|
+   :         `-- 'fs' is imported here
+ 3 | 
+   `----
+  help: Consider removing this import.
+
+  ! eslint(no-unused-vars): Identifier 'fs' is imported but never used.
+   ,-[test_astar_new.ts:2:8]
+ 1 | import { calculatePath } from './src/utils/simulationEngine.ts';
+ 2 | import fs from 'fs';
+   :        ^|
+   :         `-- 'fs' is imported here
+ 3 | 
+   `----
+  help: Consider removing this import.
+
+  ! react-hooks(exhaustive-deps): React hook useEffect depends on `history`, which changes every render
+    ,-[src/components/mobile/MobileTerminal.tsx:12:7]
+  7 |   
+  8 |   const history = telemetry?.ctrMessages || [];
+    :         ^^^|^^^
+    :            `-- `history` is declared here
+  9 | 
+ 10 |   useEffect(() => {
+ 11 |     endRef.current?.scrollIntoView({ behavior: 'smooth' });
+ 12 |   }, [history]);
+    :       ^^^|^^^
+    :          `-- it will always cause this hook to re-evaluate
+ 13 | 
+    `----
+  help: Try memoizing this variable with `useRef` or `useCallback`.
+
+  ! eslint(no-unused-vars): Identifier 'fs' is imported but never used.
+   ,-[test_astar.ts:2:8]
+ 1 | import { calculatePath } from './src/utils/simulationEngine.ts';
+ 2 | import fs from 'fs';
+   :        ^|
+   :         `-- 'fs' is imported here
+ 3 | 
+   `----
+  help: Consider removing this import.
+
+  ! eslint(no-unused-vars): Identifier 'fs' is imported but never used.
+   ,-[test_all_paths.ts:2:8]
+ 1 | import { calculatePath } from './src/utils/simulationEngine.ts';
+ 2 | import fs from 'fs';
+   :        ^|
+   :         `-- 'fs' is imported here
+ 3 | 
+   `----
+  help: Consider removing this import.
+
+  ! eslint(no-useless-escape): Unnecessary escape character ' '
+    ,-[refactor.cjs:21:58]
+ 20 | // useEffect replacements
+ 21 | content = content.replace(/useEffect\(\(\) => \{\n\s*\/\/\ 1\. Auto-Resume Logic/g, "useEffect(() => {\n    const checkResume = async () => {\n      // 1. Auto-Resume Logic");
+    :                                                          ^^
+ 22 | content = content.replace(/if \(canResume && fullResumePath\.length > 0\) \{\n\s*setPath\(fullResumePath\);\n\s*\}\n\s*\}\n\s*\}\n\s*\}\n\s*\};\n\s*\n\s*\/\/\ 2\. Real-time Blockage/g, "if (canResume && fullResumePath.length > 0) {\n        setPath(fullResumePath);\n      }\n    }\n    }\n    checkResume();\n\n    // 2. Real-time Blockage");
+    `----
+  help: Replace `\ ` with ` `.
+
+  ! eslint(no-useless-escape): Unnecessary escape character ' '
+    ,-[refactor.cjs:22:158]
+ 21 | content = content.replace(/useEffect\(\(\) => \{\n\s*\/\/\ 1\. Auto-Resume Logic/g, "useEffect(() => {\n    const checkResume = async () => {\n      // 1. Auto-Resume Logic");
+ 22 | content = content.replace(/if \(canResume && fullResumePath\.length > 0\) \{\n\s*setPath\(fullResumePath\);\n\s*\}\n\s*\}\n\s*\}\n\s*\}\n\s*\};\n\s*\n\s*\/\/\ 2\. Real-time Blockage/g, "if (canResume && fullResumePath.length > 0) {\n        setPath(fullResumePath);\n      }\n    }\n    }\n    checkResume();\n\n    // 2. Real-time Blockage");
+    :                                                                                                                                                              ^^
+ 23 | 
+    `----
+  help: Replace `\ ` with ` `.
+
+  x TS(18007): JSX expressions may not use the comma operator
+     ,-[src/components/SimulationView.tsx:476:37]
+ 475 |       )}
+ 476 | const BuildingModel = React.memo(({ room, width, height, depth }: { room: Room, width: number, height: number, depth: number }) => {
+     :                                     ^^^^^^^^^^^^^^^^^^^^^^^^^^
+ 477 |   const { type, name } = room;
+     `----
+  help: Did you mean to write an array?
+
+  x Expected `}` but found `:`
+     ,-[src/components/SimulationView.tsx:476:73]
+ 475 |       )}
+ 476 | const BuildingModel = React.memo(({ room, width, height, depth }: { room: Room, width: number, height: number, depth: number }) => {
+     :                                                                         |
+     :                                                                         `-- `}` expected
+ 477 |   const { type, name } = room;
+     `----
+
+  ! eslint(no-unused-vars): Variable 'universityMap' is declared but never used. Unused variables should start with a '_'.
+   ,-[test3.js:1:7]
+ 1 | const universityMap = require('./server/index.js'); // Cannot easily do this because server/index.js starts the express server.
+   :       ^^^^^^|^^^^^^
+   :             `-- 'universityMap' is declared here
+   `----
+  help: Consider removing this declaration.
+
+  ! eslint(no-unused-vars): Catch parameter 'e' is caught but never used.
+    ,-[src/App.tsx:39:55]
+ 38 |   const safeGetSession = (key: string) => {
+ 39 |     try { return sessionStorage.getItem(key); } catch(e) { return null; }
+    :                                                       |
+    :                                                       `-- 'e' is declared here
+ 40 |   };
+    `----
+  help: Consider handling this error.
+
+  ! eslint(no-unused-vars): Catch parameter 'e' is caught but never used.
+    ,-[src/App.tsx:65:67]
+ 64 |   const handleIntroComplete = () => {
+ 65 |     try { sessionStorage.setItem('hasSeenIntro', 'true'); } catch(e) {}
+    :                                                                   |
+    :                                                                   `-- 'e' is declared here
+ 66 |     setShowIntro(false);
+    `----
+  help: Consider handling this error.
+
+  ! eslint(no-unused-vars): Catch parameter 'e' is caught but never used.
+    ,-[src/App.tsx:92:17]
+ 91 |           try { return JSON.parse(localStorage.getItem('robot-mission-history') || '[]'); }
+ 92 |           catch(e) { return []; }
+    :                 |
+    :                 `-- 'e' is declared here
+ 93 |         })(),
+    `----
+  help: Consider handling this error.
+
+  ! react-hooks(exhaustive-deps): React Hook useEffect has a missing dependency: 'setHistory'
+     ,-[src/App.tsx:173:6]
+  98 |     newSocket.on('init_state', (state: any) => {
+  99 |       if (state.history) setHistory(state.history);
+     :                          ^^^^^|^^^^
+     :                               `-- useEffect uses `setHistory` here
+ 100 |       if (state.currentMission !== undefined) setCurrentMission(state.currentMission);
+ 101 |       if (state.pendingEmergency !== undefined) setPendingEmergency(state.pendingEmergency);
+ 102 |       if (state.isOn !== undefined) {
+ 103 |         setIsOn(state.isOn);
+ 104 |         window.dispatchEvent(new CustomEvent('remote_toggle_power', { detail: { turnOn: state.isOn } }));
+ 105 |       }
+ 106 |     });
+ 107 | 
+ 108 |     newSocket.on('state_updated', (newState: any) => {
+ 109 |       if (newState.history) setHistory(newState.history);
+ 110 |       if (newState.currentMission !== undefined) setCurrentMission(newState.currentMission);
+ 111 |       if (newState.pendingEmergency !== undefined) setPendingEmergency(newState.pendingEmergency);
+ 112 |       if (newState.isOn !== undefined) {
+ 113 |         setIsOn(newState.isOn);
+ 114 |         window.dispatchEvent(new CustomEvent('remote_toggle_power', { detail: { turnOn: newState.isOn } }));
+ 115 |       }
+ 116 |       if (newState.executeMission) {
+ 117 |         window.dispatchEvent(new CustomEvent('remote_execute_mission'));
+ 118 |       }
+ 119 |       if (newState.emergencyApprove) {
+ 120 |         window.dispatchEvent(new CustomEvent('remote_emergency_approve', { detail: newState.emergencyApprove }));
+ 121 |       }
+ 122 |       if (newState.emergencyDeny) {
+ 123 |         window.dispatchEvent(new CustomEvent('remote_emergency_deny'));
+ 124 |       }
+ 125 |     });
+ 126 | 
+ 127 |     newSocket.on('mobile_command_received', (data) => {
+ 128 |       // Validate token
+ 129 |       if (data.token !== token) return;
+ 130 | 
+ 131 |       if (data.action === 'toggle_power') {
+ 132 |          setIsOn(data.turnOn);
+ 133 |          socketRef.current?.emit('update_state', { isOn: data.turnOn });
+ 134 |          window.dispatchEvent(new CustomEvent('remote_toggle_power', { detail: { turnOn: data.turnOn } }));
+ 135 |       }
+ 136 |       if (data.action === 'execute_console_command') {
+ 137 |          window.dispatchEvent(new CustomEvent('remote_console_command', { detail: data.command }));
+ 138 |       }
+ 139 |       if (data.action === 'emergency_target') {
+ 140 |          window.dispatchEvent(new CustomEvent('local_emergency_request', { detail: data }));
+ 141 |       }
+ 142 |       if (data.action === 'emergency_action') {
+ 143 |          if (data.type === 'ESTOP') {
+ 144 |             window.dispatchEvent(new CustomEvent('remote_abort_mission'));
+ 145 |          }
+ 146 |          if (data.type === 'ABORT') {
+ 147 |             window.dispatchEvent(new CustomEvent('remote_abort_mission'));
+ 148 |          }
+ 149 |          if (data.type === 'RTL') {
+ 150 |             window.dispatchEvent(new CustomEvent('remote_console_command', { detail: 'return home' }));
+ 151 |          }
+ 152 |          if (data.type === 'RESET') {
+ 153 |             window.dispatchEvent(new CustomEvent('remote_console_command', { detail: 'reset robot' }));
+ 154 |          }
+ 155 |          if (data.type === 'ALARM') {
+ 156 |             setIsAlarmActive(true);
+ 157 |             if (audioRef.current) {
+ 158 |               audioRef.current.currentTime = 0;
+ 159 |               audioRef.current.volume = 1.0;
+ 160 |               audioRef.current.play().catch(e => console.error("Audio play blocked", e));
+ 161 |             }
+ 162 |          }
+ 163 |       }
+ 164 |       if (data.action === 'manual_move') {
+ 165 |          console.log('Mobile moving:', data.direction, data.speed);
+ 166 |       }
+ 167 |       if (data.action === 'set_speed') {
+ 168 |          window.dispatchEvent(new CustomEvent('remote_speed_update', { detail: { speed: data.speed } }));
+ 169 |       }
+ 170 |     });
+ 171 | 
+ 172 |     return () => { newSocket.close(); };
+ 173 |   }, []);
+     :      ^^
+ 174 | 
+     `----
+  help: Either include it or remove the dependency array.
+
+  ! react-hooks(exhaustive-deps): React Hook useEffect has a missing dependency: 'handleGenerate'
+     ,-[src/App.tsx:271:6]
+ 266 |     const handleRemoteConsoleCommand = (e: any) => {
+ 267 |       handleGenerate(e.detail);
+     :       ^^^^^^^|^^^^^^
+     :              `-- useEffect uses `handleGenerate` here
+ 268 |     };
+ 269 |     window.addEventListener('remote_console_command', handleRemoteConsoleCommand);
+ 270 |     return () => window.removeEventListener('remote_console_command', handleRemoteConsoleCommand);
+ 271 |   }, []);
+     :      ^^
+ 272 | 
+     `----
+  help: Either include it or remove the dependency array.
+
+  ! eslint(no-unused-vars): Identifier 'fs' is imported but never used.
+   ,-[test_all_paths2.ts:2:8]
+ 1 | import { calculatePath } from './src/utils/simulationEngine.ts';
+ 2 | import fs from 'fs';
+   :        ^|
+   :         `-- 'fs' is imported here
+ 3 | 
+   `----
+  help: Consider removing this import.
+
+Found 14 warnings and 2 errors.
+Finished in 5ms on 41 files with 103 rules using 12 threads.
