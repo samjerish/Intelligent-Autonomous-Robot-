@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState, useMemo, useCallback } from 'react';
 import type { MapData, GridPoint, Room } from '../types';
-import { calculatePath, calculateLongPath } from '../utils/simulationEngine';
+import { calculatePath, calculateLongPath, generateDynamicEvent, calculateEvadePath } from '../utils/simulationEngine';
 import { Play, RotateCcw, Activity, ShieldAlert, Crosshair, Maximize, Minimize, Bot, Power, Send, Construction, Pause, Users, Utensils, Cross } from 'lucide-react';
 import { DeliveryModal } from './DeliveryModal';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
@@ -1351,12 +1351,21 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
                setRobotState('returning_home');
                addExplanation("Road to destination is completely blocked! Returning to base.");
            } else {
-               setIsPlaying(false);
-               setRobotState('idle');
-               addExplanation("Road completely blocked and cannot reach base! Halting.");
+               const evadePath = calculateEvadePath(currentLoc, allObstacles, mapData);
+               if (evadePath.length > 0) {
+                 setPath(evadePath);
+                 setCurrentPosIndex(0);
+                 setRobotState('evading_obstacle');
+                 addExplanation("Road completely blocked! Moving to give space for obstacles...");
+               } else {
+                 setIsPlaying(false);
+                 setRobotState('idle');
+                 addExplanation("Road completely blocked and cannot evade! Halting.");
+               }
            }
          }
        }
+
     }
   }, [userBlockers]);
   
@@ -2162,23 +2171,19 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
       addExplanation(`Successfully found alternative route avoiding obstacle! Resuming mission.`);
       isRecalculating.current = false;
     } else {
-      const reverseSteps = Math.min(currentPosIndex, 4);
-      if (reverseSteps > 0) {
-        addExplanation(`Path completely blocked! Reversing ${reverseSteps} steps to evade obstacle...`);
-        const reversePath = [];
-        for (let i = currentPosIndex; i >= currentPosIndex - reverseSteps; i--) {
-            reversePath.push(path[i]);
-        }
+      const evadePath = calculateEvadePath(currentLoc, allObstacles, mapData);
+      if (evadePath.length > 0) {
+        addExplanation(`Path completely blocked! Evading to give space to obstacle...`);
         if (robotState !== 'evading_obstacle' && robotState !== 'charging' && robotState !== 'emergency_response') {
             originalMissionRef.current = { path: [...path], index: currentPosIndex };
         }
-        setPath(reversePath);
+        setPath(evadePath);
         setCurrentPosIndex(0);
         setRobotState('evading_obstacle');
         setIsPlaying(true);
         isRecalculating.current = false;
       } else {
-        addExplanation(`Blocked at starting position. Waiting for obstacle to clear...`);
+        addExplanation(`Trapped by obstacles. Waiting for space to clear...`);
         if (robotState !== 'evading_obstacle' && robotState !== 'charging' && robotState !== 'emergency_response') {
             originalMissionRef.current = { path: [...path], index: currentPosIndex };
         }
