@@ -4,7 +4,6 @@ import { Sidebar } from './components/Sidebar';
 // import { StrategyComparison } from './components/StrategyComparison';
 import { SimulationView } from './components/SimulationView';
 import { IntroSequence } from './components/IntroSequence';
-import { RobotShowcase } from './components/RobotShowcase';
 
 import { useLocalStorage } from './hooks/useLocalStorage';
 import type { MissionHistoryItem, MissionResult } from './types';
@@ -42,11 +41,9 @@ function App() {
   const [introRendered, setIntroRendered] = useState(() => isMobile ? false : !safeGetSession('hasSeenIntro'));
   const [showRobotFeatures, setShowRobotFeatures] = useState(false);
   const [pendingEmergency, setPendingEmergency] = useState<{x: number, y: number} | null>(null);
-  const [localIp, setLocalIp] = useState('');
   const [isOn, setIsOn] = useState(false);
   const [showQR, setShowQR] = useState(false);
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
-  const [pairingToken, setPairingToken] = useState('');
   const [isAlarmActive, setIsAlarmActive] = useState(false);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const socketRef = useRef<any>(null);
@@ -73,14 +70,6 @@ function App() {
       .then(res => res.json())
       .then(data => setInitialMapData(data))
       .catch(err => console.error("Failed to load initial map:", err));
-
-    fetch(`/api/ip`)
-      .then(res => res.json())
-      .then(data => setLocalIp(data.ip))
-      .catch(console.error);
-
-    const token = Math.random().toString(36).substring(2, 10).toUpperCase();
-    setPairingToken(token);
 
     const newSocket = io(`/`);
     socketRef.current = newSocket;
