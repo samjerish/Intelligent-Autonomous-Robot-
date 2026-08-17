@@ -165,9 +165,9 @@ export const IntroSequence = ({ onComplete }: { onComplete: () => void }) => {
   }, [phase, onComplete]);
 
   const words = [
-    { letter: 'A', full: 'AUTONOMOUS' },
-    { letter: 'S', full: 'SMART' },
-    { letter: 'P', full: 'PLATFORM' },
+    { letter: 'A', full: 'AJIN' },
+    { letter: 'S', full: 'SAM' },
+    { letter: 'P', full: 'PRESTEN' },
     { letter: 'I', full: 'INTELLIGENT' },
     { letter: 'R', full: 'ROBOTIC' },
     { letter: 'E', full: 'ENVIRONMENT' }
@@ -234,7 +234,7 @@ export const IntroSequence = ({ onComplete }: { onComplete: () => void }) => {
 
         {/* Final Merged Title (Phase 8) */}
         <div className={`absolute top-full mt-12 text-center transition-all duration-1000 delay-300 ${phase >= 8 ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-4'}`}>
-          <div className="text-cyan-400 font-bold tracking-[0.3em] mb-2 text-xs md:text-base">UNIVERSITY • 3D MODEL • ROBOT</div>
+          <div className="text-cyan-400 font-bold tracking-[0.3em] mb-2 text-xs md:text-base">AJIN • SAM • PRESTEN</div>
           <div className="text-gray-400 font-light tracking-[0.2em] text-[10px] md:text-sm uppercase">Intelligent Robotic Environment</div>
         </div>
 

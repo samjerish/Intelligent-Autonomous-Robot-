@@ -17,6 +17,7 @@ import {
   Sphere,
   Cylinder,
   RoundedBox,
+  Text,
 } from '@react-three/drei';
 import * as THREE from 'three';
 
@@ -478,28 +479,10 @@ const PoliceVehicle = ({ policeState, policeStateRef, gridSize, isMapView, onRea
 };
 
 const BuildingModel = React.memo(({ room, width, height, depth }: { room: Room, width: number, height: number, depth: number }) => {
-  const { type, name } = room;
-  const nameLow = (name || '').toLowerCase();
+  const type = room.type || "unknown";
+  const nameLow = room.name.toLowerCase();
   const baseColor = room.color || "#e2e8f0";
-
-  const ecoTrees = useMemo(() => {
-    if (type !== 'park') return null;
-    return [...Array(nameLow.includes('eco') ? 15 : 4)].map((_, i) => {
-      const tx = (Math.random() - 0.5) * width * 0.8;
-      const tz = (Math.random() - 0.5) * depth * 0.8;
-      return (
-        <group key={i} position={[tx, -height/2 + 0.5, tz]}>
-          <Cylinder args={[0.1, 0.1, 0.8]} position={[0, -0.1, 0]}>
-             <meshStandardMaterial color="#78350f" />
-          </Cylinder>
-          <Cylinder args={[0.4, 0.6, 1.2]} position={[0, 0.8, 0]}>
-             <meshStandardMaterial color="#15803d" />
-          </Cylinder>
-        </group>
-      );
-    });
-  }, [type, width, depth, nameLow, height]);
-
+  
   if (type === 'medical') {
     return (
       <group>
@@ -745,7 +728,20 @@ const BuildingModel = React.memo(({ room, width, height, depth }: { room: Room, 
           <meshStandardMaterial color="#22c55e" />
         </Box>
         {/* Many trees for Eco Park - useMemo so they don't jump around on re-renders */}
-        {ecoTrees}
+        {useMemo(() => [...Array(nameLow.includes('eco') ? 15 : 4)].map((_, i) => {
+          const tx = (Math.random() - 0.5) * width * 0.8;
+          const tz = (Math.random() - 0.5) * depth * 0.8;
+          return (
+            <group key={i} position={[tx, -height/2 + 0.5, tz]}>
+              <Cylinder args={[0.1, 0.1, 0.8]} position={[0, -0.1, 0]}>
+                 <meshStandardMaterial color="#78350f" />
+              </Cylinder>
+              <Cylinder args={[0.4, 0.6, 1.2]} position={[0, 0.8, 0]}>
+                 <meshStandardMaterial color="#15803d" />
+              </Cylinder>
+            </group>
+          );
+        }), [width, depth, nameLow])}
         {/* Butterflies */}
         <Butterflies />
       </group>
@@ -1223,11 +1219,20 @@ const PathLine = ({ path, currentIndex, gridSize, isMapView, color = "#00ffff", 
 
 const EnvironmentMap = React.memo(({ mapData, isNight, isTargeting, onMapClick }: { mapData: MapData, isNight: boolean, isTargeting?: boolean, onMapClick?: (p: THREE.Vector3) => void }) => {
   const { gridSize } = mapData;
+  const margin = 10; // Space between grid edge and compound wall
+  const compSizeX = gridSize.x + margin * 2;
+  const compSizeY = gridSize.y + margin * 2;
+  const wallThickness = 1.5;
+  const wallHeight = 6;
+  const halfX = compSizeX / 2;
+  const halfY = compSizeY / 2;
+  const wallColor = isNight ? '#0f172a' : '#e2e8f0';
+
   return (
     <group>
       {/* Campus grass ground — clickable for targeting */}
       <Plane
-        args={[gridSize.x, gridSize.y]}
+        args={[compSizeX, compSizeY]}
         rotation={[-Math.PI / 2, 0, 0]}
         position={[0, 0, 0]}
         receiveShadow
@@ -1240,16 +1245,38 @@ const EnvironmentMap = React.memo(({ mapData, isNight, isTargeting, onMapClick }
         <meshStandardMaterial color={isNight ? '#14532d' : '#4ade80'} roughness={0.9} />
       </Plane>
 
-      {/* Extended outer ground base (Land fully) */}
-      <Plane
-        args={[gridSize.x * 1.5, gridSize.y * 1.5]}
-        rotation={[-Math.PI / 2, 0, 0]}
-        position={[0, -0.02, 0]}
-      >
-        <meshStandardMaterial color={isNight ? '#052e16' : '#16a34a'} roughness={1} />
-      </Plane>
+      {/* Compound Boundary Walls */}
+      {/* Back Wall */}
+      <Box args={[compSizeX + wallThickness*2, wallHeight, wallThickness]} position={[0, wallHeight/2, halfY + wallThickness/2]} castShadow receiveShadow>
+        <meshStandardMaterial color={wallColor} />
+      </Box>
+      {/* Front Wall */}
+      <Box args={[compSizeX + wallThickness*2, wallHeight, wallThickness]} position={[0, wallHeight/2, -halfY - wallThickness/2]} castShadow receiveShadow>
+        <meshStandardMaterial color={wallColor} />
+      </Box>
+      {/* Right Wall */}
+      <Box args={[wallThickness, wallHeight, compSizeY]} position={[halfX + wallThickness/2, wallHeight/2, 0]} castShadow receiveShadow>
+        <meshStandardMaterial color={wallColor} />
+      </Box>
+      {/* Left Wall */}
+      <Box args={[wallThickness, wallHeight, compSizeY]} position={[-halfX - wallThickness/2, wallHeight/2, 0]} castShadow receiveShadow>
+        <meshStandardMaterial color={wallColor} />
+      </Box>
 
-      {/* Natural surrounding landscape (mountains, rocks, rivers, sea, trees) removed */}
+      {/* ASPIRE Text on the inner front wall */}
+      <Text
+        position={[0, wallHeight/2 + 0.5, -halfY + 0.1]}
+        rotation={[0, 0, 0]}
+        fontSize={8}
+        fontWeight="900"
+        color="#0ea5e9"
+        anchorX="center"
+        anchorY="middle"
+        outlineWidth={0.2}
+        outlineColor="#ffffff"
+      >
+        ASPIRE
+      </Text>
     </group>
   );
 });
@@ -1340,6 +1367,7 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
   const [battery, setBattery] = useState(100);
   const [robotState, setRobotState] = useState<RobotState>('off');
   const [isOn, setIsOn] = useState(false);
+  const [activeCCTab, setActiveCCTab] = useState<'dashboard' | 'tools' | 'locations'>('dashboard');
   const [modalType, setModalType] = useState<'food' | 'medical' | null>(null);
 
   const handleDeliverySubmit = (missionText: string) => {
@@ -1607,9 +1635,10 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
     let timeout: any;
     if (!isIdleMode && (robotState === 'idle' || robotState === 'patrol') && !isPlaying && isOn) {
       const waitTime = (prevIsIdleMode.current && !isIdleMode) ? 0 : 2500;
-      const attemptPatrol = () => {
+      timeout = setTimeout(() => {
         if (!mapData || !mapData.rooms) return;
-        const currentLoc = path.length > 0 && currentPosIndex < path.length ? path[currentPosIndex] : mapData.start;
+        addExplanation(waitTime === 0 ? 'Idle mode disabled. Resuming patrol immediately.' : 'Idle detected. Initiating autonomous patrol mode.');
+        const currentLoc = path.length > 0 ? path[currentPosIndex] : mapData.start;
         const randomRoom = mapData.rooms[Math.floor(Math.random() * mapData.rooms.length)];
         const patrolPath = calculatePath(currentLoc, randomRoom.door || randomRoom.start, [...(mapData.obstacles || []), ...userBlockers], mapData);
         if (patrolPath.length > 0) {
@@ -1617,14 +1646,7 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
           setCurrentPosIndex(0);
           setRobotState('patrol');
           setIsPlaying(true);
-        } else {
-          timeout = setTimeout(attemptPatrol, 1000);
         }
-      };
-
-      timeout = setTimeout(() => {
-        addExplanation(waitTime === 0 ? 'Idle mode disabled. Resuming patrol immediately.' : 'Idle detected. Initiating autonomous patrol mode.');
-        attemptPatrol();
       }, waitTime);
     }
     prevIsIdleMode.current = isIdleMode;
@@ -2028,13 +2050,6 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
     addExplanation(`Arrived at emergency location. Providing assistance for 5 seconds...`);
     setIsPlaying(false);
     
-    // Hide (clear) any obstacles/crowds at the emergency location now that the robot is here
-    const targetLoc = path[path.length - 1];
-    if (targetLoc) {
-       setUserBlockers(prev => prev.filter(b => Math.abs(b.x - targetLoc.x) > 2 || Math.abs(b.y - targetLoc.y) > 2));
-       setCrowds(prev => prev.filter(c => Math.abs(c.x - targetLoc.x) > 2 || Math.abs(c.y - targetLoc.y) > 2));
-    }
-    
     if (emergencyTimeoutRef.current) {
       clearTimeout(emergencyTimeoutRef.current);
     }
@@ -2365,27 +2380,6 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
     dispatchLocalMission(selectedRoom.door || selectedRoom.start, `${type} to ${selectedRoom.name}`);
   };
 
-  const renderedRooms = useMemo(() => {
-    if (!mapData || !mapData.rooms) return null;
-    return mapData.rooms.map((room: Room) => {
-      const width = (room.end.x - room.start.x + 1) * 0.75;
-      const depth = (room.end.y - room.start.y + 1) * 0.75;
-      const height = 3;
-      const x = (room.start.x + room.end.x) / 2 - mapData.gridSize.x / 2;
-      const z = (room.start.y + room.end.y) / 2 - mapData.gridSize.y / 2;
-      return (
-        <group key={room.id} position={[x, height / 2, z]} onClick={(e) => { e.stopPropagation(); setSelectedRoom(room); }}>
-          <BuildingModel room={room} width={width} height={height} depth={depth} />
-          <Html position={[0, height / 2 + 1.5, 0]} center style={{ pointerEvents: 'none' }}>
-            <div className="text-[10px] font-bold text-white bg-black/80 px-2 py-1 rounded shadow-lg whitespace-nowrap">
-              {room.name}
-            </div>
-          </Html>
-        </group>
-      );
-    });
-  }, [mapData, setSelectedRoom]);
-
   if (!mapData) return null;
   const { gridSize, rooms } = mapData;
 
@@ -2487,11 +2481,11 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
         <Canvas shadows gl={{ antialias: true }} dpr={[1, 2]}>
           {/* Sky background from real time */}
           <color attach="background" args={['#000000']} />
-          {/* Camera — zoomed out to fit entire model + surrounding landscape */}
+          {/* Camera — adjusted for a clean, isometric-like default view */}
           {isMapView ? (
             <OrthographicCamera makeDefault position={[0, 100, 0]} zoom={4} near={0.1} far={2000} />
           ) : (
-            <PerspectiveCamera makeDefault position={[0, gridSize.y * 0.9, gridSize.y * 1.35]} fov={60} near={0.5} far={2000} />
+            <PerspectiveCamera makeDefault position={[gridSize.x * 0.7, gridSize.y * 0.7, gridSize.y * 0.9]} fov={50} near={0.5} far={2000} />
           )}
           {/* Lighting — adapts to day/night from real local time */}
           <ambientLight intensity={isNight ? 0.12 : 0.7} color={isNight ? '#c7d2fe' : '#ffffff'} />
@@ -2528,10 +2522,10 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
             enableDamping
             enablePan={false}
             dampingFactor={0.08}
-            target={[0, 2, 0]}
-            maxPolarAngle={Math.PI / 2.8}
-            minDistance={20}
-            maxDistance={gridSize.y * 1.1}
+            target={[0, 0, 0]}
+            maxPolarAngle={Math.PI / 2.1}
+            minDistance={10}
+            maxDistance={gridSize.y * 1.5}
           />
           
           <EnvironmentMap 
@@ -2600,7 +2594,23 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
               handleEmergencyCall(gridP);
             }} 
           />
-          {renderedRooms}
+          {useMemo(() => rooms?.map((room: Room) => {
+            const width = (room.end.x - room.start.x + 1) * 0.75;
+            const depth = (room.end.y - room.start.y + 1) * 0.75;
+            const height = 3;
+            const x = (room.start.x + room.end.x) / 2 - gridSize.x / 2;
+            const z = (room.start.y + room.end.y) / 2 - gridSize.y / 2;
+            return (
+              <group key={room.id} position={[x, height / 2, z]} onClick={(e) => { e.stopPropagation(); setSelectedRoom(room); }}>
+                <BuildingModel room={room} width={width} height={height} depth={depth} />
+                <Html position={[0, height / 2 + 1.5, 0]} center style={{ pointerEvents: 'none' }}>
+                  <div className="text-[10px] font-bold text-white bg-black/80 px-2 py-1 rounded shadow-lg whitespace-nowrap">
+                    {room.name}
+                  </div>
+                </Html>
+              </group>
+            );
+          }), [rooms, gridSize, setSelectedRoom])}
           <RoadsRender roads={mapData.roads || []} gridSize={gridSize} />
           <BlockersRender blockers={userBlockers} gridSize={gridSize} roads={mapData.roads || []} />
           <CrowdsRender crowds={crowds} gridSize={gridSize} />
@@ -2693,13 +2703,11 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
 
 
       {/* ── Control Panel (Floating Overlay) ── */}
-      <div className={`absolute right-4 top-4 bottom-4 bg-white/5 backdrop-blur-md border border-white/10 rounded-3xl hidden md:flex flex-col z-[100] shadow-[0_0_50px_rgba(0,0,0,0.3)] text-gray-200 pointer-events-auto transition-all duration-500 ease-out ${isCCMinimized ? 'w-16 overflow-hidden border-white/10 bg-white/5 shadow-none' : 'w-[400px] overflow-hidden'}`}>
-        <div className="p-5 border-b border-white/10 bg-white/5 flex-none flex justify-between items-center relative overflow-hidden">
-          {/* Subtle top glow */}
-          <div className="absolute top-0 left-0 right-0 h-[1px] bg-gradient-to-r from-transparent via-white/30 to-transparent"></div>
+      <div className={`absolute right-4 top-4 bottom-4 bg-black/70 backdrop-blur-xl border border-white/10 rounded-2xl hidden md:flex flex-col z-[100] shadow-2xl text-gray-200 pointer-events-auto transition-all duration-300 ${isCCMinimized ? 'w-14 overflow-hidden' : 'w-[360px] overflow-hidden'}`}>
+        <div className="p-4 border-b border-white/10 bg-black/40 flex-none flex justify-between items-center">
           {!isCCMinimized && (
-            <h3 className="font-black text-sm tracking-widest flex items-center gap-2 text-white uppercase drop-shadow-md">
-              <Activity className="w-4 h-4 text-cyan-400" />
+            <h3 className="font-bold text-sm flex items-center gap-2 text-white">
+              <Activity className="w-4 h-4 text-brand" />
               Control Center
             </h3>
           )}
@@ -2707,7 +2715,7 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
             {!isCCMinimized && (
               <button 
                 onClick={() => setIsCTROpen(!isCTROpen)}
-                className="p-2 rounded-xl bg-white/5 hover:bg-white/20 border border-white/10 text-cyan-400 transition-all shadow-sm"
+                className="p-1.5 rounded-md bg-white/5 hover:bg-brand/20 border border-white/10 text-brand-light transition-colors"
                 title="Open Console"
               >
                 <Bot className="w-4 h-4" />
@@ -2715,222 +2723,249 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
             )}
             <button
               onClick={() => setIsCCMinimized(!isCCMinimized)}
-              className="p-2 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 text-gray-300 transition-all hover:border-white/20"
+              className="p-1.5 rounded-md bg-white/5 hover:bg-white/20 border border-white/10 text-gray-300 transition-colors"
               title={isCCMinimized ? 'Expand Control Center' : 'Minimize Control Center'}
             >
-              {isCCMinimized ? <Maximize className="w-5 h-5" /> : <Minimize className="w-4 h-4" />}
+              {isCCMinimized ? <Maximize className="w-4 h-4" /> : <Minimize className="w-4 h-4" />}
             </button>
           </div>
         </div>
 
         {/* Body — hidden when minimized */}
         {!isCCMinimized && (
-        <div className="flex-1 overflow-y-auto custom-scrollbar">
-        <div className="p-5 border-b border-cyan-500/20 relative bg-cyan-950/10">
-          <div className="absolute top-0 right-0 w-32 h-32 bg-cyan-500/5 rounded-full blur-3xl pointer-events-none"></div>
-          <div className="flex items-center justify-between mb-4 relative z-10">
-            <h4 className="text-[11px] font-black text-cyan-400 uppercase tracking-[0.3em] font-mono"><span className="text-cyan-500/50 mr-2">{"//"}</span>ROBOT CORE</h4>
-            <div className="flex gap-2">
-              <button
-                onClick={() => {
-                  const nextIdle = !isIdleMode;
-                  setIsIdleMode(nextIdle);
-                  if (nextIdle) {
-                    if (mapData && mapData.rooms && mapData.rooms.length > 0) {
-                      let nearestRoom = mapData.rooms[0];
-                      let minDist = Infinity;
-                      const currentLoc = path.length > 0 && currentPosIndex < path.length ? path[currentPosIndex] : mapData.start;
-                      mapData.rooms.forEach(r => {
-                          const dist = Math.abs(r.door.x - currentLoc.x) + Math.abs(r.door.y - currentLoc.y);
-                          if (dist < minDist) { minDist = dist; nearestRoom = r; }
-                      });
-                      const allObstacles = [...(mapData.obstacles || []), ...userBlockers];
-                      const parkPath = calculatePath(currentLoc, nearestRoom.door || nearestRoom.start, allObstacles, mapData);
-                      if (parkPath.length > 0) {
-                         setPath(parkPath);
-                         setCurrentPosIndex(0);
-                         setIsPlaying(true);
-                         setRobotState('idle'); 
-                         addExplanation(`Idle mode activated. Parking safely at ${nearestRoom.name}.`);
-                      } else {
-                         setIsPlaying(false);
-                         setRobotState('idle');
-                         addExplanation("Idle mode activated. Halting immediately.");
-                      }
-                    }
-                  } else {
-                    setRobotState('patrol');
-                    addExplanation("Idle mode deactivated. Resuming patrol.");
-                  }
-                }}
-                className={`px-3 py-1.5 rounded-sm text-[9px] uppercase font-black flex items-center gap-1.5 tracking-widest transition-all border font-mono ${isIdleMode ? 'bg-amber-500/20 text-amber-400 border-amber-400 shadow-[0_0_15px_rgba(245,158,11,0.2)]' : 'bg-[#020815]/60 text-amber-500/50 border-amber-500/20 hover:bg-amber-500/10 hover:border-amber-500/40'}`}
-                title="Toggle Idle Mode"
-              >
-                <Pause className="w-3 h-3" /> IDLE
-              </button>
-              <button 
-                onClick={togglePower}
-                className={`px-3 py-1.5 rounded-sm text-[9px] uppercase font-black tracking-widest transition-all border font-mono ${isOn ? 'bg-[#020815]/60 text-red-500/80 border-red-500/30 hover:bg-red-500/10 hover:border-red-500/50' : 'bg-green-500/20 text-green-400 border-green-400 shadow-[0_0_15px_rgba(34,197,94,0.2)]'}`}
-              >
-                {isOn ? 'POWER OFF' : 'POWER ON'}
-              </button>
-            </div>
-          </div>
-          
-          <div className="grid grid-cols-2 gap-3 mb-5 transition-all duration-500 relative z-10">
-            <div className="col-span-2 bg-[#020815]/60 backdrop-blur-md border border-cyan-500/30 rounded-tl-2xl rounded-br-2xl rounded-tr-sm rounded-bl-sm p-4 flex flex-col justify-between hover:border-cyan-400/50 transition-colors group relative overflow-hidden shadow-[inset_0_0_20px_rgba(6,182,212,0.05)]">
-              <div className="absolute top-0 right-0 w-24 h-24 bg-cyan-500/10 rounded-full blur-3xl transition-all pointer-events-none"></div>
-              <div className="flex justify-between items-center mb-2">
-                 <span className="text-[10px] font-black text-cyan-500/70 uppercase tracking-widest font-mono">{"[ BATTERY ]"}</span>
-                 <span className="text-xl font-black text-white leading-none tracking-tighter font-mono">{battery.toFixed(1)}<span className="text-[10px] text-cyan-500/50 font-normal ml-0.5">%</span></span>
-              </div>
-              <div className="flex-1 h-1.5 bg-[#020815] rounded-full overflow-hidden mt-1 border border-cyan-500/20 shadow-inner">
-                <div className={`h-full transition-all duration-1000 rounded-full ${battery > 60 ? 'bg-gradient-to-r from-emerald-500 to-green-400 shadow-[0_0_10px_rgba(16,185,129,0.5)]' : battery > 30 ? 'bg-gradient-to-r from-yellow-500 to-amber-400 shadow-[0_0_10px_rgba(245,158,11,0.5)]' : 'bg-gradient-to-r from-red-600 to-red-400 shadow-[0_0_10px_rgba(239,68,68,0.5)]'}`} style={{ width: `${battery}%` }} />
-              </div>
-            </div>
-            
-            <div className="col-span-2 bg-[#020815]/60 backdrop-blur-md border border-cyan-500/30 rounded-tl-2xl rounded-br-2xl rounded-tr-sm rounded-bl-sm p-4 flex flex-col justify-center hover:border-cyan-400/50 transition-colors relative overflow-hidden shadow-[inset_0_0_20px_rgba(6,182,212,0.05)]">
-              <span className="text-[10px] font-black text-cyan-500/70 uppercase tracking-widest block mb-1 font-mono">{"[ STATUS ]"}</span>
-              <span className={`text-lg font-black uppercase tracking-wider mt-1 font-mono ${
-                robotState === 'charging' ? 'text-yellow-400 drop-shadow-[0_0_8px_rgba(250,204,21,0.5)]' : 
-                robotState === 'patrol' ? 'text-cyan-400 drop-shadow-[0_0_8px_rgba(34,211,238,0.5)]' : 
-                robotState === 'mission' ? 'text-emerald-400 drop-shadow-[0_0_8px_rgba(52,211,153,0.5)]' : 
-                robotState === 'emergency_response' ? 'text-red-500 animate-pulse drop-shadow-[0_0_8px_rgba(239,68,68,0.8)]' : 
-                'text-gray-300'
-              }`}>
-                {robotState.replace('_', ' ')}
-              </span>
-            </div>
-            
-            <div className="bg-[#020815]/60 backdrop-blur-md border border-cyan-500/30 rounded-lg p-3 flex flex-col justify-between hover:border-cyan-400/50 transition-colors shadow-[inset_0_0_20px_rgba(6,182,212,0.05)]">
-              <span className="text-[9px] font-black text-cyan-500/70 uppercase tracking-widest block mb-1 font-mono">{"[ DISTANCE ]"}</span>
-              <span className="text-xl font-black text-white leading-none font-mono">{path.length > 0 ? path.length - currentPosIndex : '--'} <span className="text-[9px] font-normal text-cyan-500/50 ml-0.5">M</span></span>
-            </div>
-            
-            <div className="bg-[#020815]/60 backdrop-blur-md border border-cyan-500/30 rounded-lg p-3 flex flex-col justify-between hover:border-cyan-400/50 transition-colors shadow-[inset_0_0_20px_rgba(6,182,212,0.05)]">
-              <span className="text-[9px] font-black text-cyan-500/70 uppercase tracking-widest block mb-1 font-mono">{"[ TIME ]"}</span>
-              <span className="text-xl font-black text-white leading-none font-mono">{path.length > 0 ? Math.ceil((path.length - currentPosIndex) * 0.5) : '--'} <span className="text-[9px] font-normal text-cyan-500/50 ml-0.5">MIN</span></span>
-            </div>
+        <div className="flex-1 flex flex-col overflow-hidden">
+          {/* Tabs */}
+          <div className="flex border-b border-white/10 bg-black/60 shrink-0">
+            <button onClick={() => setActiveCCTab('dashboard')} className={`flex-1 py-3 text-[10px] font-bold uppercase tracking-widest transition-colors ${activeCCTab === 'dashboard' ? 'text-cyan-400 border-b-2 border-cyan-400 bg-white/5' : 'text-gray-500 hover:text-gray-300 hover:bg-white/5'}`}>Dashboard</button>
+            <button onClick={() => setActiveCCTab('tools')} className={`flex-1 py-3 text-[10px] font-bold uppercase tracking-widest transition-colors ${activeCCTab === 'tools' ? 'text-cyan-400 border-b-2 border-cyan-400 bg-white/5' : 'text-gray-500 hover:text-gray-300 hover:bg-white/5'}`}>Tools</button>
+            <button onClick={() => setActiveCCTab('locations')} className={`flex-1 py-3 text-[10px] font-bold uppercase tracking-widest transition-colors ${activeCCTab === 'locations' ? 'text-cyan-400 border-b-2 border-cyan-400 bg-white/5' : 'text-gray-500 hover:text-gray-300 hover:bg-white/5'}`}>Locations</button>
           </div>
 
-          <div className="flex flex-col gap-2.5 mt-2 relative z-10">
-            <button
-              onClick={() => startSimulation()}
-              disabled={isPlaying || (path.length > 0 && currentPosIndex >= path.length - 1)}
-              className="w-full flex items-center justify-center gap-3 px-4 py-3.5 bg-cyan-600/20 text-cyan-400 hover:bg-cyan-500/40 rounded-tl-xl rounded-br-xl rounded-tr-sm rounded-bl-sm font-black uppercase tracking-[0.2em] disabled:opacity-50 disabled:grayscale transition-all shadow-[0_0_15px_rgba(6,182,212,0.15)] hover:shadow-[0_0_20px_rgba(6,182,212,0.4)] border border-cyan-400/50 font-mono text-xs"
-            >
-              <Play className="w-4 h-4" /> {isPlaying ? 'SIMULATING' : 'EXECUTE MISSION'}
-            </button>
-            <div className="grid grid-cols-2 gap-2.5 w-full">
-              <button
-                onClick={() => setIsEmergencyTargeting(!isEmergencyTargeting)}
-                className={`col-span-1 py-3 border rounded-tl-lg rounded-br-lg rounded-tr-sm rounded-bl-sm transition-all flex flex-col items-center justify-center gap-1 shadow-[inset_0_0_10px_rgba(239,68,68,0.1)] font-mono ${isEmergencyTargeting ? 'bg-red-500/20 text-red-400 border-red-400 shadow-[0_0_15px_rgba(239,68,68,0.3)] scale-[0.98]' : 'bg-[#020815]/60 text-red-500/70 border-red-500/30 hover:bg-red-500/10 hover:border-red-500/50'}`}
-                title="Target Emergency"
-              >
-                <ShieldAlert className="w-4 h-4" />
-                <span className="text-[8px] font-black tracking-widest uppercase mt-1">Emergency</span>
-              </button>
-              <button
-                onClick={() => {
-                  setIsPlacingBlocker(!isPlacingBlocker);
-                  if (!isPlacingBlocker) { setIsEmergencyTargeting(false); setIsPlacingCrowd(false); }
-                }}
-                className={`col-span-1 py-3 border rounded-tl-lg rounded-br-lg rounded-tr-sm rounded-bl-sm transition-all flex flex-col items-center justify-center gap-1 shadow-[inset_0_0_10px_rgba(249,115,22,0.1)] font-mono ${isPlacingBlocker ? 'bg-orange-500/20 text-orange-400 border-orange-400 shadow-[0_0_15px_rgba(249,115,22,0.3)] scale-[0.98]' : 'bg-[#020815]/60 text-orange-500/70 border-orange-500/30 hover:bg-orange-500/10 hover:border-orange-500/50'}`}
-                title="Toggle Road Blocker"
-              >
-                <Construction className="w-4 h-4" />
-                <span className="text-[8px] font-black tracking-widest uppercase mt-1">Blocker</span>
-              </button>
-              <button
-                onClick={() => {
-                  setIsPlacingCrowd(!isPlacingCrowd);
-                  if (!isPlacingCrowd) { setIsEmergencyTargeting(false); setIsPlacingBlocker(false); }
-                }}
-                className={`col-span-1 py-3 border rounded-tl-lg rounded-br-lg rounded-tr-sm rounded-bl-sm transition-all flex flex-col items-center justify-center gap-1 shadow-[inset_0_0_10px_rgba(168,85,247,0.1)] font-mono ${isPlacingCrowd ? 'bg-purple-500/20 text-purple-400 border-purple-400 shadow-[0_0_15px_rgba(168,85,247,0.3)] scale-[0.98]' : 'bg-[#020815]/60 text-purple-500/70 border-purple-500/30 hover:bg-purple-500/10 hover:border-purple-500/50'}`}
-                title="Toggle Crowd Placement"
-              >
-                <Users className="w-4 h-4" />
-                <span className="text-[8px] font-black tracking-widest uppercase mt-1">Crowd</span>
-              </button>
-              <button
-                onClick={resetSimulation}
-                className="col-span-1 py-3 bg-[#020815]/60 border border-cyan-500/30 rounded-tl-lg rounded-br-lg rounded-tr-sm rounded-bl-sm hover:bg-cyan-500/10 hover:border-cyan-500/50 transition-all flex flex-col items-center justify-center gap-1 active:scale-[0.98] shadow-[inset_0_0_10px_rgba(6,182,212,0.05)] font-mono text-cyan-500/70"
-                title="Reset Robot"
-              >
-                <RotateCcw className="w-4 h-4" />
-                <span className="text-[8px] font-black tracking-widest uppercase mt-1">Reset</span>
-              </button>
-            </div>
-          </div>
-        </div>
-
-        <div className={`p-5 border-b border-cyan-500/20 bg-cyan-950/10 transition-all duration-500 ${!isOn ? 'opacity-30 pointer-events-none grayscale' : ''}`}>
-          <h4 className="text-[11px] font-black text-cyan-400 uppercase tracking-[0.3em] font-mono mb-4"><span className="text-cyan-500/50 mr-2">{"//"}</span>Room Inspector</h4>
-          {selectedRoom ? (
-            <div className="animate-in fade-in slide-in-from-bottom-4 duration-500 mb-5">
-              <div className="bg-[#020815]/60 backdrop-blur-md border border-cyan-500/30 rounded-tl-2xl rounded-br-2xl rounded-tr-sm rounded-bl-sm p-4 mb-4 shadow-[inset_0_0_20px_rgba(6,182,212,0.05)] relative overflow-hidden group">
-                <div className="absolute top-0 right-0 w-24 h-24 bg-cyan-500/10 rounded-full blur-3xl group-hover:bg-cyan-500/20 transition-all pointer-events-none"></div>
-                
-                <div className="flex justify-between items-start mb-3 relative z-10">
-                  <h5 className="font-black text-white text-sm tracking-wide uppercase font-mono">{selectedRoom.name}</h5>
-                  <span className="px-2 py-1 rounded-sm text-[9px] font-black uppercase tracking-widest bg-cyan-500/20 text-cyan-400 border border-cyan-500/30 font-mono">Lvl {selectedRoom.start.f}</span>
-                </div>
-                
-                <div className="grid grid-cols-2 gap-3 relative z-10">
-                  <div className="bg-cyan-950/30 rounded-lg p-2.5 border border-cyan-500/20 flex flex-col justify-center">
-                    <span className="text-[9px] uppercase tracking-widest text-cyan-500/70 mb-1 font-mono">{"[ OCCUPANCY ]"}</span>
-                    <span className="text-sm font-black text-white font-mono">{(selectedRoom.name.length + selectedRoom.start.x) % 12 || 2} <span className="text-[10px] font-normal text-cyan-500/50">PAX</span></span>
-                  </div>
-                  <div className="bg-cyan-950/30 rounded-lg p-2.5 border border-cyan-500/20 flex flex-col justify-center">
-                    <span className="text-[9px] uppercase tracking-widest text-cyan-500/70 mb-1 font-mono">{"[ STATUS ]"}</span>
-                    <span className="text-sm font-black text-emerald-400 drop-shadow-[0_0_8px_rgba(52,211,153,0.4)] font-mono">SECURE</span>
+          <div className="flex-1 overflow-y-auto custom-scrollbar relative">
+            {/* DASHBOARD TAB */}
+            {activeCCTab === 'dashboard' && (
+              <div className="p-4 space-y-6 animate-in fade-in duration-300">
+                <div className="flex items-center justify-between">
+                  <h4 className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Mission Telemetry</h4>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => {
+                        const nextIdle = !isIdleMode;
+                        setIsIdleMode(nextIdle);
+                        if (nextIdle) {
+                          if (mapData && mapData.rooms && mapData.rooms.length > 0) {
+                            let nearestRoom = mapData.rooms[0];
+                            let minDist = Infinity;
+                            const currentLoc = path.length > 0 && currentPosIndex < path.length ? path[currentPosIndex] : mapData.start;
+                            mapData.rooms.forEach(r => {
+                                const dist = Math.abs(r.door.x - currentLoc.x) + Math.abs(r.door.y - currentLoc.y);
+                                if (dist < minDist) { minDist = dist; nearestRoom = r; }
+                            });
+                            const allObstacles = [...(mapData.obstacles || []), ...userBlockers];
+                            const parkPath = calculatePath(currentLoc, nearestRoom.door || nearestRoom.start, allObstacles, mapData);
+                            if (parkPath.length > 0) {
+                               setPath(parkPath);
+                               setCurrentPosIndex(0);
+                               setIsPlaying(true);
+                               setRobotState('idle'); 
+                               addExplanation(`Idle mode activated. Parking safely at ${nearestRoom.name}.`);
+                            } else {
+                               setIsPlaying(false);
+                               setRobotState('idle');
+                               addExplanation("Idle mode activated. Halting immediately.");
+                            }
+                          }
+                        } else {
+                          setRobotState('patrol');
+                          addExplanation("Idle mode deactivated. Resuming patrol.");
+                        }
+                      }}
+                      className={`px-3 py-1.5 rounded-lg text-[10px] font-bold flex items-center gap-1.5 transition-colors border ${isIdleMode ? 'bg-gray-500/20 text-white border-gray-500/50' : 'bg-transparent text-gray-500 border-white/10 hover:bg-white/5'}`}
+                      title="Toggle Idle Mode"
+                    >
+                      <Pause className="w-3.5 h-3.5" /> IDLE
+                    </button>
+                    <button 
+                      onClick={togglePower}
+                      className={`px-3 py-1.5 rounded-lg text-[10px] font-bold transition-colors border ${isOn ? 'bg-red-500/10 text-red-400 border-red-500/30 hover:bg-red-500/20' : 'bg-green-500/10 text-green-400 border-green-500/30 hover:bg-green-500/20'}`}
+                    >
+                      {isOn ? 'POWER OFF' : 'POWER ON'}
+                    </button>
                   </div>
                 </div>
-              </div>
-              
-              <div className="grid grid-cols-2 gap-2">
-                <button onClick={() => dispatchQuickMission('Navigate')} className="col-span-2 flex items-center justify-center gap-2 px-4 py-3 bg-cyan-600/20 text-cyan-400 hover:bg-cyan-500/40 rounded-tl-xl rounded-br-xl rounded-tr-sm rounded-bl-sm text-xs font-black uppercase tracking-[0.2em] transition-all border border-cyan-400/50 shadow-[0_0_15px_rgba(6,182,212,0.15)] hover:shadow-[0_0_20px_rgba(6,182,212,0.4)] font-mono">
-                  <Play className="w-4 h-4" /> NAVIGATE
-                </button>
-                <button onClick={() => handleEmergencyCall(selectedRoom.door || selectedRoom.start)} className="flex items-center justify-center gap-2 px-3 py-2.5 bg-red-500/10 text-red-400 hover:bg-red-500/20 rounded-tl-lg rounded-br-lg rounded-tr-sm rounded-bl-sm text-[10px] font-black uppercase tracking-widest transition-all border border-red-500/30 shadow-[inset_0_0_10px_rgba(239,68,68,0.1)] font-mono">
-                  <ShieldAlert className="w-3.5 h-3.5" /> EMERG
-                </button>
-                <button onClick={() => dispatchQuickMission('Clean Room')} className="flex items-center justify-center gap-2 px-3 py-2.5 bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20 rounded-tl-lg rounded-br-lg rounded-tr-sm rounded-bl-sm text-[10px] font-black uppercase tracking-widest transition-all border border-emerald-500/30 shadow-[inset_0_0_10px_rgba(16,185,129,0.1)] font-mono">
-                  <Crosshair className="w-3.5 h-3.5" /> CLEAN
-                </button>
-                <button onClick={() => dispatchQuickMission('Deliver Documents')} className="col-span-2 flex items-center justify-center gap-2 px-4 py-2.5 bg-blue-500/10 text-blue-400 hover:bg-blue-500/20 rounded-tl-lg rounded-br-lg rounded-tr-sm rounded-bl-sm text-[10px] font-black uppercase tracking-widest transition-all border border-blue-500/30 shadow-[inset_0_0_10px_rgba(59,130,246,0.1)] font-mono">
-                  <Crosshair className="w-3.5 h-3.5" /> DOCUMENTS
-                </button>
-                <button onClick={() => setModalType('food')} className="flex items-center justify-center gap-2 px-3 py-2.5 bg-orange-500/10 text-orange-400 hover:bg-orange-500/20 rounded-tl-lg rounded-br-lg rounded-tr-sm rounded-bl-sm text-[10px] font-black uppercase tracking-widest transition-all border border-orange-500/30 shadow-[inset_0_0_10px_rgba(249,115,22,0.1)] font-mono">
-                  <Utensils className="w-3.5 h-3.5" /> FOOD
-                </button>
-                <button onClick={() => setModalType('medical')} className="flex items-center justify-center gap-2 px-3 py-2.5 bg-rose-500/10 text-rose-400 hover:bg-rose-500/20 rounded-tl-lg rounded-br-lg rounded-tr-sm rounded-bl-sm text-[10px] font-black uppercase tracking-widest transition-all border border-rose-500/30 shadow-[inset_0_0_10px_rgba(244,63,94,0.1)] font-mono">
-                  <Cross className="w-3.5 h-3.5" /> MEDICAL
-                </button>
-              </div>
-            </div>
-          ) : (
-            <div className="flex flex-col items-center justify-center py-6 mb-5 bg-[#020815]/40 backdrop-blur-md rounded-tl-2xl rounded-br-2xl rounded-tr-sm rounded-bl-sm border border-cyan-500/20 border-dashed">
-               <p className="text-[10px] text-cyan-500/50 uppercase tracking-[0.2em] font-mono">{"[ SELECT ROOM ]"}</p>
-            </div>
-          )}
+                
+                <div className="grid grid-cols-2 gap-3 transition-all duration-500">
+                  <div className="bg-white/5 border border-white/10 rounded-xl p-3 shadow-inner">
+                    <span className="text-[9px] font-bold text-gray-400 uppercase tracking-widest block mb-1">BATTERY</span>
+                    <div className="flex items-center gap-2 mt-1">
+                      <div className="flex-1 h-2 bg-gray-800 rounded-full overflow-hidden">
+                        <div className={`h-full ${battery > 60 ? 'bg-green-500' : battery > 30 ? 'bg-yellow-500' : 'bg-red-500'}`} style={{ width: `${battery}%` }} />
+                      </div>
+                      <span className="text-xs font-black text-white">{battery}%</span>
+                    </div>
+                  </div>
+                  <div className="bg-white/5 border border-white/10 rounded-xl p-3 shadow-inner flex flex-col justify-center">
+                    <span className="text-[9px] font-bold text-gray-400 uppercase tracking-widest block mb-1">STATUS</span>
+                    <span className={`text-sm font-black uppercase tracking-wider truncate ${
+                      robotState === 'charging' ? 'text-yellow-400' : 
+                      robotState === 'patrol' ? 'text-blue-400' : 
+                      robotState === 'mission' ? 'text-green-400' : 
+                      robotState === 'emergency_response' ? 'text-red-500 animate-pulse' : 
+                      'text-gray-300'
+                    }`}>
+                      {robotState.replace('_', ' ')}
+                    </span>
+                  </div>
+                  <div className="bg-white/5 border border-white/10 rounded-xl p-3 shadow-inner">
+                    <span className="text-[9px] font-bold text-gray-400 uppercase tracking-widest block mb-1">DISTANCE</span>
+                    <span className="text-lg font-black text-white">{path.length > 0 ? path.length - currentPosIndex : '--'} <span className="text-[10px] font-bold text-gray-500">m</span></span>
+                  </div>
+                  <div className="bg-white/5 border border-white/10 rounded-xl p-3 shadow-inner">
+                    <span className="text-[9px] font-bold text-gray-400 uppercase tracking-widest block mb-1">ETA</span>
+                    <span className="text-lg font-black text-white">{path.length > 0 ? Math.ceil((path.length - currentPosIndex) * 0.5) : '--'} <span className="text-[10px] font-bold text-gray-500">min</span></span>
+                  </div>
+                </div>
 
-          <div className="flex flex-col gap-2">
-            <div className="text-[10px] text-cyan-500/70 mb-1 font-mono uppercase tracking-widest">{"// DIRECTORY"}</div>
-            <div className="grid grid-cols-2 gap-2 max-h-48 overflow-y-auto custom-scrollbar pr-1">
-              {rooms?.map(room => (
-                <button 
-                  key={room.id}
-                  onClick={() => setSelectedRoom(room)}
-                  className={`w-full text-left px-3 py-2.5 rounded-tl-lg rounded-br-lg rounded-tr-sm rounded-bl-sm border transition-all text-xs flex justify-between items-center font-mono ${selectedRoom?.id === room.id ? 'bg-cyan-500/20 border-cyan-400 text-cyan-300 shadow-[0_0_10px_rgba(6,182,212,0.2)]' : 'bg-[#020815]/60 hover:bg-cyan-950/40 border-cyan-500/20 text-cyan-500/70'}`}
-                >
-                  <span className="truncate mr-2 uppercase text-[10px]">{room.name}</span>
-                  <span className="text-[9px] opacity-60 flex-shrink-0">L{room.start.f}</span>
-                </button>
-              ))}
-            </div>
+                <div className="flex gap-3 pt-2">
+                  <button
+                    onClick={() => startSimulation()}
+                    disabled={isPlaying || (path.length > 0 && currentPosIndex >= path.length - 1)}
+                    className="flex-1 flex items-center justify-center gap-2 px-4 py-3 bg-cyan-600/20 text-cyan-400 border border-cyan-500/50 rounded-xl font-bold hover:bg-cyan-600 hover:text-white disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-[0_0_15px_rgba(8,145,178,0.2)] hover:shadow-[0_0_20px_rgba(8,145,178,0.5)] text-sm uppercase tracking-widest"
+                  >
+                    <Play className="w-4 h-4" /> {isPlaying ? 'Simulating...' : 'Execute'}
+                  </button>
+                  <button
+                    onClick={resetSimulation}
+                    className="p-3 bg-white/5 border border-white/10 rounded-xl hover:bg-white/10 transition-colors group"
+                    title="Reset Robot"
+                  >
+                    <RotateCcw className="w-5 h-5 text-gray-400 group-hover:text-white group-hover:-rotate-90 transition-all duration-300" />
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* TOOLS TAB */}
+            {activeCCTab === 'tools' && (
+              <div className="p-4 space-y-4 animate-in fade-in duration-300">
+                <h4 className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Environment Tools</h4>
+                <div className="flex flex-col gap-3">
+                  <button
+                    onClick={() => setIsEmergencyTargeting(!isEmergencyTargeting)}
+                    className={`w-full p-4 border rounded-xl transition-all flex items-center gap-4 text-left ${isEmergencyTargeting ? 'bg-red-500/20 text-red-400 border-red-500 shadow-[0_0_20px_rgba(239,68,68,0.3)]' : 'bg-white/5 text-gray-400 border-white/10 hover:bg-white/10 hover:text-white'}`}
+                  >
+                    <div className={`p-2 rounded-lg ${isEmergencyTargeting ? 'bg-red-500 text-white' : 'bg-white/10'}`}>
+                      <ShieldAlert className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <div className="font-bold uppercase tracking-wider text-sm">Target Emergency</div>
+                      <div className="text-[10px] opacity-70 mt-0.5 font-mono">Click on map to spawn an emergency</div>
+                    </div>
+                  </button>
+
+                  <button
+                    onClick={() => {
+                      setIsPlacingBlocker(!isPlacingBlocker);
+                      if (!isPlacingBlocker) { setIsEmergencyTargeting(false); setIsPlacingCrowd(false); }
+                    }}
+                    className={`w-full p-4 border rounded-xl transition-all flex items-center gap-4 text-left ${isPlacingBlocker ? 'bg-orange-500/20 text-orange-400 border-orange-500 shadow-[0_0_20px_rgba(249,115,22,0.3)]' : 'bg-white/5 text-gray-400 border-white/10 hover:bg-white/10 hover:text-white'}`}
+                  >
+                    <div className={`p-2 rounded-lg ${isPlacingBlocker ? 'bg-orange-500 text-white' : 'bg-white/10'}`}>
+                      <Construction className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <div className="font-bold uppercase tracking-wider text-sm">Place Road Blocker</div>
+                      <div className="text-[10px] opacity-70 mt-0.5 font-mono">Simulate a blocked route</div>
+                    </div>
+                  </button>
+
+                  <button
+                    onClick={() => {
+                      setIsPlacingCrowd(!isPlacingCrowd);
+                      if (!isPlacingCrowd) { setIsEmergencyTargeting(false); setIsPlacingBlocker(false); }
+                    }}
+                    className={`w-full p-4 border rounded-xl transition-all flex items-center gap-4 text-left ${isPlacingCrowd ? 'bg-purple-500/20 text-purple-400 border-purple-500 shadow-[0_0_20px_rgba(168,85,247,0.3)]' : 'bg-white/5 text-gray-400 border-white/10 hover:bg-white/10 hover:text-white'}`}
+                  >
+                    <div className={`p-2 rounded-lg ${isPlacingCrowd ? 'bg-purple-500 text-white' : 'bg-white/10'}`}>
+                      <Users className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <div className="font-bold uppercase tracking-wider text-sm">Place Crowd</div>
+                      <div className="text-[10px] opacity-70 mt-0.5 font-mono">Trigger crowd control mode</div>
+                    </div>
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* LOCATIONS TAB */}
+            {activeCCTab === 'locations' && (
+              <div className={`flex flex-col h-full animate-in fade-in duration-300 ${!isOn ? 'opacity-30 pointer-events-none grayscale' : ''}`}>
+                {selectedRoom ? (
+                  <div className="p-4 flex-1 overflow-y-auto">
+                    <button onClick={() => setSelectedRoom(null)} className="text-[10px] font-bold text-gray-400 hover:text-white uppercase tracking-widest flex items-center gap-1 mb-4 transition-colors">
+                      <span>←</span> BACK TO DIRECTORY
+                    </button>
+                    
+                    <div className="bg-gradient-to-br from-white/10 to-white/5 border border-white/10 rounded-2xl p-5 mb-5 shadow-xl backdrop-blur-md">
+                      <h5 className="font-black text-white text-xl mb-2 tracking-wide truncate">{selectedRoom.name}</h5>
+                      <div className="flex gap-2">
+                        <span className="px-2 py-1 rounded text-[10px] font-bold uppercase tracking-wider bg-black/40 text-cyan-300 border border-cyan-500/30">Floor {selectedRoom.start.f}</span>
+                        <span className="px-2 py-1 rounded text-[10px] font-bold uppercase tracking-wider bg-black/40 text-green-400 border border-green-500/30">Clear</span>
+                      </div>
+                      <div className="mt-4 pt-4 border-t border-white/10">
+                         <div className="text-xs text-gray-400 font-mono">Est. Occupancy: <span className="text-white font-bold">{(selectedRoom.name.length + selectedRoom.start.x) % 12 || 2}</span></div>
+                      </div>
+                    </div>
+                    
+                    <h4 className="text-[10px] font-bold text-gray-500 uppercase tracking-widest mb-3">Quick Dispatch</h4>
+                    <div className="grid grid-cols-2 gap-3">
+                      <button onClick={() => dispatchQuickMission('Navigate')} className="flex flex-col items-center justify-center gap-2 p-4 bg-brand/10 text-brand hover:bg-brand hover:text-white rounded-xl transition-all border border-brand/20 shadow-sm hover:shadow-[0_0_15px_rgba(34,211,238,0.4)] group">
+                        <Play className="w-6 h-6 group-hover:scale-110 transition-transform" /> 
+                        <span className="text-[10px] font-bold uppercase tracking-wider text-center">Navigate</span>
+                      </button>
+                      <button onClick={() => dispatchQuickMission('Deliver Documents')} className="flex flex-col items-center justify-center gap-2 p-4 bg-blue-500/10 text-blue-400 hover:bg-blue-500 hover:text-white rounded-xl transition-all border border-blue-500/20 shadow-sm hover:shadow-[0_0_15px_rgba(59,130,246,0.4)] group">
+                        <Crosshair className="w-6 h-6 group-hover:scale-110 transition-transform" /> 
+                        <span className="text-[10px] font-bold uppercase tracking-wider text-center">Docs</span>
+                      </button>
+                      <button onClick={() => setModalType('food')} className="flex flex-col items-center justify-center gap-2 p-4 bg-orange-500/10 text-orange-400 hover:bg-orange-500 hover:text-white rounded-xl transition-all border border-orange-500/20 shadow-sm hover:shadow-[0_0_15px_rgba(249,115,22,0.4)] group">
+                        <Utensils className="w-6 h-6 group-hover:scale-110 transition-transform" /> 
+                        <span className="text-[10px] font-bold uppercase tracking-wider text-center">Food</span>
+                      </button>
+                      <button onClick={() => dispatchQuickMission('Clean Room')} className="flex flex-col items-center justify-center gap-2 p-4 bg-green-500/10 text-green-400 hover:bg-green-500 hover:text-white rounded-xl transition-all border border-green-500/20 shadow-sm hover:shadow-[0_0_15px_rgba(34,197,94,0.4)] group">
+                        <Bot className="w-6 h-6 group-hover:scale-110 transition-transform" /> 
+                        <span className="text-[10px] font-bold uppercase tracking-wider text-center">Clean</span>
+                      </button>
+                      <button onClick={() => setModalType('medical')} className="flex flex-col items-center justify-center gap-2 p-4 bg-rose-500/10 text-rose-400 hover:bg-rose-500 hover:text-white rounded-xl transition-all border border-rose-500/20 shadow-sm hover:shadow-[0_0_15px_rgba(244,63,94,0.4)] group">
+                        <Cross className="w-6 h-6 group-hover:scale-110 transition-transform" /> 
+                        <span className="text-[10px] font-bold uppercase tracking-wider text-center">Medical</span>
+                      </button>
+                      <button onClick={() => handleEmergencyCall(selectedRoom.door || selectedRoom.start)} className="flex flex-col items-center justify-center gap-2 p-4 bg-red-500/10 text-red-500 hover:bg-red-500 hover:text-white rounded-xl transition-all border border-red-500/30 shadow-sm hover:shadow-[0_0_15px_rgba(239,68,68,0.5)] group">
+                        <ShieldAlert className="w-6 h-6 group-hover:scale-110 transition-transform" /> 
+                        <span className="text-[10px] font-bold uppercase tracking-wider text-center">SOS</span>
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="p-4 flex-1 flex flex-col min-h-0">
+                    <h4 className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-3 shrink-0">Building Directory</h4>
+                    <div className="flex-1 overflow-y-auto custom-scrollbar pr-2 space-y-2">
+                      {rooms?.map(room => (
+                        <button 
+                          key={room.id}
+                          onClick={() => setSelectedRoom(room)}
+                          className="w-full text-left px-4 py-3 rounded-xl border border-white/5 bg-white/5 hover:bg-white/10 text-gray-300 hover:text-white transition-all text-xs flex justify-between items-center group shadow-sm"
+                        >
+                          <span className="truncate mr-2 font-medium">{room.name}</span>
+                          <span className="text-[10px] text-gray-500 flex-shrink-0 group-hover:text-cyan-400 transition-colors font-bold uppercase tracking-widest">Fl {room.start.f}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
-        </div>
         </div>
         )}
       </div>

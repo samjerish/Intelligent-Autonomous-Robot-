@@ -4,14 +4,30 @@ import { Sidebar } from './components/Sidebar';
 // import { StrategyComparison } from './components/StrategyComparison';
 import { SimulationView } from './components/SimulationView';
 import { IntroSequence } from './components/IntroSequence';
+import { RobotShowcase } from './components/RobotShowcase';
 
 import { useLocalStorage } from './hooks/useLocalStorage';
 import type { MissionHistoryItem, MissionResult } from './types';
-import { Bot, Power, QrCode, History } from 'lucide-react';
+import { Bot, Info, Power, QrCode, History } from 'lucide-react';
 import QRCode from 'react-qr-code';
 import { io } from 'socket.io-client';
 import { Play } from 'lucide-react'; // ensure Play is imported for the execute button
 
+export const AnimatedPASName = () => {
+  return (
+    <span className="group inline-flex items-center cursor-default">
+      <span className="flex items-center overflow-hidden">
+        P<span className="inline-block max-w-0 opacity-0 group-hover:max-w-[100px] group-hover:opacity-100 transition-all duration-500 ease-in-out font-mono tracking-normal text-cyan-300">RESTEN</span>
+      </span>
+      <span className="flex items-center overflow-hidden">
+        <span className="ml-[2px] group-hover:ml-1 transition-all duration-500">A</span><span className="inline-block max-w-0 opacity-0 group-hover:max-w-[100px] group-hover:opacity-100 transition-all duration-500 ease-in-out font-mono tracking-normal text-cyan-300">JIN</span>
+      </span>
+      <span className="flex items-center overflow-hidden">
+        <span className="ml-[2px] group-hover:ml-1 transition-all duration-500">S</span><span className="inline-block max-w-0 opacity-0 group-hover:max-w-[100px] group-hover:opacity-100 transition-all duration-500 ease-in-out font-mono tracking-normal text-cyan-300">AM</span>
+      </span>
+    </span>
+  );
+};
 
 function App() {
   const [history, setHistory] = useLocalStorage<MissionHistoryItem[]>('robot-mission-history', []);
@@ -24,10 +40,13 @@ function App() {
   };
   const [showIntro, setShowIntro] = useState(() => isMobile ? false : !safeGetSession('hasSeenIntro'));
   const [introRendered, setIntroRendered] = useState(() => isMobile ? false : !safeGetSession('hasSeenIntro'));
+  const [showRobotFeatures, setShowRobotFeatures] = useState(false);
   const [pendingEmergency, setPendingEmergency] = useState<{x: number, y: number} | null>(null);
+  const [localIp, setLocalIp] = useState('');
   const [isOn, setIsOn] = useState(false);
   const [showQR, setShowQR] = useState(false);
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
+  const [pairingToken, setPairingToken] = useState('');
   const [isAlarmActive, setIsAlarmActive] = useState(false);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const socketRef = useRef<any>(null);
@@ -55,7 +74,13 @@ function App() {
       .then(data => setInitialMapData(data))
       .catch(err => console.error("Failed to load initial map:", err));
 
+    fetch(`/api/ip`)
+      .then(res => res.json())
+      .then(data => setLocalIp(data.ip))
+      .catch(console.error);
 
+    const token = Math.random().toString(36).substring(2, 10).toUpperCase();
+    setPairingToken(token);
 
     const newSocket = io(`/`);
     socketRef.current = newSocket;
@@ -307,6 +332,12 @@ function App() {
           >
             <QrCode className="w-4 h-4" /> Mobile Connect
           </button>
+          <button
+            onClick={() => setShowRobotFeatures(true)}
+            className="flex items-center gap-2 bg-white/5 hover:bg-white/10 border border-white/10 text-cyan-400 px-3 py-1.5 rounded-lg text-xs font-bold uppercase tracking-wider transition-colors"
+          >
+            <Info className="w-4 h-4" /> Robot Specs
+          </button>
         </div>
       </nav>
 
@@ -324,7 +355,7 @@ function App() {
         <div className="md:hidden flex flex-col flex-1 bg-[#050505] p-2 gap-8 justify-center overflow-y-auto z-50 rounded-2xl border border-white/10">
           <div className="text-center mt-2">
              <Bot className="w-20 h-20 text-cyan-500 mx-auto mb-4 drop-shadow-[0_0_15px_rgba(34,211,238,0.5)]" />
-             <h2 className="text-3xl font-black text-white tracking-widest flex items-center justify-center">ROBOT DASHBOARD</h2>
+             <h2 className="text-3xl font-black text-white tracking-widest flex items-center justify-center"><AnimatedPASName /></h2>
              <p className="text-cyan-500 text-xs mt-2 font-mono uppercase tracking-widest">Remote Control Active</p>
           </div>
           
@@ -400,6 +431,10 @@ function App() {
         </div>
       </main>
       </div>
+
+      {showRobotFeatures && (
+        <RobotShowcase onClose={() => setShowRobotFeatures(false)} />
+      )}
 
       {showQR && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={() => setShowQR(false)}>
