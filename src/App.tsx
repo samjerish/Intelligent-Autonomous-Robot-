@@ -7,7 +7,7 @@ import { IntroSequence } from './components/IntroSequence';
 
 import { useLocalStorage } from './hooks/useLocalStorage';
 import type { MissionHistoryItem, MissionResult } from './types';
-import { Bot, Info, Power, QrCode, History } from 'lucide-react';
+import { Bot, Power, QrCode, History } from 'lucide-react';
 import QRCode from 'react-qr-code';
 import { io } from 'socket.io-client';
 import { Play } from 'lucide-react'; // ensure Play is imported for the execute button
