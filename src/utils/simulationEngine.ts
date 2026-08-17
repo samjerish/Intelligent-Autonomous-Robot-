@@ -168,15 +168,72 @@ export function calculateLongPath(start: GridPoint, end: GridPoint, obstacles: G
     return calculatePath(start, end, obstacles, mapData);
   }
 
-  // Calculate path to detour, then from detour to end
-  const part1 = calculatePath(start, detourPoint, obstacles, mapData);
-  const part2 = calculatePath(detourPoint, end, obstacles, mapData);
-
-  if (part1.length > 0 && part2.length > 0) {
-    // Combine paths, avoiding duplicate at the connection point
-    return [...part1, ...part2.slice(1)];
+  if (detourPoint) {
+    const p1 = calculatePath(start, detourPoint, obstacles, mapData, requireRoads);
+    const p2 = calculatePath(detourPoint, end, obstacles, mapData, requireRoads);
+    if (p1.length > 0 && p2.length > 0) {
+      return [...p1, p1[p1.length - 1], ...p2.slice(1)];
+    }
   }
 
-  // Fallback if detour pathing fails
-  return calculatePath(start, end, obstacles, mapData);
+  // Fallback to normal path
+  return calculatePath(start, end, obstacles, mapData, requireRoads);
+}
+
+export function calculateEvadePath(start: GridPoint, obstacles: GridPoint[], mapData: MapData): GridPoint[] {
+  const { gridSize } = mapData;
+  const obstacleSet = new Set(obstacles?.map(o => `${o.x},${o.y},${o.f}`));
+  const isObstacle = (x: number, y: number, f: number) => obstacleSet.has(`${x},${y},${f}`);
+
+  const queue = [{ pos: start, path: [start] }];
+  const visited = new Set<string>();
+  visited.add(`${start.x},${start.y},${start.f}`);
+
+  let bestPath: GridPoint[] = [];
+  let bestDist = -1;
+
+  while (queue.length > 0) {
+    const { pos, path } = queue.shift()!;
+    
+    if (path.length > 1) {
+       let minObstacleDist = 999;
+       for (const obs of obstacles) {
+         if (obs.f === pos.f) {
+           const d = Math.abs(obs.x - pos.x) + Math.abs(obs.y - pos.y);
+           if (d < minObstacleDist) minObstacleDist = d;
+         }
+       }
+       
+       if (minObstacleDist > bestDist) {
+          bestDist = minObstacleDist;
+          bestPath = path;
+       }
+       if (minObstacleDist >= 2) {
+         return path; // Found a safe enough spot
+       }
+    }
+    
+    if (path.length > 4) continue; // max 4 steps
+
+    const neighbors = [
+      { x: pos.x, y: pos.y - 1, f: pos.f },
+      { x: pos.x, y: pos.y + 1, f: pos.f },
+      { x: pos.x - 1, y: pos.y, f: pos.f },
+      { x: pos.x + 1, y: pos.y, f: pos.f }
+    ];
+
+    for (const n of neighbors) {
+      if (
+        n.x >= 0 && n.x < gridSize.x &&
+        n.y >= 0 && n.y < gridSize.y &&
+        !isObstacle(n.x, n.y, n.f) &&
+        !visited.has(`${n.x},${n.y},${n.f}`)
+      ) {
+        visited.add(`${n.x},${n.y},${n.f}`);
+        queue.push({ pos: n, path: [...path, n] });
+      }
+    }
+  }
+  
+  return bestPath;
 }
