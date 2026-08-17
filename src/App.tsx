@@ -39,7 +39,6 @@ function App() {
   };
   const [showIntro, setShowIntro] = useState(() => isMobile ? false : !safeGetSession('hasSeenIntro'));
   const [introRendered, setIntroRendered] = useState(() => isMobile ? false : !safeGetSession('hasSeenIntro'));
-  const [showRobotFeatures, setShowRobotFeatures] = useState(false);
   const [pendingEmergency, setPendingEmergency] = useState<{x: number, y: number} | null>(null);
   const [isOn, setIsOn] = useState(false);
   const [showQR, setShowQR] = useState(false);
@@ -321,12 +320,6 @@ function App() {
           >
             <QrCode className="w-4 h-4" /> Mobile Connect
           </button>
-          <button
-            onClick={() => setShowRobotFeatures(true)}
-            className="flex items-center gap-2 bg-white/5 hover:bg-white/10 border border-white/10 text-cyan-400 px-3 py-1.5 rounded-lg text-xs font-bold uppercase tracking-wider transition-colors"
-          >
-            <Info className="w-4 h-4" /> Robot Specs
-          </button>
         </div>
       </nav>
 
@@ -420,10 +413,6 @@ function App() {
         </div>
       </main>
       </div>
-
-      {showRobotFeatures && (
-        <RobotShowcase onClose={() => setShowRobotFeatures(false)} />
-      )}
 
       {showQR && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={() => setShowQR(false)}>
