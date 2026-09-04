@@ -50,6 +50,8 @@ const CameraController = ({ isFollowing, robotPosRef, robotRotRef, controlsRef, 
   const { camera } = useThree();
   // Smoothed look-target to prevent jitter when following
   const smoothTarget = useRef(new THREE.Vector3(0, 0.5, 0));
+  // Heavy low-pass filtered heading to eliminate camera wobble on steering maneuvers
+  const smoothHeading = useRef<number | null>(null);
 
   useFrame((_state, delta) => {
     if (triggerReset) {
@@ -69,24 +71,34 @@ const CameraController = ({ isFollowing, robotPosRef, robotRotRef, controlsRef, 
     }
 
     if (isFollowing && robotPosRef.current && robotRotRef?.current !== undefined) {
-      // 3rd Person Follow Camera
-      const theta = robotRotRef.current;
-      const behindDist = 4.5;
-      const upDist = 2.5;
+      // 3rd Person Smooth Follow Camera with decoupled yaw damping
+      const rawTheta = robotRotRef.current;
+      if (smoothHeading.current === null) {
+        smoothHeading.current = rawTheta;
+      } else {
+        let diff = rawTheta - smoothHeading.current;
+        while (diff < -Math.PI) diff += Math.PI * 2;
+        while (diff > Math.PI) diff -= Math.PI * 2;
+        // Soft, majestic drone-like heading tracking (delta * 1.5)
+        smoothHeading.current += diff * Math.min(1.0, delta * 1.5);
+      }
+
+      const behindDist = 4.8;
+      const upDist = 2.8;
       
       const offset = new THREE.Vector3(
-        -Math.sin(theta) * behindDist,
+        -Math.sin(smoothHeading.current) * behindDist,
         upDist,
-        -Math.cos(theta) * behindDist
+        -Math.cos(smoothHeading.current) * behindDist
       );
       const desiredPos = new THREE.Vector3().copy(robotPosRef.current).add(offset);
 
-      // Very smooth position lerp
-      const lerpAlpha = 1 - Math.pow(0.005, delta);
+      // Deep, vibration-free spring damping for camera position
+      const lerpAlpha = 1 - Math.pow(0.001, delta);
       camera.position.lerp(desiredPos, lerpAlpha);
 
-      // Smooth the look-at target to look slightly ahead/above the robot
-      const targetLook = new THREE.Vector3().copy(robotPosRef.current).add(new THREE.Vector3(0, 0.5, 0));
+      // Smooth look-at target focused slightly above the robot's chassis
+      const targetLook = new THREE.Vector3().copy(robotPosRef.current).add(new THREE.Vector3(0, 0.45, 0));
       smoothTarget.current.lerp(targetLook, lerpAlpha);
       camera.lookAt(smoothTarget.current);
 
@@ -1588,16 +1600,34 @@ const Robot = ({
   );
 };
 
-const PathLine = ({ path, currentIndex, gridSize, isMapView, color = "#00ffff", opacity = 0.8 }: { path: GridPoint[], currentIndex: number, gridSize: GridPoint, isMapView: boolean, color?: string, opacity?: number }) => {
-  const remainingPath = path.slice(currentIndex);
-  if (remainingPath.length < 2) return null;
-  const points = remainingPath.map(p => {
-    const [x, y, z] = getGridPosition(p, gridSize, 0.1, isMapView);
-    return new THREE.Vector3(x, y, z);
-  });
+const PathLine = ({ path, currentIndex, gridSize, isMapView, color = "#00ffff", opacity = 0.85 }: { path: GridPoint[], currentIndex: number, gridSize: GridPoint, isMapView: boolean, color?: string, opacity?: number }) => {
+  const splinePoints = useMemo(() => {
+    const remainingPath = path.slice(Math.max(0, currentIndex - 1));
+    if (remainingPath.length < 2) return [];
+    
+    // Deduplicate adjacent identical waypoints
+    const rawPoints: THREE.Vector3[] = [];
+    for (let i = 0; i < remainingPath.length; i++) {
+      const p = remainingPath[i];
+      const [x, y, z] = getGridPosition(p, gridSize, 0.1, isMapView);
+      const pt = new THREE.Vector3(x, y, z);
+      if (rawPoints.length === 0 || rawPoints[rawPoints.length - 1].distanceTo(pt) > 0.08) {
+        rawPoints.push(pt);
+      }
+    }
+    
+    if (rawPoints.length < 2) return rawPoints;
+    
+    // Build centripetal Catmull-Rom curve to eliminate loops and cusps
+    const curve = new THREE.CatmullRomCurve3(rawPoints, false, 'centripetal', 0.5);
+    const divisions = Math.min(240, Math.max(30, rawPoints.length * 8));
+    return curve.getPoints(divisions);
+  }, [path, currentIndex, gridSize, isMapView]);
+
+  if (splinePoints.length < 2) return null;
 
   return (
-    <Line points={points} color={color} lineWidth={4} opacity={opacity} transparent />
+    <Line points={splinePoints} color={color} lineWidth={4.5} opacity={opacity} transparent />
   );
 };
 
