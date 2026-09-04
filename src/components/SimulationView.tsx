@@ -1390,205 +1390,254 @@ const Robot = ({
   const [isSlowCaution, setIsSlowCaution] = useState(false);
   const [isWaiting, setIsWaiting] = useState(false);
   const hasCompletedRef = useRef(false);
-  const dodgeOffsetRef = useRef(0);
-  const dodgeSideRef = useRef(0); // Latch: 0 = none, 1 = right, -1 = left (eliminates all lateral jitter)
-  const cautionActiveRef = useRef(false);
-  const lastCautionLogTime = useRef(0);
-  const lastRerouteTimeRef = useRef(0);
-  const waitTimerRef = useRef(0);
   const actualSpeedRef = useRef(0);
   const pauseTimeRef = useRef(0);
+  const distanceTraveledRef = useRef(0);
+  const smoothedLateralOffsetRef = useRef(0);
+  const lastCautionLogTime = useRef(0);
+  const lastDiversionNotificationTime = useRef(0);
 
+  // 1. Build centripetal 3D spline curve and cumulative waypoint distances
+  const { curve, totalLength, waypointDistances } = useMemo(() => {
+    if (path.length < 2) {
+      return { curve: null, totalLength: 0, waypointDistances: [] };
+    }
+
+    const unique3DPoints: THREE.Vector3[] = [];
+    const wpDists: number[] = [0];
+
+    for (let i = 0; i < path.length; i++) {
+      const pt = path[i];
+      const [x, y, z] = getGridPosition(pt, gridSize, 0.22, isMapView);
+      const vec = new THREE.Vector3(x, y, z);
+      if (unique3DPoints.length === 0 || unique3DPoints[unique3DPoints.length - 1].distanceTo(vec) > 0.08) {
+        if (unique3DPoints.length > 0) {
+          const segDist = unique3DPoints[unique3DPoints.length - 1].distanceTo(vec);
+          wpDists.push(wpDists[wpDists.length - 1] + segDist);
+        }
+        unique3DPoints.push(vec);
+      }
+    }
+
+    if (unique3DPoints.length < 2) {
+      return { curve: null, totalLength: 0, waypointDistances: [] };
+    }
+
+    const catmull = new THREE.CatmullRomCurve3(unique3DPoints, false, 'centripetal', 0.5);
+    const len = catmull.getLength();
+    return { curve: catmull, totalLength: len, waypointDistances: wpDists };
+  }, [path, gridSize, isMapView]);
+
+  // Reset progress when new path is assigned
   useEffect(() => {
     hasCompletedRef.current = false;
+    distanceTraveledRef.current = 0;
   }, [path]);
-
-  const targetVector = useMemo(() => {
-    if (path.length === 0) return new THREE.Vector3(0, 0, 0);
-    const pos = path[Math.min(currentIndex, path.length - 1)];
-    const [x, y, z] = getGridPosition(pos, gridSize, 0.22, isMapView);
-    return new THREE.Vector3(x, y, z);
-  }, [path, currentIndex, gridSize, isMapView]);
 
   useFrame((_state, delta) => {
     if (!ref.current) return;
     const currentPos = ref.current.position;
     robotPosRef.current = currentPos.clone();
     robotRotRef.current = ref.current.rotation.y;
-    
+
     if (pauseTimeRef.current > 0) {
       pauseTimeRef.current -= delta;
       if (isMovingRef.current) { isMovingRef.current = false; setIsMoving(false); }
+      return;
     }
-    
-    if (pauseTimeRef.current > 0) return; // Wait if still paused
+
+    if (!curve || totalLength <= 0.01) {
+      if (path.length > 0) {
+        const [sx, sy, sz] = getGridPosition(path[0], gridSize, 0.22, isMapView);
+        currentPos.lerp(new THREE.Vector3(sx, sy, sz), 0.1);
+      }
+      return;
+    }
 
     if (isPlaying) {
-      // --- Intelligent Proximity Sensing & Smooth Zero-Shake Evasion ---
+      const s = distanceTraveledRef.current;
+      const uCurrent = Math.min(1.0, Math.max(0.0, s / totalLength));
+
+      // Current nominal curve position & tangent
+      const nominalPos = curve.getPointAt(uCurrent);
+      const nominalTangent = curve.getTangentAt(uCurrent).normalize();
+
+      // --- Early Obstacle Sensing & Smooth Gaussian Curved Diversion ---
+      let maxDiversionOffset = 0;
       let closestObsDist = 999;
-      let closestObsType: 'car' | 'person' | null = null;
-      let closestObsPos: GridPoint | null = null;
-      
+      let isAnyObstacleBlocking = false;
+
       if (dynamicObstaclesRef && dynamicObstaclesRef.current && dynamicObstaclesRef.current.length > 0) {
-        const forward = new THREE.Vector3().subVectors(targetVector, currentPos).normalize();
-        
         for (const obs of dynamicObstaclesRef.current) {
           const obsPos3D = obs.pos3D || (() => {
             const [ox, , oz] = getGridPosition(obs.pos, gridSize, 0.05, isMapView);
             return new THREE.Vector3(ox, currentPos.y, oz);
           })();
-          const d = currentPos.distanceTo(obsPos3D);
-          
-          if (d < 4.8) {
-            const toObs = new THREE.Vector3().subVectors(obsPos3D, currentPos).normalize();
-            const dot = forward.dot(toObs);
-            
-            // Check if obstacle is ahead in the forward vision cone (dot > 0.05) OR on/near upcoming path nodes
-            const isAheadInCone = dot > 0.05;
-            const isNearUpcomingPath = path.slice(currentIndex, currentIndex + 5).some(p => 
-              Math.abs(p.x - obs.pos.x) <= 1 && Math.abs(p.y - obs.pos.y) <= 1
-            );
+          const distToRobot = currentPos.distanceTo(obsPos3D);
 
-            if ((isAheadInCone || isNearUpcomingPath) && d < closestObsDist) {
-              closestObsDist = d;
-              closestObsType = obs.type;
-              closestObsPos = obs.pos;
-              
-              // Latch dodge direction once to eliminate all shaking / oscillation
-              if (d < 4.5 && dodgeSideRef.current === 0) {
-                const crossY = forward.x * toObs.z - forward.z * toObs.x;
-                // If obstacle is clearly on the right (crossY < -0.05), dodge left (-1). Otherwise dodge right (+1)
-                dodgeSideRef.current = crossY < -0.05 ? -1 : 1;
+          // Early detection horizon: scan obstacles within 5.5m of the robot
+          if (distToRobot < 5.5) {
+            if (distToRobot < closestObsDist) {
+              closestObsDist = distToRobot;
+            }
+
+            // Estimate obstacle's projection onto the forward spline corridor
+            const lookaheadStart = Math.max(0, s - 1.0);
+            const lookaheadEnd = Math.min(totalLength, s + 5.2);
+            let bestDistSq = 9999;
+            let sObstacle = s + 1.0;
+            let curvePtAtObs = nominalPos;
+            let tangentAtObs = nominalTangent;
+
+            for (let testS = lookaheadStart; testS <= lookaheadEnd; testS += 0.35) {
+              const testU = testS / totalLength;
+              const testPt = curve.getPointAt(testU);
+              const dSq = testPt.distanceToSquared(obsPos3D);
+              if (dSq < bestDistSq) {
+                bestDistSq = dSq;
+                sObstacle = testS;
+                curvePtAtObs = testPt;
+                tangentAtObs = curve.getTangentAt(testU);
+              }
+            }
+
+            const lateralDist = Math.sqrt(bestDistSq);
+            // If obstacle is situated in or immediately encroaching our travel corridor (< 1.25m from centerline)
+            // and obstacle is ahead or abreast (sObstacle > s - 0.8)
+            if (lateralDist < 1.25 && sObstacle > s - 0.8) {
+              isAnyObstacleBlocking = true;
+              const normAtObs = new THREE.Vector3(tangentAtObs.z, 0, -tangentAtObs.x).normalize();
+              const toObs = new THREE.Vector3().subVectors(obsPos3D, curvePtAtObs);
+              const sideDot = toObs.dot(normAtObs);
+
+              // If obstacle is on right, divert to left (-0.85m). If on left/center, divert to right (+0.85m)
+              const peakAmplitude = sideDot > 0.05 ? -0.85 : 0.85;
+
+              // Smooth Gaussian bell-curve shaping: sigma = 1.3m (starts ~3m ahead, returns ~3m past)
+              const sigma = 1.3;
+              const distFromCenter = s - sObstacle;
+              const bellCurve = peakAmplitude * Math.exp(-(distFromCenter * distFromCenter) / (2 * sigma * sigma));
+
+              if (Math.abs(bellCurve) > Math.abs(maxDiversionOffset)) {
+                maxDiversionOffset = bellCurve;
               }
             }
           }
         }
       }
 
-      // Reset dodge latch only when road ahead is completely clear
-      if (closestObsDist > 4.8) {
-        dodgeSideRef.current = 0;
+      // Smoothly filter lateral offset (delta * 4.0) to eliminate any twitching
+      smoothedLateralOffsetRef.current = THREE.MathUtils.lerp(
+        smoothedLateralOffsetRef.current,
+        maxDiversionOffset,
+        delta * 4.0
+      );
+
+      // Consistent Forward Cruise Speed Control with Soft Acceleration
+      const cruiseSpeed = speed;
+      let targetSpeed = cruiseSpeed;
+
+      // Soft deceleration only when nearing final destination (< 2.2m from end)
+      const distToEnd = totalLength - s;
+      if (distToEnd < 2.2) {
+        targetSpeed = THREE.MathUtils.lerp(0.35, cruiseSpeed, Math.max(0.1, distToEnd / 2.2));
+      } else if (closestObsDist < 1.5) {
+        // Controlled, calm bypass cruise speed through tight obstacle clearances
+        targetSpeed = cruiseSpeed * 0.75;
       }
 
-      let speedMultiplier = 1.0;
-      const isCaution = closestObsDist < 4.8;
-      const now = Date.now();
-      
-      if (isCaution && closestObsPos) {
-        // Approaching obstacle: determine if robot needs to wait for diversion or smooth passing
-        if (closestObsDist < 2.0) {
-          // SAFE STOP DISTANCE BUFFER: maintain ~1.8m safe distance (Zero-Contact Guarantee!)
-          // Trigger wait timer if not already waiting
-          if (waitTimerRef.current <= 0 && (now - lastRerouteTimeRef.current > 1500)) {
-            waitTimerRef.current = 1.2; // Smooth 1.2s pause to evaluate and execute diversion
-            lastRerouteTimeRef.current = now;
-            setIsWaiting(true);
-            onObstacleDetected(closestObsPos);
-            if (addExplanation) {
-              addExplanation(`🧠 Obstacle ahead (${closestObsDist.toFixed(1)}m). Pausing safely to evaluate and take diversion...`);
-            }
-          }
-        }
+      // Physical momentum acceleration ramp (delta * 2.2) for smooth start and transitions
+      actualSpeedRef.current = THREE.MathUtils.lerp(actualSpeedRef.current, targetSpeed, delta * 2.2);
 
-        // Count down wait timer
-        if (waitTimerRef.current > 0) {
-          waitTimerRef.current -= delta;
-          speedMultiplier = 0.0; // Completely halted at safe distance: zero touching, zero shaking
-          if (waitTimerRef.current <= 0) {
-            setIsWaiting(false);
-            if (addExplanation) {
-              addExplanation("⚡ Diversion evaluated. Resuming smooth forward movement to destination.");
-            }
-          }
-        } else {
-          // After waiting, or when approaching: smooth, calm maneuvering speed without jerking
-          if (closestObsDist > 1.4) {
-            speedMultiplier = THREE.MathUtils.lerp(0.40, 0.70, (closestObsDist - 1.4) / 3.4);
-          } else {
-            speedMultiplier = 0.30; // Steady calm glide past obstacle
-          }
-        }
-
-        if (!cautionActiveRef.current) {
-          cautionActiveRef.current = true;
-          setIsSlowCaution(true);
-        }
+      // Advance distance along the spline continuously
+      if (actualSpeedRef.current > 0.01) {
+        if (!isMovingRef.current) { isMovingRef.current = true; setIsMoving(true); }
+        distanceTraveledRef.current += actualSpeedRef.current * delta;
       } else {
-        if (waitTimerRef.current > 0) {
-          waitTimerRef.current -= delta;
-          if (waitTimerRef.current <= 0) setIsWaiting(false);
-        }
-        if (cautionActiveRef.current) {
-          cautionActiveRef.current = false;
-          setIsSlowCaution(false);
-          setIsWaiting(false);
-          if (now - lastCautionLogTime.current > 2500 && addExplanation) {
-            lastCautionLogTime.current = now;
-            addExplanation("✓ Road corridor clear. Cruising smoothly towards destination.");
-          }
-        }
-      }
-
-      // Smooth, gentle lateral glide with delta * 3.0 (no rapid twitching or vibration)
-      const targetDodge = dodgeSideRef.current * 0.45;
-      dodgeOffsetRef.current = THREE.MathUtils.lerp(dodgeOffsetRef.current, targetDodge, delta * 3.0);
-
-      // Compute target vector with latched lateral offset
-      const forwardDir = new THREE.Vector3().subVectors(targetVector, currentPos).normalize();
-      const lateralVec = new THREE.Vector3(forwardDir.z, 0, -forwardDir.x);
-      const targetWithDodge = targetVector.clone().add(lateralVec.multiplyScalar(dodgeOffsetRef.current));
-
-      const dist = currentPos.distanceTo(targetWithDodge);
-
-      if (dist < 0.12) {
         if (isMovingRef.current) { isMovingRef.current = false; setIsMoving(false); }
-        if (currentIndex < path.length - 1) {
-          const curr = path[currentIndex];
-          const next = path[currentIndex + 1];
-          if (curr.x === next.x && curr.y === next.y) {
-             pauseTimeRef.current = 2.5; // Pause for 2.5 seconds
-          }
-          onReachNode(currentIndex + 1);
+      }
+
+      // Compute smoothly displaced 3D position along curved diversion
+      const currentU = Math.min(1.0, Math.max(0.0, distanceTraveledRef.current / totalLength));
+      const baseSplinePos = curve.getPointAt(currentU);
+      const baseSplineTangent = curve.getTangentAt(currentU).normalize();
+      const baseSplineNormal = new THREE.Vector3(baseSplineTangent.z, 0, -baseSplineTangent.x);
+
+      const targetWithCurvedDiversion = baseSplinePos.clone().add(
+        baseSplineNormal.clone().multiplyScalar(smoothedLateralOffsetRef.current)
+      );
+
+      // Position update: track smoothly
+      currentPos.copy(targetWithCurvedDiversion);
+
+      // Gradual, stable heading orientation: sample lookahead along the curved spline
+      const lookaheadDist = 0.55; // 55cm lookahead vector
+      const lookaheadS = Math.min(totalLength, distanceTraveledRef.current + lookaheadDist);
+      const lookaheadU = lookaheadS / totalLength;
+      const lookaheadBasePos = curve.getPointAt(lookaheadU);
+      const lookaheadTangent = curve.getTangentAt(lookaheadU).normalize();
+      const lookaheadNormal = new THREE.Vector3(lookaheadTangent.z, 0, -lookaheadTangent.x);
+
+      // Lookahead offset calculation ensures robot's nose points tangentially into the curve
+      const lookaheadOffset = smoothedLateralOffsetRef.current * 0.95;
+      const lookaheadTarget = lookaheadBasePos.clone().add(
+        lookaheadNormal.clone().multiplyScalar(lookaheadOffset)
+      );
+
+      const forwardVector = new THREE.Vector3().subVectors(lookaheadTarget, currentPos);
+      if (forwardVector.lengthSq() > 0.001) {
+        const targetYaw = Math.atan2(forwardVector.x, forwardVector.z);
+        let diff = targetYaw - ref.current.rotation.y;
+        while (diff < -Math.PI) diff += Math.PI * 2;
+        while (diff > Math.PI) diff -= Math.PI * 2;
+
+        // Gradual steering filter (delta * 3.8) with small deadband for stable orientation
+        if (Math.abs(diff) > 0.003) {
+          ref.current.rotation.y += diff * Math.min(1.0, delta * 3.8);
         }
-        else if (currentIndex === path.length - 1) {
-          if (!hasCompletedRef.current) {
-            hasCompletedRef.current = true;
-            onMissionComplete();
-          }
+      }
+
+      // HUD & Explanation updates
+      const isCurving = Math.abs(smoothedLateralOffsetRef.current) > 0.15 || isAnyObstacleBlocking;
+      if (isCurving) {
+        if (!isSlowCaution) setIsSlowCaution(true);
+        const now = Date.now();
+        if (now - lastDiversionNotificationTime.current > 3500 && addExplanation) {
+          lastDiversionNotificationTime.current = now;
+          addExplanation(`⚡ SMOOTH DIVERSION: Obstacle spotted ahead (${closestObsDist.toFixed(1)}m). Curving seamlessly around it.`);
         }
       } else {
-        // Smooth acceleration / deceleration damping (delta * 3.0) for physical realism
-        const desiredSpeed = speed * speedMultiplier;
-        actualSpeedRef.current = THREE.MathUtils.lerp(actualSpeedRef.current, desiredSpeed, delta * 3.0);
-
-        if (actualSpeedRef.current > 0.02) {
-          if (!isMovingRef.current) { isMovingRef.current = true; setIsMoving(true); }
-          const moveDist = actualSpeedRef.current * delta;
-          if (moveDist >= dist) {
-            currentPos.copy(targetWithDodge);
-          } else {
-            const stepDir = new THREE.Vector3().subVectors(targetWithDodge, currentPos).normalize();
-            currentPos.add(stepDir.multiplyScalar(moveDist));
+        if (isSlowCaution) {
+          setIsSlowCaution(false);
+          const now = Date.now();
+          if (now - lastCautionLogTime.current > 3500 && addExplanation) {
+            lastCautionLogTime.current = now;
+            addExplanation("✓ Re-aligned with primary route. Cruising steadily.");
           }
-        } else {
-          if (isMovingRef.current) { isMovingRef.current = false; setIsMoving(false); }
         }
+      }
 
-        // Silky smooth rotation (delta * 4.5) with small deadband to eliminate all heading jitter
-        const rotDirection = new THREE.Vector3().subVectors(targetWithDodge, currentPos);
-        if (rotDirection.lengthSq() > 0.01) {
-          const targetRotation = Math.atan2(rotDirection.x, rotDirection.z);
-          let diff = targetRotation - ref.current.rotation.y;
-          while (diff < -Math.PI) diff += Math.PI * 2;
-          while (diff > Math.PI) diff -= Math.PI * 2;
-          if (Math.abs(diff) > 0.015) {
-            ref.current.rotation.y += diff * Math.min(1.0, delta * 4.5);
+      // Waypoint & Mission Completion Tracking
+      if (waypointDistances.length > 0) {
+        for (let i = currentIndex; i < waypointDistances.length; i++) {
+          if (distanceTraveledRef.current >= waypointDistances[i] - 0.2) {
+            onReachNode(i);
           }
+        }
+      }
+
+      if (distanceTraveledRef.current >= totalLength - 0.15) {
+        if (!hasCompletedRef.current) {
+          hasCompletedRef.current = true;
+          onMissionComplete();
         }
       }
     } else {
       if (isMovingRef.current) { isMovingRef.current = false; setIsMoving(false); }
-      currentPos.lerp(targetVector, 0.2);
+      if (path.length > 0) {
+        const [sx, sy, sz] = getGridPosition(path[0], gridSize, 0.22, isMapView);
+        currentPos.lerp(new THREE.Vector3(sx, sy, sz), 0.1);
+      }
     }
   });
 
