@@ -20,6 +20,7 @@ import {
   Text,
 } from '@react-three/drei';
 import * as THREE from 'three';
+import { Line2, LineMaterial, LineGeometry } from 'three-stdlib';
 
 const CELL_SIZE = 1;
 
