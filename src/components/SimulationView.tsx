@@ -98,10 +98,15 @@ const CameraController = ({ isFollowing, robotPosRef, robotRotRef, controlsRef, 
   return null;
 };
 
+const CAR_COLORS = ['#ef4444', '#3b82f6', '#f59e0b', '#10b981', '#8b5cf6', '#06b6d4', '#e2e8f0', '#ec4899'];
+
 const MovingEntity = ({ obstacle, gridSize, isMapView, robotPosRef, allObstaclesRef }: { obstacle: DynamicObstacle, gridSize: GridPoint, isMapView: boolean, robotPosRef?: React.MutableRefObject<THREE.Vector3 | null>, allObstaclesRef?: React.MutableRefObject<DynamicObstacle[]> }) => {
   const ref = useRef<THREE.Group>(null);
   const yieldOffsetRef = useRef(0);
   const lastDirRef = useRef({ x: 0, z: 1 });
+  
+  const carIndex = parseInt(obstacle.id.replace(/\D/g, '') || '0', 10);
+  const carColor = CAR_COLORS[carIndex % CAR_COLORS.length];
   
   useFrame((_state, delta) => {
     if (!ref.current || obstacle.path.length === 0 || !obstacle.isMoving) return;
@@ -139,14 +144,13 @@ const MovingEntity = ({ obstacle, gridSize, isMapView, robotPosRef, allObstacles
       if (distToRobot < 4.0) {
         const toRobotX = robotPosRef.current.x - currentPos.x;
         const toRobotZ = robotPosRef.current.z - currentPos.z;
-        // Dot product with forward movement direction
         const dotForward = toRobotX * dirX + toRobotZ * dirZ;
         
         // If robot is ahead or alongside (approaching or crossing)
         if (dotForward > -0.5) {
           isYielding = true;
-          yieldTarget = obstacle.type === 'car' ? 0.52 : 0.65;
-          if (distToRobot < 1.6) {
+          yieldTarget = obstacle.type === 'car' ? 0.50 : 0.65;
+          if (distToRobot < 1.4) {
             pauseAtShoulder = true;
           }
         }
@@ -161,7 +165,7 @@ const MovingEntity = ({ obstacle, gridSize, isMapView, robotPosRef, allObstacles
       return;
     }
 
-    // Anti-overlap with other dynamic obstacles: slow down slightly instead of permanent deadlock
+    // Anti-overlap with other dynamic obstacles
     if (allObstaclesRef && allObstaclesRef.current) {
        const isNearAnother = allObstaclesRef.current.some(other => 
            other.id !== obstacle.id && 
@@ -220,14 +224,33 @@ const MovingEntity = ({ obstacle, gridSize, isMapView, robotPosRef, allObstacles
     <group ref={ref} position={startPos} scale={1.0}>
       {obstacle.type === 'car' ? (
         <group>
-          <Box args={[0.55, 0.35, 1.0]} position={[0, 0.18, 0]} castShadow>
-            <meshStandardMaterial color="#ef4444" metalness={0.6} roughness={0.3} />
+          {/* Main Chassis */}
+          <Box args={[0.55, 0.26, 1.05]} position={[0, 0.16, 0]} castShadow>
+            <meshStandardMaterial color={carColor} metalness={0.6} roughness={0.3} />
           </Box>
-          {/* Simple wheels */}
-          <Cylinder args={[0.12, 0.12, 0.65, 12]} position={[0, 0, 0.3]} rotation={[0, 0, Math.PI / 2]} castShadow>
+          {/* Cabin / Windshield */}
+          <Box args={[0.48, 0.22, 0.55]} position={[0, 0.38, -0.05]} castShadow>
+            <meshStandardMaterial color="#0f172a" metalness={0.9} roughness={0.1} />
+          </Box>
+          {/* Front Headlights */}
+          <Box args={[0.12, 0.05, 0.02]} position={[0.18, 0.18, 0.53]}>
+            <meshStandardMaterial color="#fef08a" emissive="#fef08a" emissiveIntensity={0.9} />
+          </Box>
+          <Box args={[0.12, 0.05, 0.02]} position={[-0.18, 0.18, 0.53]}>
+            <meshStandardMaterial color="#fef08a" emissive="#fef08a" emissiveIntensity={0.9} />
+          </Box>
+          {/* Rear Taillights */}
+          <Box args={[0.12, 0.05, 0.02]} position={[0.18, 0.18, -0.53]}>
+            <meshStandardMaterial color="#ef4444" emissive="#ef4444" emissiveIntensity={0.9} />
+          </Box>
+          <Box args={[0.12, 0.05, 0.02]} position={[-0.18, 0.18, -0.53]}>
+            <meshStandardMaterial color="#ef4444" emissive="#ef4444" emissiveIntensity={0.9} />
+          </Box>
+          {/* Wheels */}
+          <Cylinder args={[0.12, 0.12, 0.62, 14]} position={[0, 0.12, 0.3]} rotation={[0, 0, Math.PI / 2]} castShadow>
             <meshStandardMaterial color="#1e293b" />
           </Cylinder>
-          <Cylinder args={[0.12, 0.12, 0.65, 12]} position={[0, 0, -0.3]} rotation={[0, 0, Math.PI / 2]} castShadow>
+          <Cylinder args={[0.12, 0.12, 0.62, 14]} position={[0, 0.12, -0.3]} rotation={[0, 0, Math.PI / 2]} castShadow>
             <meshStandardMaterial color="#1e293b" />
           </Cylinder>
         </group>
@@ -881,7 +904,7 @@ const SciFiGate = ({ position, scale = 1, rotation = [0, 0, 0] }: { position: [n
 };
 
 /* ── Detailed Animated 3D Robot Body ── */
-export const DetailedRobot = ({ isMoving, showFeatures = false, activeFeature = "", isEmergency = false }: { isMoving: boolean; showFeatures?: boolean; activeFeature?: string; isEmergency?: boolean }) => {
+export const DetailedRobot = ({ isMoving, showFeatures = false, activeFeature = "", isEmergency = false, isSlowCaution = false }: { isMoving: boolean; showFeatures?: boolean; activeFeature?: string; isEmergency?: boolean; isSlowCaution?: boolean }) => {
   const bodyRef = useRef<THREE.Group>(null);
   const headRef = useRef<THREE.Group>(null);
   const leftArmRef = useRef<THREE.Group>(null);
@@ -900,11 +923,10 @@ export const DetailedRobot = ({ isMoving, showFeatures = false, activeFeature = 
     const t = clock.current;
 
     if (bodyRef.current) bodyRef.current.position.y = 0;
-    if (headRef.current) headRef.current.rotation.y = 0;
     if (leftArmRef.current) leftArmRef.current.rotation.x = 0;
     if (rightArmRef.current) rightArmRef.current.rotation.x = 0;
 
-    const ws = isMoving ? 8 : 0.5;
+    const ws = isMoving ? (isSlowCaution ? 2.5 : 8) : 0.5;
     if (leftWheelRef.current) leftWheelRef.current.rotation.x += delta * ws;
     if (rightWheelRef.current) rightWheelRef.current.rotation.x += delta * ws;
     if (frontWheelRef.current) frontWheelRef.current.rotation.x += delta * ws;
@@ -916,6 +938,10 @@ export const DetailedRobot = ({ isMoving, showFeatures = false, activeFeature = 
         mat.color.set('#ef4444');
         mat.emissive.set('#ef4444');
         mat.emissiveIntensity = 1.0 + 1.0 * Math.sin(t * 15);
+      } else if (isSlowCaution) {
+        mat.color.set('#f59e0b');
+        mat.emissive.set('#f59e0b');
+        mat.emissiveIntensity = 1.2 + 1.2 * Math.sin(t * 10);
       } else {
         mat.color.set('#f97316');
         mat.emissive.set('#f97316');
@@ -924,8 +950,10 @@ export const DetailedRobot = ({ isMoving, showFeatures = false, activeFeature = 
     }
     
     if (headRef.current) {
-      if (isMoving) {
-        headRef.current.rotation.y = Math.sin(t * 2.5) * 0.4;
+      if (isSlowCaution) {
+        headRef.current.rotation.y = Math.sin(t * 5.0) * 0.45; // alert scanning
+      } else if (isMoving) {
+        headRef.current.rotation.y = Math.sin(t * 2.5) * 0.3;
       } else {
         headRef.current.rotation.y = THREE.MathUtils.lerp(headRef.current.rotation.y, 0, 0.1);
       }
@@ -1133,6 +1161,26 @@ export const DetailedRobot = ({ isMoving, showFeatures = false, activeFeature = 
         <Box args={[0.6, 0.02, 0.5]} position={[0, -0.2, 0]}>
           <meshStandardMaterial color="#0ea5e9" emissive="#0ea5e9" emissiveIntensity={0.4} transparent opacity={0.7} />
         </Box>
+
+        {/* Forward LiDAR Radar Sensor Arc */}
+        <group position={[0, -0.15, 0.35]} rotation={[-Math.PI / 2, 0, 0]}>
+          <ringGeometry args={[0.25, isSlowCaution ? 2.2 : 1.4, 24, 1, -Math.PI / 3, (2 * Math.PI) / 3]} />
+          <meshBasicMaterial 
+            color={isSlowCaution ? '#f59e0b' : '#00ffff'} 
+            transparent 
+            opacity={isSlowCaution ? 0.38 + 0.15 * Math.sin(clock.current * 8) : (isMoving ? 0.14 : 0.05)} 
+            side={THREE.DoubleSide} 
+          />
+        </group>
+
+        {/* Real-time Intelligent Obstacle Proximity Badge */}
+        {isSlowCaution && (
+          <Html position={[0, 1.4, 0]} center style={{ pointerEvents: 'none' }}>
+            <div className="flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-amber-500/90 text-black font-mono font-black text-[9px] tracking-wider shadow-[0_0_12px_rgba(245,158,11,0.8)] uppercase border border-amber-300 animate-pulse whitespace-nowrap">
+              <span>⚠ AI SENSORS: CAUTIOUS CRAWL</span>
+            </div>
+          </Html>
+        )}
       </group>
     </group>
   );
@@ -1140,7 +1188,8 @@ export const DetailedRobot = ({ isMoving, showFeatures = false, activeFeature = 
 
 const Robot = ({
   path, currentIndex, isPlaying, gridSize, isMapView, speed, dynamicObstaclesRef,
-  onReachNode, onMissionComplete, onObstacleDetected, robotPosRef, robotRotRef, isEmergency = false
+  onReachNode, onMissionComplete, onObstacleDetected, robotPosRef, robotRotRef, isEmergency = false,
+  addExplanation
 }: {
   path: GridPoint[];
   currentIndex: number;
@@ -1155,11 +1204,16 @@ const Robot = ({
   robotPosRef: React.MutableRefObject<THREE.Vector3 | null>;
   robotRotRef: React.MutableRefObject<number>;
   isEmergency?: boolean;
+  addExplanation?: (msg: string) => void;
 }) => {
   const ref = useRef<THREE.Group>(null);
   const isMovingRef = useRef(false);
   const [isMoving, setIsMoving] = useState(false);
+  const [isSlowCaution, setIsSlowCaution] = useState(false);
   const hasCompletedRef = useRef(false);
+  const dodgeOffsetRef = useRef(0);
+  const cautionActiveRef = useRef(false);
+  const lastCautionLogTime = useRef(0);
 
   useEffect(() => {
     hasCompletedRef.current = false;
@@ -1183,7 +1237,6 @@ const Robot = ({
     if (pauseTimeRef.current > 0) {
       pauseTimeRef.current -= delta;
       if (isMovingRef.current) { isMovingRef.current = false; setIsMoving(false); }
-      // Don't return early here, we still want to check for obstacles behind us
     }
     
     const dist = currentPos.distanceTo(targetVector);
@@ -1191,27 +1244,74 @@ const Robot = ({
     if (pauseTimeRef.current > 0) return; // Wait if still paused
 
     if (isPlaying) {
-      // --- Sensor Logic: Check for dynamic obstacles directly blocking immediate forward path ---
-      if (dynamicObstaclesRef && dynamicObstaclesRef.current.length > 0) {
-        const nextNode = path[Math.min(currentIndex + 1, path.length - 1)];
-        const currNode = path[currentIndex];
-        let blockedImmediate = false;
+      // --- Intelligent Proximity Sensing & Adaptive Crawl Speed ---
+      let closestObsDist = 999;
+      let closestObsType: 'car' | 'person' | null = null;
+      let lateralDodge = 0;
+      
+      if (dynamicObstaclesRef && dynamicObstaclesRef.current && dynamicObstaclesRef.current.length > 0) {
+        const forward = new THREE.Vector3().subVectors(targetVector, currentPos).normalize();
+        
         for (const obs of dynamicObstaclesRef.current) {
-          if (
-            (obs.pos.x === currNode.x && obs.pos.y === currNode.y) ||
-            (obs.pos.x === nextNode.x && obs.pos.y === nextNode.y)
-          ) {
-            if (dist < 0.8) {
-              blockedImmediate = true;
-              break;
+          const [ox, , oz] = getGridPosition(obs.pos, gridSize, 0.2, isMapView);
+          const obsPos3D = new THREE.Vector3(ox, currentPos.y, oz);
+          const d = currentPos.distanceTo(obsPos3D);
+          
+          if (d < 4.5) {
+            const toObs = new THREE.Vector3().subVectors(obsPos3D, currentPos).normalize();
+            const dot = forward.dot(toObs);
+            
+            // Obstacle is in forward vision cone
+            if (dot > -0.15 && d < closestObsDist) {
+              closestObsDist = d;
+              closestObsType = obs.type;
+              
+              // If within 3.0m, compute intelligent lateral weave
+              if (d < 3.0) {
+                const crossY = forward.x * toObs.z - forward.z * toObs.x;
+                lateralDodge = crossY > 0 ? -0.22 : 0.22;
+              }
             }
           }
         }
-        if (blockedImmediate) {
-          if (isMovingRef.current) { isMovingRef.current = false; setIsMoving(false); }
-          return; // Brief pause to allow dynamic obstacle to clear the shoulder
+      }
+
+      // Determine speed multiplier based on obstacle proximity
+      let speedMultiplier = 1.0;
+      const isCaution = closestObsDist < 4.0;
+      
+      if (isCaution) {
+        if (closestObsDist > 1.2) {
+          // Smooth deceleration curve down to 28% speed
+          speedMultiplier = THREE.MathUtils.lerp(0.28, 0.9, (closestObsDist - 1.2) / 2.8);
+        } else {
+          // Very close: cautious crawl through obstacle corridor
+          speedMultiplier = 0.22;
+        }
+        
+        if (!cautionActiveRef.current) {
+          cautionActiveRef.current = true;
+          setIsSlowCaution(true);
+          const now = Date.now();
+          if (now - lastCautionLogTime.current > 4000 && addExplanation) {
+            lastCautionLogTime.current = now;
+            addExplanation(`🧠 AI SENSORS: ${closestObsType === 'car' ? 'Vehicle' : 'Pedestrian'} detected ${closestObsDist.toFixed(1)}m ahead. Decelerating to cautious crawl speed...`);
+          }
+        }
+      } else {
+        if (cautionActiveRef.current) {
+          cautionActiveRef.current = false;
+          setIsSlowCaution(false);
+          const now = Date.now();
+          if (now - lastCautionLogTime.current > 4000 && addExplanation) {
+            lastCautionLogTime.current = now;
+            addExplanation("✓ Lane cleared. Resuming standard cruising speed.");
+          }
         }
       }
+
+      // Smooth lateral dodging
+      dodgeOffsetRef.current = THREE.MathUtils.lerp(dodgeOffsetRef.current, lateralDodge, delta * 3);
 
       if (dist < 0.05) {
         if (isMovingRef.current) { isMovingRef.current = false; setIsMoving(false); }
@@ -1231,12 +1331,15 @@ const Robot = ({
         }
       } else {
         if (!isMovingRef.current) { isMovingRef.current = true; setIsMoving(true); }
-        const moveDist = speed * delta;
+        const currentSpeed = speed * speedMultiplier;
+        const moveDist = currentSpeed * delta;
         if (moveDist >= dist) {
           currentPos.copy(targetVector);
         } else {
-          const direction = new THREE.Vector3().subVectors(targetVector, currentPos).normalize();
-          currentPos.add(direction.multiplyScalar(moveDist));
+          const forwardDir = new THREE.Vector3().subVectors(targetVector, currentPos).normalize();
+          const lateralVec = new THREE.Vector3(-forwardDir.z, 0, forwardDir.x);
+          const step = forwardDir.multiplyScalar(moveDist).add(lateralVec.multiplyScalar(dodgeOffsetRef.current * delta * 2));
+          currentPos.add(step);
         }
         const rotDirection = new THREE.Vector3().subVectors(targetVector, currentPos);
         if (rotDirection.lengthSq() > 0.01) {
@@ -1256,7 +1359,7 @@ const Robot = ({
   const startPos = getGridPosition(path[0] || { x: 0, y: 0, f: 0 }, gridSize, 0.22, isMapView);
   return (
     <group ref={ref} position={startPos}>
-      <DetailedRobot isMoving={isMoving} isEmergency={isEmergency} />
+      <DetailedRobot isMoving={isMoving} isEmergency={isEmergency} isSlowCaution={isSlowCaution} />
     </group>
   );
 };
@@ -1729,20 +1832,20 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
     const roads = mapData.roads;
     const obs: DynamicObstacle[] = [];
     
-    // Spawn active pedestrians and cars walking/driving along roads
-    for (let i = 0; i < 12; i++) {
+    // Spawn 10 active vehicles and 6 pedestrians walking/driving along roads
+    for (let i = 0; i < 16; i++) {
       const start = roads[Math.floor(Math.random() * roads.length)];
       const end = roads[Math.floor(Math.random() * roads.length)];
       const path = calculatePath(start, end, [...(mapData.obstacles || []), ...userBlockers], mapData, true);
       if (path.length > 0) {
         obs.push({
           id: `obs_${i}`,
-          type: i < 4 ? 'car' : 'person',
+          type: i < 10 ? 'car' : 'person',
           pos: path[0],
           targetPos: end,
           path,
           currentIndex: 0,
-          speed: i < 4 ? 4.5 : (2 + Math.random() * 1.5),
+          speed: i < 10 ? 4.5 : (2 + Math.random() * 1.5),
           isMoving: true
         });
       }
@@ -2696,6 +2799,7 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
               robotPosRef={robotPosRef}
               robotRotRef={robotRotRef}
               isEmergency={robotState === 'emergency_response' || robotState === 'emergency_to_ctr' || robotState === 'ctr_to_emergency'}
+              addExplanation={addExplanation}
             />
           )}
         </Canvas>
