@@ -32,6 +32,7 @@ export type DynamicObstacle = {
   path: GridPoint[];
   currentIndex: number;
   speed: number;
+  velocity?: THREE.Vector3;
   isMoving: boolean;
   isRoadWalker?: boolean;
 };
@@ -265,6 +266,8 @@ const MovingEntity = ({ obstacle, gridSize, isMapView, robotPosRef, allObstacles
       if (isTooCloseToRobot) {
         currentSpeed = 0; // Hold position completely until robot diversion clears
       }
+      // Set real-time velocity vector for predictive dynamic obstacle modeling
+      obstacle.velocity = new THREE.Vector3(dirX * currentSpeed, 0, dirZ * currentSpeed);
       const moveDist = currentSpeed * delta;
       if (moveDist >= dist && dist > 0.001) {
         currentPos.copy(targetVector);
