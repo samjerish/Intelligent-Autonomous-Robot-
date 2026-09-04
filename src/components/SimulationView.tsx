@@ -170,9 +170,8 @@ const MovingEntity = ({ obstacle, gridSize, isMapView, robotPosRef, allObstacles
     const baseOffset = isCar ? 0.22 : (isRoadWalker ? (carIndex % 2 === 0 ? -0.18 : 0.18) : 0.45);
     let yieldTarget = baseOffset;
     let isYielding = false;
-    let pauseAtShoulder = false;
 
-    // Intelligent robot avoidance: step aside to shoulder when robot approaches
+    // Smooth obstacle avoidance: keep moving and shift to shoulder so road stays clear
     if (robotPosRef && robotPosRef.current) {
       const distToRobot = currentPos.distanceTo(robotPosRef.current);
       if (distToRobot < 4.8) {
@@ -180,14 +179,11 @@ const MovingEntity = ({ obstacle, gridSize, isMapView, robotPosRef, allObstacles
         const toRobotZ = robotPosRef.current.z - currentPos.z;
         const dotForward = toRobotX * dirX + toRobotZ * dirZ;
         
-        // If robot is ahead or alongside
+        // If robot is ahead or approaching
         if (dotForward > -0.6) {
           isYielding = true;
-          // Step towards road shoulder to create a passing corridor
-          yieldTarget = baseOffset >= 0 ? 0.58 : -0.58;
-          if (distToRobot < 1.8) {
-            pauseAtShoulder = true;
-          }
+          // Step towards road shoulder to maintain wide open passing corridor
+          yieldTarget = baseOffset >= 0 ? 0.48 : -0.48;
         }
       }
     }
@@ -195,7 +191,7 @@ const MovingEntity = ({ obstacle, gridSize, isMapView, robotPosRef, allObstacles
     // Smoothly shift laterally to lane / shoulder position
     yieldOffsetRef.current = THREE.MathUtils.lerp(yieldOffsetRef.current, yieldTarget, delta * 6);
     
-    // Taillight alert intensity when braking or yielding
+    // Taillight alert intensity when yielding
     if (taillightMatRef.current) {
       taillightMatRef.current.emissiveIntensity = isYielding ? 2.5 : 1.2;
     }
@@ -203,26 +199,19 @@ const MovingEntity = ({ obstacle, gridSize, isMapView, robotPosRef, allObstacles
     // Walking animation for pedestrians
     if (!isCar) {
       const walkSpeed = obstacle.speed * 3.2;
-      const legAngle = pauseAtShoulder ? 0 : Math.sin(t * walkSpeed) * 0.45;
-      const armAngle = pauseAtShoulder ? 0 : Math.sin(t * walkSpeed) * -0.4;
+      const legAngle = Math.sin(t * walkSpeed) * 0.45;
+      const armAngle = Math.sin(t * walkSpeed) * -0.4;
       if (leftLegRef.current) leftLegRef.current.rotation.x = legAngle;
       if (rightLegRef.current) rightLegRef.current.rotation.x = -legAngle;
       if (leftArmRef.current) leftArmRef.current.rotation.x = armAngle;
       if (rightArmRef.current) rightArmRef.current.rotation.x = -armAngle;
     } else {
       // Wheel spin animation for cars
-      if (!pauseAtShoulder) {
-        const wheelSpin = delta * obstacle.speed * 3.5;
-        if (wheel1Ref.current) wheel1Ref.current.rotation.x += wheelSpin;
-        if (wheel2Ref.current) wheel2Ref.current.rotation.x += wheelSpin;
-        if (wheel3Ref.current) wheel3Ref.current.rotation.x += wheelSpin;
-        if (wheel4Ref.current) wheel4Ref.current.rotation.x += wheelSpin;
-      }
-    }
-
-    // If waiting at shoulder for robot to pass, stay at shoulder and let robot through
-    if (pauseAtShoulder) {
-      return;
+      const wheelSpin = delta * obstacle.speed * 3.5;
+      if (wheel1Ref.current) wheel1Ref.current.rotation.x += wheelSpin;
+      if (wheel2Ref.current) wheel2Ref.current.rotation.x += wheelSpin;
+      if (wheel3Ref.current) wheel3Ref.current.rotation.x += wheelSpin;
+      if (wheel4Ref.current) wheel4Ref.current.rotation.x += wheelSpin;
     }
 
     // Anti-overlap with other dynamic obstacles
@@ -1462,31 +1451,34 @@ const Robot = ({
 
       // Determine speed multiplier and zero-contact safety
       let speedMultiplier = 1.0;
-      const isCaution = closestObsDist < 4.5;
+      const isCaution = closestObsDist < 4.8;
       
       if (isCaution && closestObsPos) {
         const now = Date.now();
         
-        // As soon as obstacle is detected, immediately trigger an intelligent diversion towards destination
-        if (now - lastRerouteTimeRef.current > 2200) {
+        // As soon as obstacle is spotted, instantly trigger an intelligent diversion towards destination
+        if (now - lastRerouteTimeRef.current > 350) {
           lastRerouteTimeRef.current = now;
           onObstacleDetected(closestObsPos);
         }
 
-        if (closestObsDist > 2.0) {
-          // Immediately decelerate down towards 12% cautious crawl
-          speedMultiplier = THREE.MathUtils.lerp(0.12, 0.55, (closestObsDist - 2.0) / 2.5);
+        // Quickly slow down to controlled maneuvering speed (38%) to negotiate diversion safely without dashing
+        if (closestObsDist > 1.2) {
+          speedMultiplier = THREE.MathUtils.lerp(0.38, 0.70, (closestObsDist - 1.2) / 3.3);
+        } else if (closestObsDist > 0.6) {
+          // Close bypass: maintain steady crawl so robot never freezes or blocks traffic
+          speedMultiplier = 0.28;
         } else {
-          // ZERO-CONTACT GUARANTEE: Stop completely if obstacle is within 2.0m!
-          speedMultiplier = 0.0;
+          // Safety cushion: pause only if directly touching/under 0.6m
+          speedMultiplier = 0.08;
         }
         
         if (!cautionActiveRef.current) {
           cautionActiveRef.current = true;
           setIsSlowCaution(true);
-          if (now - lastCautionLogTime.current > 3500 && addExplanation) {
+          if (now - lastCautionLogTime.current > 2500 && addExplanation) {
             lastCautionLogTime.current = now;
-            addExplanation(`🧠 AI SENSORS: ${closestObsType === 'car' ? 'Vehicle' : 'Pedestrian'} detected ahead (${closestObsDist.toFixed(1)}m). Slowing down and calculating diversion to destination...`);
+            addExplanation(`⚡ AI SENSORS: Obstacle spotted (${closestObsDist.toFixed(1)}m). Deciding diversion route immediately...`);
           }
         }
       } else {
@@ -1494,15 +1486,15 @@ const Robot = ({
           cautionActiveRef.current = false;
           setIsSlowCaution(false);
           const now = Date.now();
-          if (now - lastCautionLogTime.current > 3500 && addExplanation) {
+          if (now - lastCautionLogTime.current > 2500 && addExplanation) {
             lastCautionLogTime.current = now;
             addExplanation("✓ Road corridor clear. Resuming standard cruising speed.");
           }
         }
       }
 
-      // Smooth lateral dodging
-      dodgeOffsetRef.current = THREE.MathUtils.lerp(dodgeOffsetRef.current, lateralDodge, delta * 3);
+      // Smooth agile lateral dodging
+      dodgeOffsetRef.current = THREE.MathUtils.lerp(dodgeOffsetRef.current, lateralDodge, delta * 6);
 
       // Compute target vector with lateral dodge offset
       const forwardDir = new THREE.Vector3().subVectors(targetVector, currentPos).normalize();
@@ -1539,7 +1531,6 @@ const Robot = ({
             currentPos.add(stepDir.multiplyScalar(moveDist));
           }
         } else {
-          // Zero-contact stop: halt completely until route is diverted or corridor cleared
           if (isMovingRef.current) { isMovingRef.current = false; setIsMoving(false); }
         }
 
@@ -1549,7 +1540,7 @@ const Robot = ({
           let diff = targetRotation - ref.current.rotation.y;
           while (diff < -Math.PI) diff += Math.PI * 2;
           while (diff > Math.PI) diff -= Math.PI * 2;
-          ref.current.rotation.y += diff * delta * 10;
+          ref.current.rotation.y += diff * delta * 12;
         }
       }
     } else {
