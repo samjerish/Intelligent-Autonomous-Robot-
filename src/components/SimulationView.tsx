@@ -2841,36 +2841,79 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
         currentTaskIndexRef.current += 1;
         const nextTask = mapData.tasks[currentTaskIndexRef.current];
         
-        addExplanation(`Reached ${prevTask.locationName}. Task complete. Next: ${nextTask.locationName}. Calculating route...`);
-        
         setIsPlaying(false);
-        isRecalculating.current = true;
-        
-        setTimeout(() => {
-          const currentLoc = path.length > 0 ? path[path.length - 1] : mapData.start;
-          const nextPath = calculatePath(currentLoc, nextTask.location, [...(mapData.obstacles || []), ...userBlockers], mapData);
-          
-          if (nextPath.length > 0) {
-            setPath(nextPath);
-            setCurrentPosIndex(0);
-            setRobotState(prev => prev === 'mission' ? 'mission' : 'patrol');
-            setIsPlaying(true);
-            addExplanation(`Resuming mission to ${nextTask.locationName}.`);
-          } else {
-            addExplanation(`Route calculation to ${nextTask.locationName} failed.`);
-            setRobotState('idle');
-          }
-          isRecalculating.current = false;
-        }, 800);
-      } else {
-        setIsPlaying(false);
-        if (isIdleMode) {
-          setRobotState('idle');
-          addExplanation('Mission complete. Idle mode active, standing by.');
-        } else {
-          setRobotState('patrol');
-          addExplanation('Mission complete. Waiting 2.5s before returning to patrol mode.');
+        addExplanation(`📍 Destination reached: ${prevTask.locationName}. Pausing exactly 5.0 seconds before proceeding to ${nextTask.locationName}.`);
+
+        if (patrolTimerRef.current) {
+          clearInterval(patrolTimerRef.current);
+          patrolTimerRef.current = null;
         }
+
+        setPatrolCountdown(5.0);
+        const pauseStartTime = Date.now();
+        const PAUSE_DURATION_MS = 5000;
+
+        patrolTimerRef.current = setInterval(() => {
+          const elapsedMs = Date.now() - pauseStartTime;
+          const remainingSec = Math.max(0, (PAUSE_DURATION_MS - elapsedMs) / 1000);
+          setPatrolCountdown(remainingSec);
+
+          if (elapsedMs >= PAUSE_DURATION_MS) {
+            clearInterval(patrolTimerRef.current);
+            patrolTimerRef.current = null;
+            setPatrolCountdown(null);
+
+            const currentLoc = path.length > 0 ? path[path.length - 1] : mapData.start;
+            const nextPath = calculatePath(currentLoc, nextTask.location, [...(mapData.obstacles || []), ...userBlockers], mapData);
+            if (nextPath.length > 0) {
+              setPath(nextPath);
+              setCurrentPosIndex(0);
+              setRobotState(prev => prev === 'mission' ? 'mission' : 'patrol');
+              setIsPlaying(true);
+              addExplanation(`🚀 Resuming mission to ${nextTask.locationName}.`);
+            } else {
+              addExplanation(`Route calculation to ${nextTask.locationName} failed.`);
+              setRobotState('idle');
+            }
+          }
+        }, 100);
+      } else {
+        // Continuous Repeating Patrol Loop: Pause exactly 5.0 seconds at destination, then smoothly advance
+        setIsPlaying(false);
+        const currentIdx = patrolIndexRef.current % PATROL_CHECKPOINTS.length;
+        const currentCheckpointName = PATROL_CHECKPOINTS[currentIdx];
+        addExplanation(`📍 Checkpoint arrived: [${currentCheckpointName}]. Mandatory 5.0-second inspection pause initiated.`);
+
+        if (patrolTimerRef.current) {
+          clearInterval(patrolTimerRef.current);
+          patrolTimerRef.current = null;
+        }
+
+        setPatrolCountdown(5.0);
+        const pauseStartTime = Date.now();
+        const PAUSE_DURATION_MS = 5000; // Exactly 5.0 seconds
+
+        patrolTimerRef.current = setInterval(() => {
+          const elapsedMs = Date.now() - pauseStartTime;
+          const remainingSec = Math.max(0, (PAUSE_DURATION_MS - elapsedMs) / 1000);
+          setPatrolCountdown(remainingSec);
+
+          if (elapsedMs >= PAUSE_DURATION_MS) {
+            clearInterval(patrolTimerRef.current);
+            patrolTimerRef.current = null;
+            setPatrolCountdown(null);
+
+            if (isIdleMode) {
+              setRobotState('idle');
+              addExplanation('Idle mode active. Holding position at checkpoint.');
+            } else {
+              // Advance smoothly to next checkpoint in repeating loop
+              const nextIdx = (patrolIndexRef.current + 1) % PATROL_CHECKPOINTS.length;
+              addExplanation(`⏱️ 5.0s pause complete at [${currentCheckpointName}]. Smoothly continuing to [${PATROL_CHECKPOINTS[nextIdx]}].`);
+              dispatchPatrolCheckpoint(nextIdx);
+            }
+          }
+        }, 100);
       }
     }
   };
@@ -3209,6 +3252,8 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
               robotPosRef={robotPosRef}
               robotRotRef={robotRotRef}
               isEmergency={robotState === 'emergency_response' || robotState === 'emergency_to_ctr' || robotState === 'ctr_to_emergency'}
+              checkpointCountdown={patrolCountdown}
+              checkpointName={currentPatrolTarget}
               addExplanation={addExplanation}
             />
           )}
