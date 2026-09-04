@@ -2538,30 +2538,15 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
       setCurrentPosIndex(0);
       setActivePathColor('#38bdf8');
       setIsPlaying(true);
-      addExplanation(`✓ Diversion route established (${newPath.length}m). Navigating safely towards destination.`);
+      addExplanation(`⚡ Diversion route established (${newPath.length}m). Navigating swiftly towards destination.`);
       setTimeout(() => {
         isRecalculating.current = false;
-      }, 2000);
+      }, 400);
     } else {
-      const evadePath = calculateEvadePath(currentLoc, allObstacles, mapData);
-      if (evadePath.length > 0) {
-        addExplanation(`Narrow corridor blocked! Moving into bypass turnout to give space...`);
-        if (robotState !== 'evading_obstacle' && robotState !== 'charging' && robotState !== 'emergency_response') {
-            originalMissionRef.current = { path: [...path], index: currentPosIndex };
-        }
-        setPath(evadePath);
-        setCurrentPosIndex(0);
-        setRobotState('evading_obstacle');
-        setIsPlaying(true);
-        setTimeout(() => {
-          isRecalculating.current = false;
-        }, 2000);
-      } else {
-        addExplanation(`⚠ Single lane corridor: Holding safe 2m distance for obstacle to pass before proceeding.`);
-        setTimeout(() => {
-          isRecalculating.current = false;
-        }, 2000);
-      }
+      // If road is a straight segment without immediate intersection, continue smooth lateral bypass
+      setTimeout(() => {
+        isRecalculating.current = false;
+      }, 400);
     }
   };
 
