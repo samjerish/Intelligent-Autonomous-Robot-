@@ -1990,7 +1990,7 @@ export const PATROL_CHECKPOINTS = [
 
 export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispatchMission, selectedStrategyId }) => {
   const [path, setPath] = useState<GridPoint[]>([]);
-  const [activePathColor, setActivePathColor] = useState<string>('#00ffff');
+  const [activePathColor, setActivePathColor] = useState<string>('#38bdf8');
   const [speedLimit, setSpeedLimit] = useState(50);
   const [isCTROpen, setIsCTROpen] = useState(false);
   const [ctrMessages, setCtrMessages] = useState<{sender: 'user'|'robot', text: string}[]>([{sender: 'robot', text: 'Hello! I am your autonomous service robot. How can I assist you today?'}]);
@@ -2070,10 +2070,14 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
   
   const [dynamicObstacles, setDynamicObstacles] = useState<DynamicObstacle[]>([]);
   const dynamicObstaclesRef = useRef<DynamicObstacle[]>([]);
+  useEffect(() => { dynamicObstaclesRef.current = dynamicObstacles; }, [dynamicObstacles]);
+
+  // Real-time dynamic drivable route polyline coordinates (flat [x, y, z, ...])
+  const drivableRouteRef = useRef<number[]>([]);
   const isRecalculating = useRef(false);
 
   const [battery, setBattery] = useState(100);
-  const [robotState, setRobotState] = useState<RobotState>('off');
+  const [robotState, setRobotState] = useState<RobotState>('patrol');
   const [isOn, setIsOn] = useState(true);
   const patrolIndexRef = useRef(0);
   const [patrolCountdown, setPatrolCountdown] = useState<number | null>(null);
@@ -2098,7 +2102,7 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
   const currentTaskIndexRef = useRef(0);
   const emergencyTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Dispatch smooth continuous patrol leg to an assigned checkpoint
+  // Dispatch smooth continuous patrol leg to an assigned checkpoint with zero teleportation
   const dispatchPatrolCheckpoint = (checkpointIndex: number) => {
     if (!mapData || !mapData.rooms || mapData.rooms.length === 0) return;
     const safeIdx = checkpointIndex % PATROL_CHECKPOINTS.length;
@@ -2114,9 +2118,10 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
 
     if (!targetRoom) return;
 
-    const currentLoc = (path.length > 0 && currentPosIndex < path.length) 
-      ? path[currentPosIndex] 
-      : (path.length > 0 ? path[path.length - 1] : mapData.start);
+    // Use current destination node or exact robot position so new leg begins exactly where robot is standing
+    const currentLoc = (path.length > 0) 
+      ? path[path.length - 1] 
+      : (robotPosRef.current ? getGridPointFromVector3(robotPosRef.current, mapData.gridSize) : mapData.start);
     const targetLoc = targetRoom.door || targetRoom.start;
 
     const allObstacles = [...(mapData.obstacles || []), ...userBlockers];
@@ -2137,7 +2142,7 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
   useEffect(() => {
     switch(robotState) {
       case 'patrol':
-        setActivePathColor('#3b82f6'); // blue
+        setActivePathColor('#38bdf8'); // clear vibrant blue
         break;
       case 'mission':
         setActivePathColor('#22c55e'); // green
@@ -3409,9 +3414,17 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
              <SciFiGate position={getGridPosition({ x: 62, y: 86, f: 0 }, gridSize, 0)} scale={3} />
           )}
 
-          {/* Active Path */}
+          {/* Clear Drivable Blue Route Line */}
           {path.length > 0 && (
-            <PathLine path={path} currentIndex={currentPosIndex} gridSize={gridSize} isMapView={isMapView} color={activePathColor} opacity={0.9} />
+            <DrivablePathLine 
+              drivableRouteRef={drivableRouteRef} 
+              path={path} 
+              gridSize={gridSize} 
+              isMapView={isMapView} 
+              color={activePathColor} 
+              lineWidth={4.8} 
+              opacity={0.95} 
+            />
           )}
           
           {dynamicObstacles.map((obs, idx) => (
@@ -3434,6 +3447,8 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
               isMapView={isMapView} 
               speed={(robotState === 'emergency_response' ? 25 : 10) * (speedLimit / 50)} 
               dynamicObstaclesRef={dynamicObstaclesRef}
+              staticObstacles={userBlockers}
+              drivableRouteRef={drivableRouteRef}
               onReachNode={handleReachNode}
               onMissionComplete={handleMissionComplete}
               onObstacleDetected={handleObstacleDetected}
