@@ -1084,10 +1084,12 @@ const SciFiGate = ({ position, scale = 1, rotation = [0, 0, 0] }: { position: [n
 /* ── Detailed Animated 3D Robot Body ── */
 export const DetailedRobot = ({ 
   isMoving, showFeatures = false, activeFeature = "", isEmergency = false, 
-  isSlowCaution = false, isWaiting = false, checkpointCountdown = null, checkpointName = "" 
+  isSlowCaution = false, isWaiting = false, isCourteousStandoff = false, standoffLabel = "",
+  checkpointCountdown = null, checkpointName = "" 
 }: { 
   isMoving: boolean; showFeatures?: boolean; activeFeature?: string; isEmergency?: boolean; 
-  isSlowCaution?: boolean; isWaiting?: boolean; checkpointCountdown?: number | null; checkpointName?: string; 
+  isSlowCaution?: boolean; isWaiting?: boolean; isCourteousStandoff?: boolean; standoffLabel?: string;
+  checkpointCountdown?: number | null; checkpointName?: string; 
 }) => {
   const bodyRef = useRef<THREE.Group>(null);
   const headRef = useRef<THREE.Group>(null);
@@ -1378,12 +1380,22 @@ export const DetailedRobot = ({
           </Html>
         )}
 
-        {/* Real-time Intelligent Obstacle Proximity & Waiting Badge */}
-        {(isSlowCaution || isWaiting) && checkpointCountdown === null && (
+        {/* Real-time Courteous Standoff Badge */}
+        {isCourteousStandoff && checkpointCountdown === null && (
+          <Html position={[0, 1.50, 0]} center style={{ pointerEvents: 'none' }}>
+            <div className="flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-amber-500/95 border border-amber-200 text-slate-950 font-mono font-black text-[10.5px] tracking-wider uppercase shadow-[0_0_18px_rgba(245,158,11,0.9)] whitespace-nowrap">
+              <span className="w-2 h-2 rounded-full bg-slate-950 animate-pulse"></span>
+              <span>🚶 COURTEOUS STANDOFF • {standoffLabel || 'WAITING FOR PEDESTRIAN'}</span>
+            </div>
+          </Html>
+        )}
+
+        {/* Real-time Safe Diversion Badge */}
+        {!isCourteousStandoff && (isSlowCaution || isWaiting) && checkpointCountdown === null && (
           <Html position={[0, 1.45, 0]} center style={{ pointerEvents: 'none' }}>
             <div className={`flex items-center gap-1.5 px-3 py-1 rounded-full ${isWaiting ? 'bg-amber-500/95 border-amber-200 shadow-[0_0_16px_rgba(245,158,11,0.9)]' : 'bg-sky-500/95 border-sky-200 shadow-[0_0_16px_rgba(56,189,248,0.9)]'} text-black font-mono font-black text-[10px] tracking-wider uppercase border whitespace-nowrap`}>
               <span className={`w-2 h-2 rounded-full bg-black ${isWaiting ? 'animate-pulse' : 'animate-ping'}`}></span>
-              <span>{isWaiting ? '⏳ YIELDING TO CROSSING TRAFFIC' : '⚡ PREDICTIVE DIVERSION ACTIVE'}</span>
+              <span>{isWaiting ? '⏳ YIELDING TO CROSSING TRAFFIC' : '⚡ SAFE DIVERSION • 75% SPEED'}</span>
             </div>
           </Html>
         )}
