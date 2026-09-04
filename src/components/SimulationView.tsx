@@ -2055,6 +2055,11 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
 
   const togglePower = () => {
     if (isOn) {
+      if (patrolTimerRef.current) {
+        clearInterval(patrolTimerRef.current);
+        patrolTimerRef.current = null;
+      }
+      setPatrolCountdown(null);
       setIsOn(false);
       addExplanation("Powering OFF. Returning to Robot Home for standby and charging...");
       originalMissionRef.current = null;
@@ -2075,22 +2080,8 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
     } else {
       setIsOn(true);
       setBattery(100);
-      addExplanation("Powering ON. System initialized. Beginning patrol immediately.");
-      if (mapData && mapData.rooms && mapData.rooms.length > 0) {
-        const currentLoc = path.length > 0 && currentPosIndex < path.length ? path[currentPosIndex] : mapData.start;
-        const randomRoom = mapData.rooms[Math.floor(Math.random() * mapData.rooms.length)];
-        const patrolPath = calculatePath(currentLoc, randomRoom.door || randomRoom.start, [...(mapData.obstacles || []), ...userBlockers], mapData);
-        if (patrolPath.length > 0) {
-          setPath(patrolPath);
-          setCurrentPosIndex(0);
-          setRobotState('patrol');
-          setIsPlaying(true);
-        } else {
-          setRobotState('idle');
-        }
-      } else {
-        setRobotState('patrol');
-      }
+      addExplanation("Powering ON. System initialized. Beginning continuous autonomous patrol.");
+      dispatchPatrolCheckpoint(patrolIndexRef.current);
     }
   };
 
@@ -2131,10 +2122,22 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
 
   useEffect(() => {
     if (mapData) {
-      resetSimulation();
-      // Do not auto-execute here. Wait for remote_execute_mission.
+      if (dynamicObstaclesRef.current.length === 0) {
+        initializeDynamicObstacles();
+      }
+      if (isOn && path.length === 0) {
+        dispatchPatrolCheckpoint(0);
+      }
     }
-  }, [mapData]);
+  }, [mapData, isOn]);
+
+  useEffect(() => {
+    return () => {
+      if (patrolTimerRef.current) {
+        clearInterval(patrolTimerRef.current);
+      }
+    };
+  }, []);
 
   const containerRef = useRef<HTMLDivElement>(null);
 
@@ -2191,28 +2194,18 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
 
   const prevIsIdleMode = useRef(isIdleMode);
 
-  // Auto-Patrol Logic
+  // Autonomous Repeating Patrol Loop Heartbeat
   useEffect(() => {
     let timeout: any;
-    if (!isIdleMode && (robotState === 'idle' || robotState === 'patrol') && !isPlaying && isOn) {
-      const waitTime = (prevIsIdleMode.current && !isIdleMode) ? 0 : 2500;
+    if (!isIdleMode && (robotState === 'idle' || robotState === 'patrol') && !isPlaying && isOn && patrolCountdown === null && path.length === 0) {
       timeout = setTimeout(() => {
         if (!mapData || !mapData.rooms) return;
-        addExplanation(waitTime === 0 ? 'Idle mode disabled. Resuming patrol immediately.' : 'Idle detected. Initiating autonomous patrol mode.');
-        const currentLoc = path.length > 0 ? path[currentPosIndex] : mapData.start;
-        const randomRoom = mapData.rooms[Math.floor(Math.random() * mapData.rooms.length)];
-        const patrolPath = calculatePath(currentLoc, randomRoom.door || randomRoom.start, [...(mapData.obstacles || []), ...userBlockers], mapData);
-        if (patrolPath.length > 0) {
-          setPath(patrolPath);
-          setCurrentPosIndex(0);
-          setRobotState('patrol');
-          setIsPlaying(true);
-        }
-      }, waitTime);
+        dispatchPatrolCheckpoint(patrolIndexRef.current);
+      }, 500);
     }
     prevIsIdleMode.current = isIdleMode;
     return () => clearTimeout(timeout);
-  }, [robotState, isPlaying, path, currentPosIndex, mapData, isOn, isIdleMode]);
+  }, [robotState, isPlaying, path, isOn, isIdleMode, patrolCountdown, mapData]);
 
   const initializeDynamicObstacles = (_robotPath?: GridPoint[]) => {
     if (!mapData || !mapData.roads || mapData.roads.length < 5) return;
@@ -2397,6 +2390,12 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
 
   const resetSimulation = () => {
     if (!mapData) return;
+    if (patrolTimerRef.current) {
+      clearInterval(patrolTimerRef.current);
+      patrolTimerRef.current = null;
+    }
+    setPatrolCountdown(null);
+
     // Preserve current location if robot is active
     const currentLoc = (path.length > 0 && currentPosIndex < path.length) ? path[currentPosIndex] : mapData.start;
     
@@ -2447,7 +2446,6 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
       setPath(initialPath);
       addExplanation(`Planned route to destination. Estimated distance: ${initialPath.length}m.`);
       
-      // dynamic obstacles no longer factored in as they get out of the way
       const isBlocked = false;
       if (isBlocked && dynamicObstaclesRef.current.length > 0) {
          addExplanation("WARNING: Detected dynamic obstacles intersecting optimal path. Using AI dynamic rerouting.");
@@ -2465,8 +2463,12 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
          setIsPlaying(true);
       }
     } else {
-      setPath([]);
-      setRobotState(prev => prev === 'emergency_response' ? prev : 'idle');
+      if (isOn) {
+        dispatchPatrolCheckpoint(patrolIndexRef.current);
+      } else {
+        setPath([]);
+        setRobotState(prev => prev === 'emergency_response' ? prev : 'idle');
+      }
     }
     if (dynamicObstaclesRef.current.length === 0) {
       initializeDynamicObstacles(initialPath);
