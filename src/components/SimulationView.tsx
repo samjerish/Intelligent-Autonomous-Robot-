@@ -1394,6 +1394,7 @@ export const DetailedRobot = ({
 
 const Robot = ({
   path, currentIndex, isPlaying, gridSize, isMapView, speed, dynamicObstaclesRef,
+  staticObstacles = [], drivableRouteRef,
   onReachNode, onMissionComplete, onObstacleDetected, robotPosRef, robotRotRef, isEmergency = false,
   checkpointCountdown = null, checkpointName = "",
   addExplanation
@@ -1405,6 +1406,8 @@ const Robot = ({
   isMapView: boolean;
   speed: number;
   dynamicObstaclesRef: React.MutableRefObject<DynamicObstacle[]>;
+  staticObstacles?: GridPoint[];
+  drivableRouteRef?: React.MutableRefObject<number[]>;
   onReachNode: (idx: number) => void;
   onMissionComplete: () => void;
   onObstacleDetected: (obsPos: GridPoint) => void;
@@ -1482,6 +1485,9 @@ const Robot = ({
         const [sx, sy, sz] = getGridPosition(path[0], gridSize, 0.22, isMapView);
         currentPos.lerp(new THREE.Vector3(sx, sy, sz), 0.1);
       }
+      if (drivableRouteRef) {
+        drivableRouteRef.current = [];
+      }
       return;
     }
 
@@ -1493,14 +1499,15 @@ const Robot = ({
       const nominalPos = curve.getPointAt(uCurrent);
       const nominalTangent = curve.getTangentAt(uCurrent).normalize();
 
-      // --- Predictive Dynamic Obstacle Sensing & Smooth Gaussian Spline Diversion ---
-      let maxDiversionOffset = 0;
+      // --- Predictive Dynamic Obstacle Sensing & Unified Drivable Spline Trajectory ---
+      const activeObstacles: { sObstacle: number; peakAmplitude: number; isCrossing: boolean; minCpaDist: number; timeAtCpa: number }[] = [];
+      let isCrossingYield = false;
       let closestObsDist = 999;
       let isAnyObstacleBlocking = false;
-      let isCrossingYield = false;
 
       const cruiseSpeed = speed;
 
+      // 1. Scan Dynamic Obstacles (Vehicles and Pedestrians)
       if (dynamicObstaclesRef && dynamicObstaclesRef.current && dynamicObstaclesRef.current.length > 0) {
         for (const obs of dynamicObstaclesRef.current) {
           const obsPos3D = obs.pos3D || (() => {
@@ -1515,10 +1522,9 @@ const Robot = ({
               closestObsDist = distToRobot;
             }
 
-            // Obtain or estimate obstacle velocity vector
             const obsVel = obs.velocity || new THREE.Vector3(0, 0, 0);
 
-            // 1. Predictive Closest Point of Approach (CPA) analysis across [0.15s, 3.6s] horizon
+            // Predictive Closest Point of Approach (CPA) analysis across [0.15s, 3.6s] horizon
             let minCpaDist = 999;
             let timeAtCpa = 1.0;
             let sAtCpa = s + 1.0;
@@ -1537,7 +1543,7 @@ const Robot = ({
               }
             }
 
-            // Estimate obstacle's instantaneous projection onto forward travel corridor
+            // Estimate projection onto the spline
             const lookaheadStart = Math.max(0, s - 1.2);
             const lookaheadEnd = Math.min(totalLength, s + 7.5);
             let bestDistSq = 9999;
@@ -1562,43 +1568,92 @@ const Robot = ({
             const toObs = new THREE.Vector3().subVectors(obsPos3D, curvePtAtObs);
             const sideDot = toObs.dot(normAtObs);
 
-            // Dynamic Crossing Detection: check if obstacle velocity has a lateral crossing vector into corridor
+            // Dynamic Crossing Detection
             const lateralVelComponent = obsVel.dot(normAtObs);
             const isCrossingTraffic = Math.abs(lateralVelComponent) > 0.22 && minCpaDist < 1.7 && timeAtCpa <= 2.5;
 
-            // Flag if obstacle is crossing our immediate path, requiring smooth yield
             if (isCrossingTraffic && (sObstacle > s - 0.5) && (sObstacle < s + 4.5)) {
               isCrossingYield = true;
             }
 
-            // If obstacle is situated in or encroaching our travel corridor (< 1.35m from centerline)
-            // and obstacle is ahead or abreast (sObstacle > s - 1.0)
             if ((lateralDist < 1.35 || minCpaDist < 1.6) && sObstacle > s - 1.0) {
               isAnyObstacleBlocking = true;
-
-              // Choose safe clearance side with ample space:
-              // If obstacle is on the right (+norm), divert smoothly to the left (-0.95m).
-              // If obstacle is on the left or center (-norm), divert smoothly to the right (+0.95m).
-              const peakAmplitude = sideDot > 0.05 ? -0.95 : 0.95;
-
-              // Proper gradual turn shaping: wide Gaussian bell-curve (sigma = 1.85m)
-              // Starts gently 5-6m ahead of the obstacle, peaks beside it, then glides back
-              const sigma = 1.85;
-              const distFromObstacle = s - sObstacle;
-              const bellCurve = peakAmplitude * Math.exp(-(distFromObstacle * distFromObstacle) / (2 * sigma * sigma));
-
-              if (Math.abs(bellCurve) > Math.abs(maxDiversionOffset)) {
-                maxDiversionOffset = bellCurve;
-              }
+              // If obstacle is on right (+norm), divert left (-0.80m). If on left (-norm), divert right (+0.80m)
+              // Clamped to 0.80m to guarantee 100% road boundary safety
+              const peakAmplitude = sideDot > 0.05 ? -0.80 : 0.80;
+              activeObstacles.push({ sObstacle, peakAmplitude, isCrossing: isCrossingTraffic, minCpaDist, timeAtCpa });
             }
           }
         }
       }
 
-      // Smoothly filter lateral offset (delta * 3.5) for fluid, organic steering with zero jitter
+      // 2. Scan Static Obstacles (Barricades / Blockers)
+      if (staticObstacles && staticObstacles.length > 0) {
+        for (const blocker of staticObstacles) {
+          const [bx, , bz] = getGridPosition(blocker, gridSize, 0.05, isMapView);
+          const bPos = new THREE.Vector3(bx, currentPos.y, bz);
+          const distToRobot = currentPos.distanceTo(bPos);
+
+          if (distToRobot < 8.0) {
+            if (distToRobot < closestObsDist) closestObsDist = distToRobot;
+
+            let bestDistSq = 9999;
+            let sObstacle = s + 1.0;
+            let curvePtAtObs = nominalPos;
+            let tangentAtObs = nominalTangent;
+
+            const lookStart = Math.max(0, s - 1.0);
+            const lookEnd = Math.min(totalLength, s + 7.5);
+            for (let testS = lookStart; testS <= lookEnd; testS += 0.3) {
+              const testU = testS / totalLength;
+              const testPt = curve.getPointAt(testU);
+              const dSq = testPt.distanceToSquared(bPos);
+              if (dSq < bestDistSq) {
+                bestDistSq = dSq;
+                sObstacle = testS;
+                curvePtAtObs = testPt;
+                tangentAtObs = curve.getTangentAt(testU);
+              }
+            }
+
+            const lateralDist = Math.sqrt(bestDistSq);
+            if (lateralDist < 1.35 && sObstacle > s - 1.0) {
+              isAnyObstacleBlocking = true;
+              const normAtObs = new THREE.Vector3(tangentAtObs.z, 0, -tangentAtObs.x).normalize();
+              const toObs = new THREE.Vector3().subVectors(bPos, curvePtAtObs);
+              const sideDot = toObs.dot(normAtObs);
+              const peakAmplitude = sideDot > 0 ? -0.80 : 0.80;
+              activeObstacles.push({ sObstacle, peakAmplitude, isCrossing: false, minCpaDist: lateralDist, timeAtCpa: 0 });
+            }
+          }
+        }
+      }
+
+      // Mathematical function to compute exact lateral diversion at any point along the spline
+      const getDrivableOffsetAt = (evalS: number): number => {
+        let maxOff = 0;
+        const sigma = 1.85; // Wide Gaussian profile starting 5-6m ahead
+        for (const obs of activeObstacles) {
+          const distFromObs = evalS - obs.sObstacle;
+          const bell = obs.peakAmplitude * Math.exp(-(distFromObs * distFromObs) / (2 * sigma * sigma));
+          if (Math.abs(bell) > Math.abs(maxOff)) {
+            maxOff = bell;
+          }
+        }
+        // Smooth dampening near destination (< 2.0m from end door)
+        const distFromEnd = totalLength - evalS;
+        if (distFromEnd < 2.0) {
+          maxOff *= Math.max(0.0, distFromEnd / 2.0);
+        }
+        // Strictly clamp within valid road asphalt boundary (±0.80m)
+        return Math.max(-0.80, Math.min(0.80, maxOff));
+      };
+
+      // Robot's current lateral offset
+      const targetOffset = getDrivableOffsetAt(s);
       smoothedLateralOffsetRef.current = THREE.MathUtils.lerp(
         smoothedLateralOffsetRef.current,
-        maxDiversionOffset,
+        targetOffset,
         delta * 3.5
       );
 
@@ -1643,7 +1698,31 @@ const Robot = ({
       // Position update: track smoothly
       currentPos.copy(targetWithCurvedDiversion);
 
-      // Stable orientation facing direction of travel: lookahead along curved trajectory
+      // --- Generate the exact Drivable Blue Route Line from current robot position to destination ---
+      if (drivableRouteRef) {
+        const flatRoute: number[] = [];
+        // Point 0: Robot's exact current 3D position (elevated slightly to y=0.08 above asphalt)
+        flatRoute.push(currentPos.x, 0.08, currentPos.z);
+
+        const sampleStep = 0.35; // Fine-grained 35cm resolution for ultra-smooth curved line
+        for (let testS = s + sampleStep; testS < totalLength; testS += sampleStep) {
+          const u = testS / totalLength;
+          const basePt = curve.getPointAt(u);
+          const tangent = curve.getTangentAt(u).normalize();
+          const normal = new THREE.Vector3(tangent.z, 0, -tangent.x);
+          const off = getDrivableOffsetAt(testS);
+          const drivablePt = basePt.clone().add(normal.clone().multiplyScalar(off));
+          flatRoute.push(drivablePt.x, 0.08, drivablePt.z);
+        }
+
+        // Final point: destination endpoint
+        const endPt = curve.getPointAt(1.0);
+        flatRoute.push(endPt.x, 0.08, endPt.z);
+
+        drivableRouteRef.current = flatRoute;
+      }
+
+      // Stable orientation facing direction of travel: lookahead along the dynamic blue route line
       const lookaheadDist = 0.65; // 65cm lookahead for stable, predictive heading
       const lookaheadS = Math.min(totalLength, distanceTraveledRef.current + lookaheadDist);
       const lookaheadU = lookaheadS / totalLength;
@@ -1651,8 +1730,8 @@ const Robot = ({
       const lookaheadTangent = curve.getTangentAt(lookaheadU).normalize();
       const lookaheadNormal = new THREE.Vector3(lookaheadTangent.z, 0, -lookaheadTangent.x);
 
-      // Lookahead offset calculation ensures robot's nose points tangentially into the curve
-      const lookaheadOffset = smoothedLateralOffsetRef.current * 0.95;
+      // Lookahead offset calculation samples the exact curve ahead on the blue line
+      const lookaheadOffset = getDrivableOffsetAt(lookaheadS);
       const lookaheadTarget = lookaheadBasePos.clone().add(
         lookaheadNormal.clone().multiplyScalar(lookaheadOffset)
       );
@@ -1724,6 +1803,9 @@ const Robot = ({
         const [sx, sy, sz] = getGridPosition(targetPt, gridSize, 0.22, isMapView);
         currentPos.lerp(new THREE.Vector3(sx, sy, sz), 0.1);
       }
+      if (drivableRouteRef) {
+        drivableRouteRef.current = [];
+      }
     }
   });
 
@@ -1742,34 +1824,83 @@ const Robot = ({
   );
 };
 
-const PathLine = ({ path, currentIndex, gridSize, isMapView, color = "#00ffff", opacity = 0.85 }: { path: GridPoint[], currentIndex: number, gridSize: GridPoint, isMapView: boolean, color?: string, opacity?: number }) => {
-  const splinePoints = useMemo(() => {
-    const remainingPath = path.slice(Math.max(0, currentIndex - 1));
-    if (remainingPath.length < 2) return [];
-    
-    // Deduplicate adjacent identical waypoints
-    const rawPoints: THREE.Vector3[] = [];
-    for (let i = 0; i < remainingPath.length; i++) {
-      const p = remainingPath[i];
-      const [x, y, z] = getGridPosition(p, gridSize, 0.1, isMapView);
-      const pt = new THREE.Vector3(x, y, z);
-      if (rawPoints.length === 0 || rawPoints[rawPoints.length - 1].distanceTo(pt) > 0.08) {
-        rawPoints.push(pt);
-      }
-    }
-    
-    if (rawPoints.length < 2) return rawPoints;
-    
-    // Build centripetal Catmull-Rom curve to eliminate loops and cusps
-    const curve = new THREE.CatmullRomCurve3(rawPoints, false, 'centripetal', 0.5);
-    const divisions = Math.min(240, Math.max(30, rawPoints.length * 8));
-    return curve.getPoints(divisions);
-  }, [path, currentIndex, gridSize, isMapView]);
+const DrivablePathLine = ({ 
+  drivableRouteRef,
+  path,
+  gridSize,
+  isMapView,
+  color = "#38bdf8", 
+  lineWidth = 4.8, 
+  opacity = 0.95 
+}: { 
+  drivableRouteRef: React.MutableRefObject<number[]>;
+  path: GridPoint[];
+  gridSize: GridPoint;
+  isMapView: boolean;
+  color?: string; 
+  lineWidth?: number; 
+  opacity?: number; 
+}) => {
+  const { size } = useThree();
+  const lineGeom = useMemo(() => new LineGeometry(), []);
+  
+  const lineMat = useMemo(() => new LineMaterial({
+    color: new THREE.Color(color),
+    linewidth: lineWidth,
+    resolution: new THREE.Vector2(size.width, size.height),
+    transparent: true,
+    opacity: opacity,
+    depthTest: true,
+  }), [color, lineWidth, opacity, size.width, size.height]);
 
-  if (splinePoints.length < 2) return null;
+  const glowMat = useMemo(() => new LineMaterial({
+    color: new THREE.Color(color),
+    linewidth: lineWidth * 2.2,
+    resolution: new THREE.Vector2(size.width, size.height),
+    transparent: true,
+    opacity: 0.28,
+    depthTest: true,
+  }), [color, lineWidth, size.width, size.height]);
+
+  const lineObj = useMemo(() => new Line2(lineGeom, lineMat), [lineGeom, lineMat]);
+  const glowObj = useMemo(() => new Line2(lineGeom, glowMat), [lineGeom, glowMat]);
+
+  // Initial fallback points from path before dynamic simulation frames begin
+  const fallbackPoints = useMemo(() => {
+    if (path.length < 2) return [];
+    const pts: number[] = [];
+    for (let i = 0; i < path.length; i++) {
+      const [x, , z] = getGridPosition(path[i], gridSize, 0.08, isMapView);
+      pts.push(x, 0.08, z);
+    }
+    return pts;
+  }, [path, gridSize, isMapView]);
+
+  useFrame(() => {
+    lineMat.resolution.set(size.width, size.height);
+    glowMat.resolution.set(size.width, size.height);
+
+    const pts = (drivableRouteRef.current && drivableRouteRef.current.length >= 6) 
+      ? drivableRouteRef.current 
+      : fallbackPoints;
+
+    if (pts && pts.length >= 6) {
+      lineGeom.setPositions(pts);
+      lineObj.computeLineDistances();
+      glowObj.computeLineDistances();
+      lineObj.visible = true;
+      glowObj.visible = true;
+    } else {
+      lineObj.visible = false;
+      glowObj.visible = false;
+    }
+  });
 
   return (
-    <Line points={splinePoints} color={color} lineWidth={4.5} opacity={opacity} transparent />
+    <group>
+      <primitive object={glowObj} renderOrder={1} />
+      <primitive object={lineObj} renderOrder={2} />
+    </group>
   );
 };
 
