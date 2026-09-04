@@ -175,7 +175,7 @@ const MovingEntity = ({ obstacle, gridSize, isMapView, robotPosRef, allObstacles
     // Intelligent robot avoidance: step aside to shoulder when robot approaches
     if (robotPosRef && robotPosRef.current) {
       const distToRobot = currentPos.distanceTo(robotPosRef.current);
-      if (distToRobot < 4.5) {
+      if (distToRobot < 4.8) {
         const toRobotX = robotPosRef.current.x - currentPos.x;
         const toRobotZ = robotPosRef.current.z - currentPos.z;
         const dotForward = toRobotX * dirX + toRobotZ * dirZ;
@@ -184,8 +184,8 @@ const MovingEntity = ({ obstacle, gridSize, isMapView, robotPosRef, allObstacles
         if (dotForward > -0.6) {
           isYielding = true;
           // Step towards road shoulder to create a passing corridor
-          yieldTarget = baseOffset >= 0 ? 0.52 : -0.52;
-          if (distToRobot < 1.3) {
+          yieldTarget = baseOffset >= 0 ? 0.58 : -0.58;
+          if (distToRobot < 1.8) {
             pauseAtShoulder = true;
           }
         }
@@ -1354,7 +1354,7 @@ export const DetailedRobot = ({ isMoving, showFeatures = false, activeFeature = 
           <Html position={[0, 1.45, 0]} center style={{ pointerEvents: 'none' }}>
             <div className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-500/95 text-black font-mono font-black text-[10px] tracking-wider shadow-[0_0_16px_rgba(245,158,11,0.9)] uppercase border border-amber-200 animate-pulse whitespace-nowrap">
               <span className="w-2 h-2 rounded-full bg-black animate-ping"></span>
-              <span>⚠ AI RADAR: SLOW OBSTACLE BYPASS</span>
+              <span>⚠ AI DIVERSION: OBSTACLE AVOIDANCE</span>
             </div>
           </Html>
         )}
