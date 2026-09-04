@@ -1391,6 +1391,7 @@ const Robot = ({
   const dodgeOffsetRef = useRef(0);
   const cautionActiveRef = useRef(false);
   const lastCautionLogTime = useRef(0);
+  const lastRerouteTimeRef = useRef(0);
 
   useEffect(() => {
     hasCompletedRef.current = false;
@@ -1422,6 +1423,7 @@ const Robot = ({
       // --- Intelligent Proximity Sensing & Adaptive Crawl Speed ---
       let closestObsDist = 999;
       let closestObsType: 'car' | 'person' | null = null;
+      let closestObsPos: GridPoint | null = null;
       let lateralDodge = 0;
       
       if (dynamicObstaclesRef && dynamicObstaclesRef.current && dynamicObstaclesRef.current.length > 0) {
@@ -1438,42 +1440,53 @@ const Robot = ({
             const toObs = new THREE.Vector3().subVectors(obsPos3D, currentPos).normalize();
             const dot = forward.dot(toObs);
             
-            // Obstacle is in forward vision cone
-            if (dot > -0.15 && d < closestObsDist) {
+            // Check if obstacle is ahead in the forward vision cone (dot > 0.05) OR on/near upcoming path nodes
+            const isAheadInCone = dot > 0.05;
+            const isNearUpcomingPath = path.slice(currentIndex, currentIndex + 5).some(p => 
+              Math.abs(p.x - obs.pos.x) <= 1 && Math.abs(p.y - obs.pos.y) <= 1
+            );
+
+            if ((isAheadInCone || isNearUpcomingPath) && d < closestObsDist) {
               closestObsDist = d;
               closestObsType = obs.type;
+              closestObsPos = obs.pos;
               
-              // If within 3.5m, compute intelligent lateral weave
               if (d < 3.5) {
                 const crossY = forward.x * toObs.z - forward.z * toObs.x;
-                // Dodge opposite to obstacle's lateral position
-                lateralDodge = crossY > 0 ? -0.36 : 0.36;
+                lateralDodge = crossY > 0 ? -0.38 : 0.38;
               }
             }
           }
         }
       }
 
-      // Determine speed multiplier based on obstacle proximity
+      // Determine speed multiplier and zero-contact safety
       let speedMultiplier = 1.0;
       const isCaution = closestObsDist < 4.5;
       
-      if (isCaution) {
-        if (closestObsDist > 1.3) {
-          // Smooth deceleration curve down to 20% speed
-          speedMultiplier = THREE.MathUtils.lerp(0.20, 0.85, (closestObsDist - 1.3) / 3.2);
+      if (isCaution && closestObsPos) {
+        const now = Date.now();
+        
+        // As soon as obstacle is detected, immediately trigger an intelligent diversion towards destination
+        if (now - lastRerouteTimeRef.current > 2200) {
+          lastRerouteTimeRef.current = now;
+          onObstacleDetected(closestObsPos);
+        }
+
+        if (closestObsDist > 2.0) {
+          // Immediately decelerate down towards 12% cautious crawl
+          speedMultiplier = THREE.MathUtils.lerp(0.12, 0.55, (closestObsDist - 2.0) / 2.5);
         } else {
-          // Very close: cautious slow crawl through obstacle corridor
-          speedMultiplier = 0.20;
+          // ZERO-CONTACT GUARANTEE: Stop completely if obstacle is within 2.0m!
+          speedMultiplier = 0.0;
         }
         
         if (!cautionActiveRef.current) {
           cautionActiveRef.current = true;
           setIsSlowCaution(true);
-          const now = Date.now();
           if (now - lastCautionLogTime.current > 3500 && addExplanation) {
             lastCautionLogTime.current = now;
-            addExplanation(`🧠 AI SENSORS: ${closestObsType === 'car' ? 'Vehicle' : 'Pedestrian'} in path (${closestObsDist.toFixed(1)}m). Decelerating to 20% crawl & executing lateral corridor bypass.`);
+            addExplanation(`🧠 AI SENSORS: ${closestObsType === 'car' ? 'Vehicle' : 'Pedestrian'} detected ahead (${closestObsDist.toFixed(1)}m). Slowing down and calculating diversion to destination...`);
           }
         }
       } else {
@@ -1483,7 +1496,7 @@ const Robot = ({
           const now = Date.now();
           if (now - lastCautionLogTime.current > 3500 && addExplanation) {
             lastCautionLogTime.current = now;
-            addExplanation("✓ Road corridor cleared. Resuming standard speed.");
+            addExplanation("✓ Road corridor clear. Resuming standard cruising speed.");
           }
         }
       }
@@ -1515,15 +1528,21 @@ const Robot = ({
           }
         }
       } else {
-        if (!isMovingRef.current) { isMovingRef.current = true; setIsMoving(true); }
-        const currentSpeed = speed * speedMultiplier;
-        const moveDist = currentSpeed * delta;
-        if (moveDist >= dist) {
-          currentPos.copy(targetWithDodge);
+        if (speedMultiplier > 0) {
+          if (!isMovingRef.current) { isMovingRef.current = true; setIsMoving(true); }
+          const currentSpeed = speed * speedMultiplier;
+          const moveDist = currentSpeed * delta;
+          if (moveDist >= dist) {
+            currentPos.copy(targetWithDodge);
+          } else {
+            const stepDir = new THREE.Vector3().subVectors(targetWithDodge, currentPos).normalize();
+            currentPos.add(stepDir.multiplyScalar(moveDist));
+          }
         } else {
-          const stepDir = new THREE.Vector3().subVectors(targetWithDodge, currentPos).normalize();
-          currentPos.add(stepDir.multiplyScalar(moveDist));
+          // Zero-contact stop: halt completely until route is diverted or corridor cleared
+          if (isMovingRef.current) { isMovingRef.current = false; setIsMoving(false); }
         }
+
         const rotDirection = new THREE.Vector3().subVectors(targetWithDodge, currentPos);
         if (rotDirection.lengthSq() > 0.01) {
           const targetRotation = Math.atan2(rotDirection.x, rotDirection.z);
@@ -2473,16 +2492,23 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
     if (isRecalculating.current) return;
     isRecalculating.current = true;
     
-    addExplanation(`CRITICAL: Dynamic Obstacle detected at (${obsPos.x}, ${obsPos.y}). Rerouting instantly...`);
-    
     if (!mapData) {
        isRecalculating.current = false;
        return;
     }
-    const currentLoc = path[currentPosIndex];
-    const targetLoc = path[path.length - 1];
+    const currentLoc = (robotPosRef.current && mapData)
+      ? getGridPointFromVector3(robotPosRef.current, mapData.gridSize)
+      : (path[currentPosIndex] || mapData.start);
+    const targetLoc = path.length > 0 ? path[path.length - 1] : (mapData.rooms?.[0]?.door || mapData.start);
     
-    // We treat the specific position of the dynamic obstacle as a hard blockage for this local recalculation
+    if (currentLoc.x === targetLoc.x && currentLoc.y === targetLoc.y) {
+       isRecalculating.current = false;
+       return;
+    }
+
+    addExplanation(`🧠 AI DIVERSION: Obstacle detected at (${obsPos.x}, ${obsPos.y}). Calculating alternative diversion to destination...`);
+
+    // Treat obstacle position as impassable for diversion search
     const allObstacles = [...(mapData.obstacles || []), ...userBlockers, obsPos];
     
     let intermediateTarget = null;
@@ -2494,7 +2520,7 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
     }
     
     let newPath: GridPoint[] = [];
-    if (intermediateTarget) {
+    if (intermediateTarget && (intermediateTarget.x !== targetLoc.x || intermediateTarget.y !== targetLoc.y)) {
       const fPath = calculatePath(currentLoc, intermediateTarget, allObstacles, mapData);
       const rPath = calculatePath(intermediateTarget, targetLoc, allObstacles, mapData);
       if (fPath.length > 0 && rPath.length > 0) {
@@ -2505,7 +2531,7 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
     }
     
     if (newPath.length === 0) {
-      if (intermediateTarget) {
+      if (intermediateTarget && (intermediateTarget.x !== targetLoc.x || intermediateTarget.y !== targetLoc.y)) {
          const fPath = calculateLongPath(currentLoc, intermediateTarget, allObstacles, mapData);
          const rPath = calculateLongPath(intermediateTarget, targetLoc, allObstacles, mapData);
          if (fPath.length > 0 && rPath.length > 0) {
@@ -2519,13 +2545,16 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
     if (newPath.length > 0) {
       setPath(newPath);
       setCurrentPosIndex(0);
+      setActivePathColor('#38bdf8');
       setIsPlaying(true);
-      addExplanation(`Successfully found alternative route avoiding obstacle! Resuming mission.`);
-      isRecalculating.current = false;
+      addExplanation(`✓ Diversion route established (${newPath.length}m). Navigating safely towards destination.`);
+      setTimeout(() => {
+        isRecalculating.current = false;
+      }, 2000);
     } else {
       const evadePath = calculateEvadePath(currentLoc, allObstacles, mapData);
       if (evadePath.length > 0) {
-        addExplanation(`Path completely blocked! Evading to give space to obstacle...`);
+        addExplanation(`Narrow corridor blocked! Moving into bypass turnout to give space...`);
         if (robotState !== 'evading_obstacle' && robotState !== 'charging' && robotState !== 'emergency_response') {
             originalMissionRef.current = { path: [...path], index: currentPosIndex };
         }
@@ -2533,13 +2562,14 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
         setCurrentPosIndex(0);
         setRobotState('evading_obstacle');
         setIsPlaying(true);
-        isRecalculating.current = false;
-      } else {
-        addExplanation(`Temporarily holding for dynamic traffic to clear...`);
         setTimeout(() => {
           isRecalculating.current = false;
-          setIsPlaying(true); // resume smoothly
-        }, 1000);
+        }, 2000);
+      } else {
+        addExplanation(`⚠ Single lane corridor: Holding safe 2m distance for obstacle to pass before proceeding.`);
+        setTimeout(() => {
+          isRecalculating.current = false;
+        }, 2000);
       }
     }
   };
