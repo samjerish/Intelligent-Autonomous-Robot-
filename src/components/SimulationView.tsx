@@ -1399,7 +1399,12 @@ export const DetailedRobot = ({
             </div>
           </Html>
         )}
-      </groupconst Robot = ({
+      </group>
+    </group>
+  );
+};
+
+const Robot = ({
   path, currentIndex, isPlaying, gridSize, isMapView, speed, dynamicObstaclesRef,
   staticObstacles = [], drivableRouteRef, upcomingLoopPoints3D = [],
   onReachNode, onMissionComplete, onObstacleDetected, robotPosRef, robotRotRef, isEmergency = false,
@@ -1936,10 +1941,6 @@ export const DetailedRobot = ({
       />
     </group>
   );
-};}
-      />
-    </group>
-  );
 };
 
 const DrivablePathLine = ({ 
@@ -2256,6 +2257,49 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
       addExplanation(`🚀 Checkpoint [${safeIdx + 1}/${PATROL_CHECKPOINTS.length}]: Smooth patrol route to ${targetName} engaged.`);
     }
   };
+
+  // Precompute continuous multi-destination road route for the full remaining patrol loop
+  const upcomingPatrolPoints3D = useMemo(() => {
+    if (!mapData || !mapData.rooms || mapData.rooms.length === 0) return [];
+    const N = PATROL_CHECKPOINTS.length;
+    const safeIdx = patrolIndexRef.current % N;
+    const allObstacles = [...(mapData.obstacles || []), ...userBlockers];
+
+    const getRoom = (name: string) => {
+      const lower = name.toLowerCase();
+      return mapData.rooms.find(r => r.name.toLowerCase() === lower) ||
+             mapData.rooms.find(r => r.name.toLowerCase().includes(lower)) ||
+             mapData.rooms[0];
+    };
+
+    const flat3DPts: THREE.Vector3[] = [];
+
+    // Chain subsequent destinations in the repeating patrol loop ahead of active checkpoint
+    for (let step = 0; step < N; step++) {
+      const fromIdx = (safeIdx + step) % N;
+      const toIdx = (safeIdx + step + 1) % N;
+      const r1 = getRoom(PATROL_CHECKPOINTS[fromIdx]);
+      const r2 = getRoom(PATROL_CHECKPOINTS[toIdx]);
+      if (!r1 || !r2) continue;
+
+      const d1 = r1.door || r1.start;
+      const d2 = r2.door || r2.start;
+
+      let leg = calculatePath(d1, d2, allObstacles, mapData, true);
+      if (leg.length < 2) {
+        leg = calculatePath(d1, d2, allObstacles, mapData, false);
+      }
+
+      // Convert grid waypoints along the road to smooth 3D points
+      const startIndex = flat3DPts.length > 0 ? 1 : 0;
+      for (let i = startIndex; i < leg.length; i++) {
+        const [x, , z] = getGridPosition(leg[i], mapData.gridSize, 0.08, isMapView);
+        flat3DPts.push(new THREE.Vector3(x, 0.08, z));
+      }
+    }
+
+    return flat3DPts;
+  }, [mapData, userBlockers, isMapView, currentPatrolTarget]);
 
   useEffect(() => {
     switch(robotState) {
@@ -3532,18 +3576,16 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
              <SciFiGate position={getGridPosition({ x: 62, y: 86, f: 0 }, gridSize, 0)} scale={3} />
           )}
 
-          {/* Clear Drivable Blue Route Line */}
-          {path.length > 0 && (
-            <DrivablePathLine 
-              drivableRouteRef={drivableRouteRef} 
-              path={path} 
-              gridSize={gridSize} 
-              isMapView={isMapView} 
-              color={activePathColor} 
-              lineWidth={4.8} 
-              opacity={0.95} 
-            />
-          )}
+          {/* Continuous Clear Drivable Blue Route Line */}
+          <DrivablePathLine 
+            drivableRouteRef={drivableRouteRef} 
+            path={path} 
+            gridSize={gridSize} 
+            isMapView={isMapView} 
+            color={activePathColor} 
+            lineWidth={4.8} 
+            opacity={0.95} 
+          />
           
           {dynamicObstacles.map((obs, idx) => (
             <MovingEntity 
@@ -3567,6 +3609,7 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
               dynamicObstaclesRef={dynamicObstaclesRef}
               staticObstacles={userBlockers}
               drivableRouteRef={drivableRouteRef}
+              upcomingLoopPoints3D={robotState === 'patrol' ? upcomingPatrolPoints3D : []}
               onReachNode={handleReachNode}
               onMissionComplete={handleMissionComplete}
               onObstacleDetected={handleObstacleDetected}
