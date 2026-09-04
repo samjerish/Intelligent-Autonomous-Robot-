@@ -182,10 +182,15 @@ const MovingEntity = ({ obstacle, gridSize, isMapView, robotPosRef, allObstacles
     const baseOffset = isCar ? 0.22 : (isRoadWalker ? (carIndex % 2 === 0 ? -0.18 : 0.18) : 0.45);
     let yieldTarget = baseOffset;
     let isYielding = false;
+    let isTooCloseToRobot = false;
 
-    // Smooth obstacle avoidance: keep moving and shift to shoulder so road stays clear
+    // Smooth obstacle avoidance & mutual collision safety bubble
     if (robotPosRef && robotPosRef.current) {
       const distToRobot = currentPos.distanceTo(robotPosRef.current);
+      if (distToRobot < 1.35) {
+        // Mutual safety bubble: freeze forward motion so obstacle never moves into robot
+        isTooCloseToRobot = true;
+      }
       if (distToRobot < 4.8) {
         const toRobotX = robotPosRef.current.x - currentPos.x;
         const toRobotZ = robotPosRef.current.z - currentPos.z;
@@ -210,7 +215,7 @@ const MovingEntity = ({ obstacle, gridSize, isMapView, robotPosRef, allObstacles
 
     // Walking animation for pedestrians
     if (!isCar) {
-      const walkSpeed = obstacle.speed * 3.2;
+      const walkSpeed = (isTooCloseToRobot ? 0 : obstacle.speed) * 3.2;
       const legAngle = Math.sin(t * walkSpeed) * 0.45;
       const armAngle = Math.sin(t * walkSpeed) * -0.4;
       if (leftLegRef.current) leftLegRef.current.rotation.x = legAngle;
@@ -219,7 +224,7 @@ const MovingEntity = ({ obstacle, gridSize, isMapView, robotPosRef, allObstacles
       if (rightArmRef.current) rightArmRef.current.rotation.x = -armAngle;
     } else {
       // Wheel spin animation for cars
-      const wheelSpin = delta * obstacle.speed * 3.5;
+      const wheelSpin = delta * (isTooCloseToRobot ? 0 : obstacle.speed) * 3.5;
       if (wheel1Ref.current) wheel1Ref.current.rotation.x += wheelSpin;
       if (wheel2Ref.current) wheel2Ref.current.rotation.x += wheelSpin;
       if (wheel3Ref.current) wheel3Ref.current.rotation.x += wheelSpin;
@@ -256,17 +261,20 @@ const MovingEntity = ({ obstacle, gridSize, isMapView, robotPosRef, allObstacles
       }
       obstacle.pos = obstacle.path[obstacle.currentIndex];
     } else {
-      const currentSpeed = isYielding ? obstacle.speed * 0.85 : obstacle.speed;
+      let currentSpeed = isYielding ? obstacle.speed * 0.85 : obstacle.speed;
+      if (isTooCloseToRobot) {
+        currentSpeed = 0; // Hold position completely until robot diversion clears
+      }
       const moveDist = currentSpeed * delta;
-      if (moveDist >= dist) {
+      if (moveDist >= dist && dist > 0.001) {
         currentPos.copy(targetVector);
         obstacle.pos = targetNode;
-      } else {
+      } else if (moveDist > 0) {
         const direction = new THREE.Vector3().subVectors(targetVector, currentPos).normalize();
         currentPos.add(direction.multiplyScalar(moveDist));
       }
       const rotDirection = new THREE.Vector3().subVectors(targetVector, currentPos);
-      if (rotDirection.lengthSq() > 0.001) {
+      if (rotDirection.lengthSq() > 0.001 && !isTooCloseToRobot) {
         const targetRotation = Math.atan2(rotDirection.x, rotDirection.z);
         let diff = targetRotation - ref.current.rotation.y;
         while (diff < -Math.PI) diff += Math.PI * 2;
@@ -1070,7 +1078,13 @@ const SciFiGate = ({ position, scale = 1, rotation = [0, 0, 0] }: { position: [n
 };
 
 /* ── Detailed Animated 3D Robot Body ── */
-export const DetailedRobot = ({ isMoving, showFeatures = false, activeFeature = "", isEmergency = false, isSlowCaution = false, isWaiting = false }: { isMoving: boolean; showFeatures?: boolean; activeFeature?: string; isEmergency?: boolean; isSlowCaution?: boolean; isWaiting?: boolean }) => {
+export const DetailedRobot = ({ 
+  isMoving, showFeatures = false, activeFeature = "", isEmergency = false, 
+  isSlowCaution = false, isWaiting = false, checkpointCountdown = null, checkpointName = "" 
+}: { 
+  isMoving: boolean; showFeatures?: boolean; activeFeature?: string; isEmergency?: boolean; 
+  isSlowCaution?: boolean; isWaiting?: boolean; checkpointCountdown?: number | null; checkpointName?: string; 
+}) => {
   const bodyRef = useRef<THREE.Group>(null);
   const headRef = useRef<THREE.Group>(null);
   const leftArmRef = useRef<THREE.Group>(null);
@@ -1350,8 +1364,18 @@ export const DetailedRobot = ({ isMoving, showFeatures = false, activeFeature = 
           </group>
         )}
 
+        {/* Destination Pause Countdown Badge */}
+        {checkpointCountdown !== null && checkpointCountdown !== undefined && (
+          <Html position={[0, 1.55, 0]} center style={{ pointerEvents: 'none' }}>
+            <div className="flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-emerald-500/95 border border-emerald-200 text-slate-950 font-mono font-black text-[11px] tracking-wider uppercase shadow-[0_0_20px_rgba(16,185,129,0.9)] whitespace-nowrap">
+              <span className="w-2.5 h-2.5 rounded-full bg-slate-950 animate-pulse"></span>
+              <span>📍 {checkpointName || 'CHECKPOINT'} • PAUSING {checkpointCountdown.toFixed(1)}s</span>
+            </div>
+          </Html>
+        )}
+
         {/* Real-time Intelligent Obstacle Proximity & Waiting Badge */}
-        {(isSlowCaution || isWaiting) && (
+        {(isSlowCaution || isWaiting) && checkpointCountdown === null && (
           <Html position={[0, 1.45, 0]} center style={{ pointerEvents: 'none' }}>
             <div className={`flex items-center gap-1.5 px-3 py-1 rounded-full ${isWaiting ? 'bg-amber-500/95 border-amber-200 shadow-[0_0_16px_rgba(245,158,11,0.9)]' : 'bg-sky-500/95 border-sky-200 shadow-[0_0_16px_rgba(56,189,248,0.9)]'} text-black font-mono font-black text-[10px] tracking-wider uppercase border whitespace-nowrap`}>
               <span className={`w-2 h-2 rounded-full bg-black ${isWaiting ? 'animate-pulse' : 'animate-ping'}`}></span>
@@ -1367,6 +1391,7 @@ export const DetailedRobot = ({ isMoving, showFeatures = false, activeFeature = 
 const Robot = ({
   path, currentIndex, isPlaying, gridSize, isMapView, speed, dynamicObstaclesRef,
   onReachNode, onMissionComplete, onObstacleDetected, robotPosRef, robotRotRef, isEmergency = false,
+  checkpointCountdown = null, checkpointName = "",
   addExplanation
 }: {
   path: GridPoint[];
@@ -1382,6 +1407,8 @@ const Robot = ({
   robotPosRef: React.MutableRefObject<THREE.Vector3 | null>;
   robotRotRef: React.MutableRefObject<number>;
   isEmergency?: boolean;
+  checkpointCountdown?: number | null;
+  checkpointName?: string;
   addExplanation?: (msg: string) => void;
 }) => {
   const ref = useRef<THREE.Group>(null);
@@ -1635,7 +1662,9 @@ const Robot = ({
     } else {
       if (isMovingRef.current) { isMovingRef.current = false; setIsMoving(false); }
       if (path.length > 0) {
-        const [sx, sy, sz] = getGridPosition(path[0], gridSize, 0.22, isMapView);
+        // When mission is completed / pausing at destination, remain locked at the destination
+        const targetPt = hasCompletedRef.current ? path[path.length - 1] : path[0];
+        const [sx, sy, sz] = getGridPosition(targetPt, gridSize, 0.22, isMapView);
         currentPos.lerp(new THREE.Vector3(sx, sy, sz), 0.1);
       }
     }
@@ -1644,7 +1673,14 @@ const Robot = ({
   const startPos = getGridPosition(path[0] || { x: 0, y: 0, f: 0 }, gridSize, 0.22, isMapView);
   return (
     <group ref={ref} position={startPos}>
-      <DetailedRobot isMoving={isMoving} isEmergency={isEmergency} isSlowCaution={isSlowCaution} isWaiting={isWaiting} />
+      <DetailedRobot 
+        isMoving={isMoving} 
+        isEmergency={isEmergency} 
+        isSlowCaution={isSlowCaution} 
+        isWaiting={isWaiting} 
+        checkpointCountdown={checkpointCountdown}
+        checkpointName={checkpointName}
+      />
     </group>
   );
 };
