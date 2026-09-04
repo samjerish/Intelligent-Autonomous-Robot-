@@ -3410,13 +3410,14 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
                   <div className="bg-white/5 border border-white/10 rounded-xl p-3 shadow-inner flex flex-col justify-center">
                     <span className="text-[9px] font-bold text-gray-400 uppercase tracking-widest block mb-1">STATUS</span>
                     <span className={`text-sm font-black uppercase tracking-wider truncate ${
+                      patrolCountdown !== null ? 'text-emerald-400 animate-pulse' :
                       robotState === 'charging' ? 'text-yellow-400' : 
                       robotState === 'patrol' ? 'text-blue-400' : 
                       robotState === 'mission' ? 'text-green-400' : 
                       robotState === 'emergency_response' ? 'text-red-500 animate-pulse' : 
                       'text-gray-300'
                     }`}>
-                      {robotState.replace('_', ' ')}
+                      {patrolCountdown !== null ? `PAUSE (${patrolCountdown.toFixed(1)}s)` : robotState.replace('_', ' ')}
                     </span>
                   </div>
                   <div className="bg-white/5 border border-white/10 rounded-xl p-3 shadow-inner">
@@ -3426,6 +3427,27 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
                   <div className="bg-white/5 border border-white/10 rounded-xl p-3 shadow-inner">
                     <span className="text-[9px] font-bold text-gray-400 uppercase tracking-widest block mb-1">ETA</span>
                     <span className="text-lg font-black text-white">{path.length > 0 ? Math.ceil((path.length - currentPosIndex) * 0.5) : '--'} <span className="text-[10px] font-bold text-gray-500">min</span></span>
+                  </div>
+
+                  {/* Dedicated Patrol Loop Checkpoint Card */}
+                  <div className="col-span-2 bg-gradient-to-r from-sky-950/40 via-sky-900/20 to-emerald-950/40 border border-sky-500/30 rounded-xl p-3 shadow-inner flex items-center justify-between">
+                    <div>
+                      <span className="text-[9px] font-bold text-sky-400 uppercase tracking-widest block">
+                        PATROL CHECKPOINT [{(patrolIndexRef.current % PATROL_CHECKPOINTS.length) + 1}/{PATROL_CHECKPOINTS.length}]
+                      </span>
+                      <span className="text-sm font-black text-white tracking-wide">
+                        {currentPatrolTarget}
+                      </span>
+                    </div>
+                    {patrolCountdown !== null ? (
+                      <span className="px-3 py-1 bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 rounded-lg text-xs font-mono font-black animate-pulse shadow-[0_0_12px_rgba(16,185,129,0.4)]">
+                        PAUSING: {patrolCountdown.toFixed(1)}s
+                      </span>
+                    ) : (
+                      <span className="px-2.5 py-1 bg-sky-500/20 text-sky-300 border border-sky-500/30 rounded-lg text-xs font-mono font-bold">
+                        CRUISING
+                      </span>
+                    )}
                   </div>
                 </div>
 
