@@ -33,7 +33,7 @@ function App() {
 
   const [initialMapData, setInitialMapData] = useState<any>(null);
   const [pendingEmergency, setPendingEmergency] = useState<{x: number, y: number} | null>(null);
-  const [isOn, setIsOn] = useState(false);
+  const [isOn, setIsOn] = useState(true);
   const [showQR, setShowQR] = useState(false);
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
   const [isAlarmActive, setIsAlarmActive] = useState(false);
