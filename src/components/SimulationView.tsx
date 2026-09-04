@@ -1058,7 +1058,7 @@ const SciFiGate = ({ position, scale = 1, rotation = [0, 0, 0] }: { position: [n
 };
 
 /* ── Detailed Animated 3D Robot Body ── */
-export const DetailedRobot = ({ isMoving, showFeatures = false, activeFeature = "", isEmergency = false, isSlowCaution = false }: { isMoving: boolean; showFeatures?: boolean; activeFeature?: string; isEmergency?: boolean; isSlowCaution?: boolean }) => {
+export const DetailedRobot = ({ isMoving, showFeatures = false, activeFeature = "", isEmergency = false, isSlowCaution = false, isWaiting = false }: { isMoving: boolean; showFeatures?: boolean; activeFeature?: string; isEmergency?: boolean; isSlowCaution?: boolean; isWaiting?: boolean }) => {
   const bodyRef = useRef<THREE.Group>(null);
   const headRef = useRef<THREE.Group>(null);
   const leftArmRef = useRef<THREE.Group>(null);
@@ -1080,7 +1080,7 @@ export const DetailedRobot = ({ isMoving, showFeatures = false, activeFeature = 
     if (leftArmRef.current) leftArmRef.current.rotation.x = 0;
     if (rightArmRef.current) rightArmRef.current.rotation.x = 0;
 
-    const ws = isMoving ? (isSlowCaution ? 2.5 : 8) : 0.5;
+    const ws = isMoving ? (isSlowCaution ? 2.5 : 8) : 0;
     if (leftWheelRef.current) leftWheelRef.current.rotation.x += delta * ws;
     if (rightWheelRef.current) rightWheelRef.current.rotation.x += delta * ws;
     if (frontWheelRef.current) frontWheelRef.current.rotation.x += delta * ws;
@@ -1338,12 +1338,12 @@ export const DetailedRobot = ({ isMoving, showFeatures = false, activeFeature = 
           </group>
         )}
 
-        {/* Real-time Intelligent Obstacle Proximity Badge */}
-        {isSlowCaution && (
+        {/* Real-time Intelligent Obstacle Proximity & Waiting Badge */}
+        {(isSlowCaution || isWaiting) && (
           <Html position={[0, 1.45, 0]} center style={{ pointerEvents: 'none' }}>
-            <div className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-500/95 text-black font-mono font-black text-[10px] tracking-wider shadow-[0_0_16px_rgba(245,158,11,0.9)] uppercase border border-amber-200 animate-pulse whitespace-nowrap">
-              <span className="w-2 h-2 rounded-full bg-black animate-ping"></span>
-              <span>⚠ AI DIVERSION: OBSTACLE AVOIDANCE</span>
+            <div className={`flex items-center gap-1.5 px-3 py-1 rounded-full ${isWaiting ? 'bg-amber-500/95 border-amber-200 shadow-[0_0_16px_rgba(245,158,11,0.9)]' : 'bg-sky-500/95 border-sky-200 shadow-[0_0_16px_rgba(56,189,248,0.9)]'} text-black font-mono font-black text-[10px] tracking-wider uppercase border whitespace-nowrap`}>
+              <span className={`w-2 h-2 rounded-full bg-black ${isWaiting ? 'animate-pulse' : 'animate-ping'}`}></span>
+              <span>{isWaiting ? '⏳ WAITING & EVALUATING DIVERSION' : '⚡ SMOOTH DIVERSION ACTIVE'}</span>
             </div>
           </Html>
         )}
@@ -1376,17 +1376,20 @@ const Robot = ({
   const isMovingRef = useRef(false);
   const [isMoving, setIsMoving] = useState(false);
   const [isSlowCaution, setIsSlowCaution] = useState(false);
+  const [isWaiting, setIsWaiting] = useState(false);
   const hasCompletedRef = useRef(false);
   const dodgeOffsetRef = useRef(0);
+  const dodgeSideRef = useRef(0); // Latch: 0 = none, 1 = right, -1 = left (eliminates all lateral jitter)
   const cautionActiveRef = useRef(false);
   const lastCautionLogTime = useRef(0);
   const lastRerouteTimeRef = useRef(0);
+  const waitTimerRef = useRef(0);
+  const actualSpeedRef = useRef(0);
+  const pauseTimeRef = useRef(0);
 
   useEffect(() => {
     hasCompletedRef.current = false;
   }, [path]);
-
-  const pauseTimeRef = useRef(0);
 
   const targetVector = useMemo(() => {
     if (path.length === 0) return new THREE.Vector3(0, 0, 0);
@@ -1409,11 +1412,10 @@ const Robot = ({
     if (pauseTimeRef.current > 0) return; // Wait if still paused
 
     if (isPlaying) {
-      // --- Intelligent Proximity Sensing & Adaptive Crawl Speed ---
+      // --- Intelligent Proximity Sensing & Smooth Zero-Shake Evasion ---
       let closestObsDist = 999;
       let closestObsType: 'car' | 'person' | null = null;
       let closestObsPos: GridPoint | null = null;
-      let lateralDodge = 0;
       
       if (dynamicObstaclesRef && dynamicObstaclesRef.current && dynamicObstaclesRef.current.length > 0) {
         const forward = new THREE.Vector3().subVectors(targetVector, currentPos).normalize();
@@ -1440,64 +1442,86 @@ const Robot = ({
               closestObsType = obs.type;
               closestObsPos = obs.pos;
               
-              if (d < 4.5) {
+              // Latch dodge direction once to eliminate all shaking / oscillation
+              if (d < 4.5 && dodgeSideRef.current === 0) {
                 const crossY = forward.x * toObs.z - forward.z * toObs.x;
-                // If obstacle is on the right (crossY < 0), dodge left (-0.58). If center or left (crossY >= 0), dodge right (+0.58)
-                lateralDodge = crossY < 0 ? -0.58 : 0.58;
+                // If obstacle is clearly on the right (crossY < -0.05), dodge left (-1). Otherwise dodge right (+1)
+                dodgeSideRef.current = crossY < -0.05 ? -1 : 1;
               }
             }
           }
         }
       }
 
-      // Determine speed multiplier and zero-contact safety
+      // Reset dodge latch only when road ahead is completely clear
+      if (closestObsDist > 4.8) {
+        dodgeSideRef.current = 0;
+      }
+
       let speedMultiplier = 1.0;
       const isCaution = closestObsDist < 4.8;
+      const now = Date.now();
       
       if (isCaution && closestObsPos) {
-        const now = Date.now();
-        
-        // As soon as obstacle is spotted, instantly trigger an intelligent diversion towards destination
-        if (now - lastRerouteTimeRef.current > 200) {
-          lastRerouteTimeRef.current = now;
-          onObstacleDetected(closestObsPos);
+        // Approaching obstacle: determine if robot needs to wait for diversion or smooth passing
+        if (closestObsDist < 2.0) {
+          // SAFE STOP DISTANCE BUFFER: maintain ~1.8m safe distance (Zero-Contact Guarantee!)
+          // Trigger wait timer if not already waiting
+          if (waitTimerRef.current <= 0 && (now - lastRerouteTimeRef.current > 1500)) {
+            waitTimerRef.current = 1.2; // Smooth 1.2s pause to evaluate and execute diversion
+            lastRerouteTimeRef.current = now;
+            setIsWaiting(true);
+            onObstacleDetected(closestObsPos);
+            if (addExplanation) {
+              addExplanation(`🧠 Obstacle ahead (${closestObsDist.toFixed(1)}m). Pausing safely to evaluate and take diversion...`);
+            }
+          }
         }
 
-        // Smoothly adjust to controlled maneuvering speed to negotiate diversion safely without dashing
-        if (closestObsDist > 1.3) {
-          speedMultiplier = THREE.MathUtils.lerp(0.42, 0.75, (closestObsDist - 1.3) / 3.2);
-        } else if (closestObsDist > 0.65) {
-          // Close bypass: maintain steady crawl so robot never freezes or blocks traffic
-          speedMultiplier = 0.32;
+        // Count down wait timer
+        if (waitTimerRef.current > 0) {
+          waitTimerRef.current -= delta;
+          speedMultiplier = 0.0; // Completely halted at safe distance: zero touching, zero shaking
+          if (waitTimerRef.current <= 0) {
+            setIsWaiting(false);
+            if (addExplanation) {
+              addExplanation("⚡ Diversion evaluated. Resuming smooth forward movement to destination.");
+            }
+          }
         } else {
-          // Safety cushion: continuous cautious crawl (0.12) ensuring zero contact and zero dashing
-          speedMultiplier = 0.12;
+          // After waiting, or when approaching: smooth, calm maneuvering speed without jerking
+          if (closestObsDist > 1.4) {
+            speedMultiplier = THREE.MathUtils.lerp(0.40, 0.70, (closestObsDist - 1.4) / 3.4);
+          } else {
+            speedMultiplier = 0.30; // Steady calm glide past obstacle
+          }
         }
-        
+
         if (!cautionActiveRef.current) {
           cautionActiveRef.current = true;
           setIsSlowCaution(true);
-          if (now - lastCautionLogTime.current > 2500 && addExplanation) {
-            lastCautionLogTime.current = now;
-            addExplanation(`⚡ AI SENSORS: Obstacle spotted (${closestObsDist.toFixed(1)}m). Deciding diversion route immediately...`);
-          }
         }
       } else {
+        if (waitTimerRef.current > 0) {
+          waitTimerRef.current -= delta;
+          if (waitTimerRef.current <= 0) setIsWaiting(false);
+        }
         if (cautionActiveRef.current) {
           cautionActiveRef.current = false;
           setIsSlowCaution(false);
-          const now = Date.now();
+          setIsWaiting(false);
           if (now - lastCautionLogTime.current > 2500 && addExplanation) {
             lastCautionLogTime.current = now;
-            addExplanation("✓ Road corridor clear. Resuming standard cruising speed.");
+            addExplanation("✓ Road corridor clear. Cruising smoothly towards destination.");
           }
         }
       }
 
-      // Smooth agile lateral dodging
-      dodgeOffsetRef.current = THREE.MathUtils.lerp(dodgeOffsetRef.current, lateralDodge, delta * 8);
+      // Smooth, gentle lateral glide with delta * 3.0 (no rapid twitching or vibration)
+      const targetDodge = dodgeSideRef.current * 0.45;
+      dodgeOffsetRef.current = THREE.MathUtils.lerp(dodgeOffsetRef.current, targetDodge, delta * 3.0);
 
-      // Compute target vector with lateral dodge offset (lateralVec points to robot's RIGHT shoulder)
+      // Compute target vector with latched lateral offset
       const forwardDir = new THREE.Vector3().subVectors(targetVector, currentPos).normalize();
       const lateralVec = new THREE.Vector3(forwardDir.z, 0, -forwardDir.x);
       const targetWithDodge = targetVector.clone().add(lateralVec.multiplyScalar(dodgeOffsetRef.current));
@@ -1521,10 +1545,13 @@ const Robot = ({
           }
         }
       } else {
-        if (speedMultiplier > 0) {
+        // Smooth acceleration / deceleration damping (delta * 3.0) for physical realism
+        const desiredSpeed = speed * speedMultiplier;
+        actualSpeedRef.current = THREE.MathUtils.lerp(actualSpeedRef.current, desiredSpeed, delta * 3.0);
+
+        if (actualSpeedRef.current > 0.02) {
           if (!isMovingRef.current) { isMovingRef.current = true; setIsMoving(true); }
-          const currentSpeed = speed * speedMultiplier;
-          const moveDist = currentSpeed * delta;
+          const moveDist = actualSpeedRef.current * delta;
           if (moveDist >= dist) {
             currentPos.copy(targetWithDodge);
           } else {
@@ -1535,13 +1562,16 @@ const Robot = ({
           if (isMovingRef.current) { isMovingRef.current = false; setIsMoving(false); }
         }
 
+        // Silky smooth rotation (delta * 4.5) with small deadband to eliminate all heading jitter
         const rotDirection = new THREE.Vector3().subVectors(targetWithDodge, currentPos);
         if (rotDirection.lengthSq() > 0.01) {
           const targetRotation = Math.atan2(rotDirection.x, rotDirection.z);
           let diff = targetRotation - ref.current.rotation.y;
           while (diff < -Math.PI) diff += Math.PI * 2;
           while (diff > Math.PI) diff -= Math.PI * 2;
-          ref.current.rotation.y += diff * delta * 12;
+          if (Math.abs(diff) > 0.015) {
+            ref.current.rotation.y += diff * Math.min(1.0, delta * 4.5);
+          }
         }
       }
     } else {
@@ -1553,7 +1583,7 @@ const Robot = ({
   const startPos = getGridPosition(path[0] || { x: 0, y: 0, f: 0 }, gridSize, 0.22, isMapView);
   return (
     <group ref={ref} position={startPos}>
-      <DetailedRobot isMoving={isMoving} isEmergency={isEmergency} isSlowCaution={isSlowCaution} />
+      <DetailedRobot isMoving={isMoving} isEmergency={isEmergency} isSlowCaution={isSlowCaution} isWaiting={isWaiting} />
     </group>
   );
 };
