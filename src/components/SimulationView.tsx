@@ -1382,7 +1382,7 @@ export const DetailedRobot = ({
           <Html position={[0, 1.45, 0]} center style={{ pointerEvents: 'none' }}>
             <div className={`flex items-center gap-1.5 px-3 py-1 rounded-full ${isWaiting ? 'bg-amber-500/95 border-amber-200 shadow-[0_0_16px_rgba(245,158,11,0.9)]' : 'bg-sky-500/95 border-sky-200 shadow-[0_0_16px_rgba(56,189,248,0.9)]'} text-black font-mono font-black text-[10px] tracking-wider uppercase border whitespace-nowrap`}>
               <span className={`w-2 h-2 rounded-full bg-black ${isWaiting ? 'animate-pulse' : 'animate-ping'}`}></span>
-              <span>{isWaiting ? '⏳ WAITING & EVALUATING DIVERSION' : '⚡ SMOOTH DIVERSION ACTIVE'}</span>
+              <span>{isWaiting ? '⏳ YIELDING TO CROSSING TRAFFIC' : '⚡ PREDICTIVE DIVERSION ACTIVE'}</span>
             </div>
           </Html>
         )}
