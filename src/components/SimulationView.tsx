@@ -1492,10 +1492,13 @@ const Robot = ({
       const nominalPos = curve.getPointAt(uCurrent);
       const nominalTangent = curve.getTangentAt(uCurrent).normalize();
 
-      // --- Early Obstacle Sensing & Smooth Gaussian Curved Diversion ---
+      // --- Predictive Dynamic Obstacle Sensing & Smooth Gaussian Spline Diversion ---
       let maxDiversionOffset = 0;
       let closestObsDist = 999;
       let isAnyObstacleBlocking = false;
+      let isCrossingYield = false;
+
+      const cruiseSpeed = speed;
 
       if (dynamicObstaclesRef && dynamicObstaclesRef.current && dynamicObstaclesRef.current.length > 0) {
         for (const obs of dynamicObstaclesRef.current) {
@@ -1505,21 +1508,43 @@ const Robot = ({
           })();
           const distToRobot = currentPos.distanceTo(obsPos3D);
 
-          // Early detection horizon: scan obstacles within 5.5m of the robot
-          if (distToRobot < 5.5) {
+          // Predictive Early Horizon: 8.5 meters
+          if (distToRobot < 8.5) {
             if (distToRobot < closestObsDist) {
               closestObsDist = distToRobot;
             }
 
-            // Estimate obstacle's projection onto the forward spline corridor
-            const lookaheadStart = Math.max(0, s - 1.0);
-            const lookaheadEnd = Math.min(totalLength, s + 5.2);
+            // Obtain or estimate obstacle velocity vector
+            const obsVel = obs.velocity || new THREE.Vector3(0, 0, 0);
+
+            // 1. Predictive Closest Point of Approach (CPA) analysis across [0.15s, 3.6s] horizon
+            let minCpaDist = 999;
+            let timeAtCpa = 1.0;
+            let sAtCpa = s + 1.0;
+
+            const timeStep = 0.15;
+            for (let tFuture = 0.15; tFuture <= 3.6; tFuture += timeStep) {
+              const futureObsPos = obsPos3D.clone().add(obsVel.clone().multiplyScalar(tFuture));
+              const projectedS = Math.min(totalLength, s + cruiseSpeed * tFuture);
+              const projectedRobotPos = curve.getPointAt(projectedS / totalLength);
+              const cpaDist = projectedRobotPos.distanceTo(futureObsPos);
+
+              if (cpaDist < minCpaDist) {
+                minCpaDist = cpaDist;
+                timeAtCpa = tFuture;
+                sAtCpa = projectedS;
+              }
+            }
+
+            // Estimate obstacle's instantaneous projection onto forward travel corridor
+            const lookaheadStart = Math.max(0, s - 1.2);
+            const lookaheadEnd = Math.min(totalLength, s + 7.5);
             let bestDistSq = 9999;
-            let sObstacle = s + 1.0;
+            let sObstacle = sAtCpa;
             let curvePtAtObs = nominalPos;
             let tangentAtObs = nominalTangent;
 
-            for (let testS = lookaheadStart; testS <= lookaheadEnd; testS += 0.35) {
+            for (let testS = lookaheadStart; testS <= lookaheadEnd; testS += 0.3) {
               const testU = testS / totalLength;
               const testPt = curve.getPointAt(testU);
               const dSq = testPt.distanceToSquared(obsPos3D);
@@ -1532,21 +1557,34 @@ const Robot = ({
             }
 
             const lateralDist = Math.sqrt(bestDistSq);
-            // If obstacle is situated in or immediately encroaching our travel corridor (< 1.25m from centerline)
-            // and obstacle is ahead or abreast (sObstacle > s - 0.8)
-            if (lateralDist < 1.25 && sObstacle > s - 0.8) {
+            const normAtObs = new THREE.Vector3(tangentAtObs.z, 0, -tangentAtObs.x).normalize();
+            const toObs = new THREE.Vector3().subVectors(obsPos3D, curvePtAtObs);
+            const sideDot = toObs.dot(normAtObs);
+
+            // Dynamic Crossing Detection: check if obstacle velocity has a lateral crossing vector into corridor
+            const lateralVelComponent = obsVel.dot(normAtObs);
+            const isCrossingTraffic = Math.abs(lateralVelComponent) > 0.22 && minCpaDist < 1.7 && timeAtCpa <= 2.5;
+
+            // Flag if obstacle is crossing our immediate path, requiring smooth yield
+            if (isCrossingTraffic && (sObstacle > s - 0.5) && (sObstacle < s + 4.5)) {
+              isCrossingYield = true;
+            }
+
+            // If obstacle is situated in or encroaching our travel corridor (< 1.35m from centerline)
+            // and obstacle is ahead or abreast (sObstacle > s - 1.0)
+            if ((lateralDist < 1.35 || minCpaDist < 1.6) && sObstacle > s - 1.0) {
               isAnyObstacleBlocking = true;
-              const normAtObs = new THREE.Vector3(tangentAtObs.z, 0, -tangentAtObs.x).normalize();
-              const toObs = new THREE.Vector3().subVectors(obsPos3D, curvePtAtObs);
-              const sideDot = toObs.dot(normAtObs);
 
-              // If obstacle is on right, divert to left (-0.85m). If on left/center, divert to right (+0.85m)
-              const peakAmplitude = sideDot > 0.05 ? -0.85 : 0.85;
+              // Choose safe clearance side with ample space:
+              // If obstacle is on the right (+norm), divert smoothly to the left (-0.95m).
+              // If obstacle is on the left or center (-norm), divert smoothly to the right (+0.95m).
+              const peakAmplitude = sideDot > 0.05 ? -0.95 : 0.95;
 
-              // Smooth Gaussian bell-curve shaping: sigma = 1.3m (starts ~3m ahead, returns ~3m past)
-              const sigma = 1.3;
-              const distFromCenter = s - sObstacle;
-              const bellCurve = peakAmplitude * Math.exp(-(distFromCenter * distFromCenter) / (2 * sigma * sigma));
+              // Proper gradual turn shaping: wide Gaussian bell-curve (sigma = 1.85m)
+              // Starts gently 5-6m ahead of the obstacle, peaks beside it, then glides back
+              const sigma = 1.85;
+              const distFromObstacle = s - sObstacle;
+              const bellCurve = peakAmplitude * Math.exp(-(distFromObstacle * distFromObstacle) / (2 * sigma * sigma));
 
               if (Math.abs(bellCurve) > Math.abs(maxDiversionOffset)) {
                 maxDiversionOffset = bellCurve;
@@ -1556,28 +1594,32 @@ const Robot = ({
         }
       }
 
-      // Smoothly filter lateral offset (delta * 4.0) to eliminate any twitching
+      // Smoothly filter lateral offset (delta * 3.5) for fluid, organic steering with zero jitter
       smoothedLateralOffsetRef.current = THREE.MathUtils.lerp(
         smoothedLateralOffsetRef.current,
         maxDiversionOffset,
-        delta * 4.0
+        delta * 3.5
       );
 
-      // Consistent Forward Cruise Speed Control with Soft Acceleration
-      const cruiseSpeed = speed;
+      // --- Intelligent Dynamic Speed Adaptation ---
       let targetSpeed = cruiseSpeed;
 
-      // Soft deceleration only when nearing final destination (< 2.2m from end)
+      // 1. Soft destination deceleration only when nearing destination endpoint (< 2.2m)
       const distToEnd = totalLength - s;
       if (distToEnd < 2.2) {
         targetSpeed = THREE.MathUtils.lerp(0.35, cruiseSpeed, Math.max(0.1, distToEnd / 2.2));
-      } else if (closestObsDist < 1.5) {
-        // Controlled, calm bypass cruise speed through tight obstacle clearances
-        targetSpeed = cruiseSpeed * 0.75;
+      } else if (isCrossingYield) {
+        // Yield calmly to crossing obstacles without coming to an abrupt jarring stop
+        targetSpeed = cruiseSpeed * 0.42;
+      } else if (closestObsDist < 1.8) {
+        // Controlled, respectful cruise through safe gap when clearing tight obstacles
+        targetSpeed = cruiseSpeed * 0.76;
       }
 
-      // Physical momentum acceleration ramp (delta * 2.2) for smooth start and transitions
-      actualSpeedRef.current = THREE.MathUtils.lerp(actualSpeedRef.current, targetSpeed, delta * 2.2);
+      // 2. Calm, physically believable acceleration and deceleration (no sudden braking or jerk)
+      const isBraking = targetSpeed < actualSpeedRef.current;
+      const rateLimit = isBraking ? 2.0 : 1.6; // 2.0 m/s^2 gentle deceleration, 1.6 m/s^2 smooth acceleration
+      actualSpeedRef.current = THREE.MathUtils.lerp(actualSpeedRef.current, targetSpeed, delta * rateLimit);
 
       // Advance distance along the spline continuously
       if (actualSpeedRef.current > 0.01) {
@@ -1600,8 +1642,8 @@ const Robot = ({
       // Position update: track smoothly
       currentPos.copy(targetWithCurvedDiversion);
 
-      // Gradual, stable heading orientation: sample lookahead along the curved spline
-      const lookaheadDist = 0.55; // 55cm lookahead vector
+      // Stable orientation facing direction of travel: lookahead along curved trajectory
+      const lookaheadDist = 0.65; // 65cm lookahead for stable, predictive heading
       const lookaheadS = Math.min(totalLength, distanceTraveledRef.current + lookaheadDist);
       const lookaheadU = lookaheadS / totalLength;
       const lookaheadBasePos = curve.getPointAt(lookaheadU);
@@ -1621,28 +1663,39 @@ const Robot = ({
         while (diff < -Math.PI) diff += Math.PI * 2;
         while (diff > Math.PI) diff -= Math.PI * 2;
 
-        // Gradual steering filter (delta * 3.8) with small deadband for stable orientation
-        if (Math.abs(diff) > 0.003) {
-          ref.current.rotation.y += diff * Math.min(1.0, delta * 3.8);
+        // Gradual steering filter (delta * 3.6) with deadband to eliminate all jitter/shake
+        if (Math.abs(diff) > 0.002) {
+          ref.current.rotation.y += diff * Math.min(1.0, delta * 3.6);
         }
       }
 
       // HUD & Explanation updates
-      const isCurving = Math.abs(smoothedLateralOffsetRef.current) > 0.15 || isAnyObstacleBlocking;
-      if (isCurving) {
+      if (isCrossingYield) {
+        if (!isWaiting) setIsWaiting(true);
         if (!isSlowCaution) setIsSlowCaution(true);
         const now = Date.now();
         if (now - lastDiversionNotificationTime.current > 3500 && addExplanation) {
           lastDiversionNotificationTime.current = now;
-          addExplanation(`⚡ SMOOTH DIVERSION: Obstacle spotted ahead (${closestObsDist.toFixed(1)}m). Curving seamlessly around it.`);
+          addExplanation(`⏳ PREDICTIVE YIELD: Crossing obstacle detected ahead. Slowing to allow safe clearance.`);
         }
       } else {
-        if (isSlowCaution) {
-          setIsSlowCaution(false);
+        if (isWaiting) setIsWaiting(false);
+        const isCurving = Math.abs(smoothedLateralOffsetRef.current) > 0.15 || isAnyObstacleBlocking;
+        if (isCurving) {
+          if (!isSlowCaution) setIsSlowCaution(true);
           const now = Date.now();
-          if (now - lastCautionLogTime.current > 3500 && addExplanation) {
-            lastCautionLogTime.current = now;
-            addExplanation("✓ Re-aligned with primary route. Cruising steadily.");
+          if (now - lastDiversionNotificationTime.current > 3500 && addExplanation) {
+            lastDiversionNotificationTime.current = now;
+            addExplanation(`⚡ PREDICTIVE DIVERSION: Obstacle estimated ahead (${closestObsDist.toFixed(1)}m). Curving gradually around it.`);
+          }
+        } else {
+          if (isSlowCaution) {
+            setIsSlowCaution(false);
+            const now = Date.now();
+            if (now - lastCautionLogTime.current > 3500 && addExplanation) {
+              lastCautionLogTime.current = now;
+              addExplanation("✓ Re-aligned with patrol route. Accelerating gently to cruise speed.");
+            }
           }
         }
       }
