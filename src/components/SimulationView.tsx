@@ -2015,21 +2015,32 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
     const roads = mapData.roads;
     const obs: DynamicObstacle[] = [];
     
-    // Spawn 10 active vehicles and 6 pedestrians walking/driving along roads
-    for (let i = 0; i < 16; i++) {
-      const start = roads[Math.floor(Math.random() * roads.length)];
-      const end = roads[Math.floor(Math.random() * roads.length)];
-      const path = calculatePath(start, end, [...(mapData.obstacles || []), ...userBlockers], mapData, true);
-      if (path.length > 0) {
+    // Spawn 28 dynamic traffic entities: 16 vehicles and 12 pedestrians
+    const TOTAL_TRAFFIC = 28;
+    const CAR_COUNT = 16;
+    
+    for (let i = 0; i < TOTAL_TRAFFIC; i++) {
+      const isCar = i < CAR_COUNT;
+      let path: GridPoint[] = [];
+      for (let attempt = 0; attempt < 10; attempt++) {
+        const start = roads[Math.floor(Math.random() * roads.length)];
+        const end = roads[Math.floor(Math.random() * roads.length)];
+        if (start.x === end.x && start.y === end.y) continue;
+        path = calculatePath(start, end, [...(mapData.obstacles || []), ...userBlockers], mapData, true);
+        if (path.length >= 3) break;
+      }
+      
+      if (path.length >= 2) {
         obs.push({
           id: `obs_${i}`,
-          type: i < 10 ? 'car' : 'person',
+          type: isCar ? 'car' : 'person',
           pos: path[0],
-          targetPos: end,
+          targetPos: path[path.length - 1],
           path,
           currentIndex: 0,
-          speed: i < 10 ? 4.5 : (2 + Math.random() * 1.5),
-          isMoving: true
+          speed: isCar ? (3.8 + Math.random() * 1.6) : (1.8 + Math.random() * 1.0),
+          isMoving: true,
+          isRoadWalker: !isCar && (i % 3 !== 0)
         });
       }
     }
@@ -2037,6 +2048,15 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
     setDynamicObstacles(obs);
     dynamicObstaclesRef.current = obs;
   };
+
+  // Auto-initialize dynamic traffic when map is ready
+  useEffect(() => {
+    if (mapData && mapData.roads && mapData.roads.length > 5) {
+      if (dynamicObstaclesRef.current.length === 0) {
+        initializeDynamicObstacles();
+      }
+    }
+  }, [mapData]);
 
   const addExplanation = (msg: string) => {
     setAiExplanations(prev => [msg, ...prev].slice(0, 5));
@@ -2244,7 +2264,9 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
       setPath([]);
       setRobotState(prev => prev === 'emergency_response' ? prev : 'idle');
     }
-    initializeDynamicObstacles(initialPath);
+    if (dynamicObstaclesRef.current.length === 0) {
+      initializeDynamicObstacles(initialPath);
+    }
   };
 
   const handleLowBattery = () => {
