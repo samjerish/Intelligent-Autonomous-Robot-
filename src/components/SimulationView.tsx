@@ -1792,6 +1792,13 @@ interface SimulationViewProps {
   selectedStrategyId?: string;
 }
 
+export const PATROL_CHECKPOINTS = [
+  'Administrative Building',
+  'Library',
+  'Auditorium',
+  'Sports Ground',
+  'Security Room'
+];
 
 export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispatchMission, selectedStrategyId }) => {
   const [path, setPath] = useState<GridPoint[]>([]);
@@ -1879,7 +1886,12 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
 
   const [battery, setBattery] = useState(100);
   const [robotState, setRobotState] = useState<RobotState>('off');
-  const [isOn, setIsOn] = useState(false);
+  const [isOn, setIsOn] = useState(true);
+  const patrolIndexRef = useRef(0);
+  const [patrolCountdown, setPatrolCountdown] = useState<number | null>(null);
+  const [currentPatrolTarget, setCurrentPatrolTarget] = useState<string>(PATROL_CHECKPOINTS[0]);
+  const patrolTimerRef = useRef<any>(null);
+
   const [activeCCTab, setActiveCCTab] = useState<'dashboard' | 'tools' | 'locations'>('dashboard');
   const [modalType, setModalType] = useState<'food' | 'medical' | null>(null);
 
@@ -1897,6 +1909,42 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
   const turnOffAfterEmergencyRef = useRef(false);
   const currentTaskIndexRef = useRef(0);
   const emergencyTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Dispatch smooth continuous patrol leg to an assigned checkpoint
+  const dispatchPatrolCheckpoint = (checkpointIndex: number) => {
+    if (!mapData || !mapData.rooms || mapData.rooms.length === 0) return;
+    const safeIdx = checkpointIndex % PATROL_CHECKPOINTS.length;
+    patrolIndexRef.current = safeIdx;
+    const targetName = PATROL_CHECKPOINTS[safeIdx];
+    setCurrentPatrolTarget(targetName);
+
+    const lower = targetName.toLowerCase();
+    const targetRoom = 
+      mapData.rooms.find(r => r.name.toLowerCase() === lower) ||
+      mapData.rooms.find(r => r.name.toLowerCase().includes(lower)) ||
+      mapData.rooms[0];
+
+    if (!targetRoom) return;
+
+    const currentLoc = (path.length > 0 && currentPosIndex < path.length) 
+      ? path[currentPosIndex] 
+      : (path.length > 0 ? path[path.length - 1] : mapData.start);
+    const targetLoc = targetRoom.door || targetRoom.start;
+
+    const allObstacles = [...(mapData.obstacles || []), ...userBlockers];
+    let patrolPath = calculatePath(currentLoc, targetLoc, allObstacles, mapData, true);
+    if (patrolPath.length < 2) {
+      patrolPath = calculatePath(currentLoc, targetLoc, allObstacles, mapData, false);
+    }
+
+    if (patrolPath.length > 0) {
+      setPath(patrolPath);
+      setCurrentPosIndex(0);
+      setRobotState('patrol');
+      setIsPlaying(true);
+      addExplanation(`🚀 Checkpoint [${safeIdx + 1}/${PATROL_CHECKPOINTS.length}]: Smooth patrol route to ${targetName} engaged.`);
+    }
+  };
 
   useEffect(() => {
     switch(robotState) {
