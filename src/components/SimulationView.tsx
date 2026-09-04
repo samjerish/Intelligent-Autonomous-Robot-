@@ -160,8 +160,8 @@ const MovingEntity = ({ obstacle, gridSize, isMapView, robotPosRef, allObstacles
     const dirZ = lastDirRef.current.z;
     
     // Lateral vector (perpendicular to travel direction, pointing to right side of lane)
-    const latX = -dirZ;
-    const latZ = dirX;
+    const latX = dirZ;
+    const latZ = -dirX;
     
     // Lane offset:
     // Cars drive on the right side of the lane (+0.22)
@@ -183,13 +183,13 @@ const MovingEntity = ({ obstacle, gridSize, isMapView, robotPosRef, allObstacles
         if (dotForward > -0.6) {
           isYielding = true;
           // Step towards road shoulder to maintain wide open passing corridor
-          yieldTarget = baseOffset >= 0 ? 0.48 : -0.48;
+          yieldTarget = baseOffset >= 0 ? 0.50 : -0.50;
         }
       }
     }
     
     // Smoothly shift laterally to lane / shoulder position
-    yieldOffsetRef.current = THREE.MathUtils.lerp(yieldOffsetRef.current, yieldTarget, delta * 6);
+    yieldOffsetRef.current = THREE.MathUtils.lerp(yieldOffsetRef.current, yieldTarget, delta * 7);
     
     // Taillight alert intensity when yielding
     if (taillightMatRef.current) {
@@ -244,7 +244,7 @@ const MovingEntity = ({ obstacle, gridSize, isMapView, robotPosRef, allObstacles
       }
       obstacle.pos = obstacle.path[obstacle.currentIndex];
     } else {
-      const currentSpeed = isYielding ? obstacle.speed * 0.6 : obstacle.speed;
+      const currentSpeed = isYielding ? obstacle.speed * 0.85 : obstacle.speed;
       const moveDist = currentSpeed * delta;
       if (moveDist >= dist) {
         currentPos.copy(targetVector);
