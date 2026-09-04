@@ -27,11 +27,13 @@ export type DynamicObstacle = {
   id: string;
   type: 'car' | 'person';
   pos: GridPoint;
+  pos3D?: THREE.Vector3;
   targetPos: GridPoint;
   path: GridPoint[];
   currentIndex: number;
   speed: number;
   isMoving: boolean;
+  isRoadWalker?: boolean;
 };
 
 export type RobotState = 'idle' | 'mission' | 'patrol' | 'charging' | 'emergency_response' | 'emergency_to_ctr' | 'ctr_to_emergency' | 'crowd_control' | 'waiting_for_police' | 'evading_obstacle' | 'returning_home' | 'off';
