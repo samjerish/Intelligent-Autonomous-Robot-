@@ -2572,15 +2572,15 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
       setCurrentPosIndex(newPath.length > 1 ? 1 : 0);
       setActivePathColor('#38bdf8');
       setIsPlaying(true);
-      addExplanation(`⚡ Diversion route active (${newPath.length}m). Navigating swiftly towards destination.`);
+      addExplanation(`⚡ Smooth diversion route active (${newPath.length}m). Navigating towards destination.`);
       setTimeout(() => {
         isRecalculating.current = false;
-      }, 250);
+      }, 1500);
     } else {
       // If road is a straight segment without alternative intersection, agile lateral bypass handles clearance smoothly
       setTimeout(() => {
         isRecalculating.current = false;
-      }, 250);
+      }, 1500);
     }
   };
 
