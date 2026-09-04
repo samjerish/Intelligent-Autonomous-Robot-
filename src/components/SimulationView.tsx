@@ -1440,9 +1440,10 @@ const Robot = ({
               closestObsType = obs.type;
               closestObsPos = obs.pos;
               
-              if (d < 3.5) {
+              if (d < 4.5) {
                 const crossY = forward.x * toObs.z - forward.z * toObs.x;
-                lateralDodge = crossY > 0 ? -0.38 : 0.38;
+                // If obstacle is on the right (crossY < 0), dodge left (-0.58). If center or left (crossY >= 0), dodge right (+0.58)
+                lateralDodge = crossY < 0 ? -0.58 : 0.58;
               }
             }
           }
@@ -1457,20 +1458,20 @@ const Robot = ({
         const now = Date.now();
         
         // As soon as obstacle is spotted, instantly trigger an intelligent diversion towards destination
-        if (now - lastRerouteTimeRef.current > 350) {
+        if (now - lastRerouteTimeRef.current > 200) {
           lastRerouteTimeRef.current = now;
           onObstacleDetected(closestObsPos);
         }
 
-        // Quickly slow down to controlled maneuvering speed (38%) to negotiate diversion safely without dashing
-        if (closestObsDist > 1.2) {
-          speedMultiplier = THREE.MathUtils.lerp(0.38, 0.70, (closestObsDist - 1.2) / 3.3);
-        } else if (closestObsDist > 0.6) {
+        // Smoothly adjust to controlled maneuvering speed to negotiate diversion safely without dashing
+        if (closestObsDist > 1.3) {
+          speedMultiplier = THREE.MathUtils.lerp(0.42, 0.75, (closestObsDist - 1.3) / 3.2);
+        } else if (closestObsDist > 0.65) {
           // Close bypass: maintain steady crawl so robot never freezes or blocks traffic
-          speedMultiplier = 0.28;
+          speedMultiplier = 0.32;
         } else {
-          // Safety cushion: pause only if directly touching/under 0.6m
-          speedMultiplier = 0.08;
+          // Safety cushion: continuous cautious crawl (0.12) ensuring zero contact and zero dashing
+          speedMultiplier = 0.12;
         }
         
         if (!cautionActiveRef.current) {
@@ -1494,11 +1495,11 @@ const Robot = ({
       }
 
       // Smooth agile lateral dodging
-      dodgeOffsetRef.current = THREE.MathUtils.lerp(dodgeOffsetRef.current, lateralDodge, delta * 6);
+      dodgeOffsetRef.current = THREE.MathUtils.lerp(dodgeOffsetRef.current, lateralDodge, delta * 8);
 
-      // Compute target vector with lateral dodge offset
+      // Compute target vector with lateral dodge offset (lateralVec points to robot's RIGHT shoulder)
       const forwardDir = new THREE.Vector3().subVectors(targetVector, currentPos).normalize();
-      const lateralVec = new THREE.Vector3(-forwardDir.z, 0, forwardDir.x);
+      const lateralVec = new THREE.Vector3(forwardDir.z, 0, -forwardDir.x);
       const targetWithDodge = targetVector.clone().add(lateralVec.multiplyScalar(dodgeOffsetRef.current));
 
       const dist = currentPos.distanceTo(targetWithDodge);
@@ -2497,7 +2498,7 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
        return;
     }
 
-    addExplanation(`🧠 AI DIVERSION: Obstacle detected at (${obsPos.x}, ${obsPos.y}). Calculating alternative diversion to destination...`);
+    addExplanation(`🧠 AI DIVERSION: Obstacle spotted at (${obsPos.x}, ${obsPos.y}). Deciding quick diversion route...`);
 
     // Treat obstacle position as impassable for diversion search
     const allObstacles = [...(mapData.obstacles || []), ...userBlockers, obsPos];
@@ -2510,18 +2511,20 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
       }
     }
     
+    const isCity = !!(mapData.roads && mapData.roads.length > 0);
+
     let newPath: GridPoint[] = [];
     if (intermediateTarget && (intermediateTarget.x !== targetLoc.x || intermediateTarget.y !== targetLoc.y)) {
-      const fPath = calculatePath(currentLoc, intermediateTarget, allObstacles, mapData);
-      const rPath = calculatePath(intermediateTarget, targetLoc, allObstacles, mapData);
+      const fPath = calculatePath(currentLoc, intermediateTarget, allObstacles, mapData, isCity);
+      const rPath = calculatePath(intermediateTarget, targetLoc, allObstacles, mapData, isCity);
       if (fPath.length > 0 && rPath.length > 0) {
         newPath = [...fPath, fPath[fPath.length - 1], ...rPath.slice(1)];
       }
     } else {
-      newPath = calculatePath(currentLoc, targetLoc, allObstacles, mapData);
+      newPath = calculatePath(currentLoc, targetLoc, allObstacles, mapData, isCity);
     }
     
-    if (newPath.length === 0) {
+    if (newPath.length === 0 && isCity) {
       if (intermediateTarget && (intermediateTarget.x !== targetLoc.x || intermediateTarget.y !== targetLoc.y)) {
          const fPath = calculateLongPath(currentLoc, intermediateTarget, allObstacles, mapData);
          const rPath = calculateLongPath(intermediateTarget, targetLoc, allObstacles, mapData);
@@ -2535,18 +2538,19 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
     
     if (newPath.length > 0) {
       setPath(newPath);
-      setCurrentPosIndex(0);
+      // Point immediately to next node (index 1) so robot steers into diversion without hesitation
+      setCurrentPosIndex(newPath.length > 1 ? 1 : 0);
       setActivePathColor('#38bdf8');
       setIsPlaying(true);
-      addExplanation(`⚡ Diversion route established (${newPath.length}m). Navigating swiftly towards destination.`);
+      addExplanation(`⚡ Diversion route active (${newPath.length}m). Navigating swiftly towards destination.`);
       setTimeout(() => {
         isRecalculating.current = false;
-      }, 400);
+      }, 250);
     } else {
-      // If road is a straight segment without immediate intersection, continue smooth lateral bypass
+      // If road is a straight segment without alternative intersection, agile lateral bypass handles clearance smoothly
       setTimeout(() => {
         isRecalculating.current = false;
-      }, 400);
+      }, 250);
     }
   };
 
