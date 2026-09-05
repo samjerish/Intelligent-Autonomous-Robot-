@@ -2133,7 +2133,7 @@ const Robot = ({
       // 4. Position update: smooth tracking without rapid jumping
       currentPos.copy(targetWithCurvedDiversion);
 
-      // --- Update Navigation Route Line: Orange for diversion alone, Blue for normal route ---
+      // --- Update Navigation Route Line: Yellow for diversion alone, Blue for normal patrol route ---
       if (drivableRouteRef) {
         const routeData = buildFullRouteLine(curve, s, currentPos, getDrivableOffsetAt, isOvertakingActive);
         if (routeData.points.length >= 6) {
@@ -2246,16 +2246,16 @@ const Robot = ({
               tangentAtObs = curve.getTangentAt(u);
             }
           }
-          if (bestDistSq < 1.35 * 1.35 && sObstacle > s - 1.0) {
+          if (bestDistSq < 0.72 * 0.72 && sObstacle > s - 1.0 && sObstacle < s + 6.5) {
             const normAtObs = new THREE.Vector3(tangentAtObs.z, 0, -tangentAtObs.x).normalize();
             const toObs = new THREE.Vector3().subVectors(obs.pos, ptAtObs);
             const sideDot = toObs.dot(normAtObs);
             const preferredSide = sideDot >= 0 ? -1 : 1;
             const clearance = preferredSide < 0 ? (2.2 + sideDot) : (2.2 - sideDot);
-            if (clearance >= 1.40) {
+            if (clearance >= 1.35) {
               idleDiversions.push({
                 sObstacle,
-                peakAmplitude: preferredSide * Math.min(1.20, Math.max(1.05, 0.85 + Math.abs(sideDot)))
+                peakAmplitude: preferredSide * Math.min(1.15, Math.max(0.95, 0.85 + Math.abs(sideDot)))
               });
             }
           }
