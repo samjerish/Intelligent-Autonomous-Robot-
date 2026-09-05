@@ -2481,7 +2481,12 @@ const Robot = ({
       let forwardCorridorSpeedCap = cruiseSpeed;
 
       for (const obs of scannedObstacles) {
-        const obsRadius = obs.type === 'car' ? 0.65 : (obs.type === 'static' ? 0.55 : 0.38);
+        // Exclude the obstacle currently being diverted around so its forward position doesn't freeze the robot!
+        if (activeDiversionRef.current && activeDiversionRef.current.obstacleId === obs.id) {
+          continue;
+        }
+
+        const obsRadius = obs.type === 'car' ? 0.42 : (obs.type === 'static' ? 0.45 : 0.28);
         const distCenter = currentPos.distanceTo(obs.pos3D);
         const edgeDist = Math.max(0, distCenter - (robotRadius + obsRadius));
 
@@ -2489,20 +2494,20 @@ const Robot = ({
         const fwdDist = toObs.dot(robotHeading);
         const latDist = Math.abs(toObs.dot(robotLateral));
 
-        // Forward corridor speed envelope:
-        // If an obstacle is ahead in the robot's driving corridor (fwdDist > 0.05m, latDist < 0.95m):
-        if (fwdDist > 0.05 && fwdDist < 4.5 && latDist < 0.95) {
-          // If edge clearance drops below 1.60m, smoothly cap targetSpeed:
-          if (edgeDist < 1.60) {
-            const speedCap = THREE.MathUtils.clamp((edgeDist - 0.65) * 1.2, 0, cruiseSpeed);
+        // Forward corridor speed envelope for OTHER obstacles:
+        // If an obstacle is ahead in the robot's driving corridor (fwdDist > 0.05m, latDist < 0.90m):
+        if (fwdDist > 0.05 && fwdDist < 4.5 && latDist < 0.90) {
+          // If edge clearance drops below 1.40m, smoothly cap targetSpeed:
+          if (edgeDist < 1.40) {
+            const speedCap = THREE.MathUtils.clamp((edgeDist - 0.50) * 1.2, 0, cruiseSpeed);
             if (speedCap < forwardCorridorSpeedCap) {
               forwardCorridorSpeedCap = speedCap;
             }
           }
         }
 
-        // Emergency reverse trigger: if clearance is critically breached (< 0.50m) in forward corridor
-        if (fwdDist > -0.15 && fwdDist < 1.4 && latDist < 0.90 && edgeDist < 0.50) {
+        // Emergency reverse trigger: if clearance is critically breached (< 0.40m) in forward corridor
+        if (fwdDist > -0.15 && fwdDist < 1.4 && latDist < 0.85 && edgeDist < 0.40) {
           criticalDeadlockObs = obs;
         }
       }
@@ -2511,26 +2516,71 @@ const Robot = ({
         isReversingRef.current = true;
         setIsReversing(true);
         conflictingObsIdRef.current = criticalDeadlockObs.id;
-        reverseTargetSRef.current = Math.max(0, s - 1.8);
+        reverseTargetSRef.current = Math.max(0.2, s - 1.8);
         if (addExplanation) {
-          addExplanation('🛡️ Deadlock gap: Gently reversing to give obstacle safe clearance.');
+          addExplanation('🛡️ Proximity buffer: Gently reversing to establish safe turning clearance.');
         }
       }
 
       if (isReversingRef.current) {
-        targetSpeed = -0.8;
+        targetSpeed = -0.55;
         shouldCourteousStandOff = true;
-        currentStandoffLabel = 'REVERSING • MAKING CLEARANCE';
+        if (!currentStandoffLabel) {
+          currentStandoffLabel = 'REVERSING • CREATING SAFE TURNING ROOM';
+        }
 
-        const backedUpFarEnough = s <= reverseTargetSRef.current + 0.05 || s <= 0.02;
-        if (backedUpFarEnough) {
+        // While reversing, continuously check if enough turning room has been created to immediately execute diversion:
+        if (primaryDirectObstacle) {
+          const recheckPlan = calculateSafeDiversionPlan(primaryDirectObstacle);
+          if (recheckPlan && primaryDirectObstacle.longitudinalDelta >= 1.6) {
+            // Turning room created! Immediately transition into the safe yellow diversion:
+            isReversingRef.current = false;
+            setIsReversing(false);
+            activeDiversionRef.current = {
+              obstacleId: primaryDirectObstacle.id,
+              sStart: recheckPlan.sStart,
+              sObstacle: recheckPlan.sObstacle,
+              peakAmplitude: recheckPlan.peakAmplitude,
+              clearanceMeters: recheckPlan.requiredSeparation,
+              diversionEndS: recheckPlan.diversionEndS,
+              targetPassingOffset: recheckPlan.targetPassingOffset,
+              createdAt: Date.now(),
+            };
+            isOvertakeFeasible = true;
+            shouldCourteousStandOff = false;
+            targetSpeed = cruiseSpeed * 0.95;
+            if (addExplanation) {
+              addExplanation('⚡ Turning clearance achieved: Executing safe yellow diversion bypass.');
+            }
+          }
+        }
+
+        const backedUpFarEnough = s <= reverseTargetSRef.current + 0.05 || s <= 0.05;
+        if (backedUpFarEnough && isReversingRef.current) {
           isReversingRef.current = false;
           setIsReversing(false);
-          isYieldWaitingRef.current = true;
-          setIsYieldWaiting(true);
-          yieldWaitTimerRef.current = 0;
-          targetSpeed = 0;
-          actualSpeedRef.current = 0;
+          lastReverseEndTimeRef.current = Date.now();
+          // Immediately check if diversion can be started now:
+          if (primaryDirectObstacle) {
+            const finalPlan = calculateSafeDiversionPlan(primaryDirectObstacle);
+            if (finalPlan) {
+              activeDiversionRef.current = {
+                obstacleId: primaryDirectObstacle.id,
+                sStart: finalPlan.sStart,
+                sObstacle: finalPlan.sObstacle,
+                peakAmplitude: finalPlan.peakAmplitude,
+                clearanceMeters: finalPlan.requiredSeparation,
+                diversionEndS: finalPlan.diversionEndS,
+                targetPassingOffset: finalPlan.targetPassingOffset,
+                createdAt: Date.now(),
+              };
+              isOvertakeFeasible = true;
+              shouldCourteousStandOff = false;
+              targetSpeed = cruiseSpeed * 0.95;
+            } else {
+              targetSpeed = 0;
+            }
+          }
         }
       } else if (isYieldWaitingRef.current) {
         targetSpeed = 0;
@@ -2565,8 +2615,8 @@ const Robot = ({
           }
         }
 
-        // Apply strict forward corridor safety speed envelope
-        if (forwardCorridorSpeedCap < targetSpeed) {
+        // Apply strict forward corridor safety speed envelope for OTHER obstacles
+        if (!isReversingRef.current && forwardCorridorSpeedCap < targetSpeed) {
           targetSpeed = forwardCorridorSpeedCap;
           if (forwardCorridorSpeedCap <= 0.05) {
             shouldCourteousStandOff = true;
@@ -2624,8 +2674,8 @@ const Robot = ({
 
       // Hard physical exclusion boundary: Robot must NEVER touch or penetrate obstacle outer hulls
       for (const obs of scannedObstacles) {
-        const obsRadius = obs.type === 'car' ? 0.65 : (obs.type === 'static' ? 0.55 : 0.38);
-        const minDist = robotRadius + obsRadius + 0.30; // 30cm absolute minimum physical exclusion
+        const obsRadius = obs.type === 'car' ? 0.42 : (obs.type === 'static' ? 0.45 : 0.28);
+        const minDist = robotRadius + obsRadius + 0.15; // Hard physical boundary (~0.95m center-to-center)
         const distCenter = currentPos.distanceTo(obs.pos3D);
         if (distCenter < minDist && distCenter > 0.001) {
           const pushDir = new THREE.Vector3().subVectors(currentPos, obs.pos3D).normalize();
