@@ -351,7 +351,7 @@ const MovingEntity = ({ obstacle, gridSize, isMapView, robotPosRef, allObstacles
 
   const startNode = obstacle.path[0] || { x: 0, y: 0, f: 0 };
   const baseStart = getGridPosition(startNode, gridSize, 0.05, isMapView);
-  const startOffset = isCar ? 0.22 : (isRoadWalker ? (carIndex % 2 === 0 ? -0.18 : 0.18) : 0.45);
+  const startOffset = baseOffset;
   const startPos: [number, number, number] = [baseStart[0] + startOffset, baseStart[1], baseStart[2]];
 
   return (
@@ -1598,6 +1598,7 @@ const Robot = ({
 
   interface ActiveDiversionState {
     obstacleId: string;
+    sStart: number;
     sObstacle: number;
     peakAmplitude: number; // Delta from assigned lane center
     clearanceMeters: number;
@@ -1922,33 +1923,18 @@ const Robot = ({
       // "The robot should gradually steer along the yellow line, keep a wide safe distance, pass the obstacle without collision, and then smoothly merge back to the center of its assigned lane and continue following the blue route."
       if (primaryDirectObstacle) {
         const obs = primaryDirectObstacle;
-        const isFollowingNormalTraffic = obs.isMoving && obs.relForwardVel >= cruiseSpeed * 0.75;
-        const isOncomingInOurLane = obs.isMoving && obs.relForwardVel < -0.20;
-        const isBlockingRoute = !obs.isMoving || obs.speed < 0.65 || obs.type === 'static' || obs.relForwardVel < cruiseSpeed * 0.45;
+        const isObstructingLane = !obs.isMoving || obs.relForwardVel < cruiseSpeed * 0.85 || obs.longitudinalDelta < 7.5;
 
-        if (isFollowingNormalTraffic) {
-          // Following moving traffic ahead on the blue route at safe following distance
-          shouldCourteousStandOff = false;
-          if (obs.longitudinalDelta < 3.5) {
-            targetSpeed = THREE.MathUtils.clamp((obs.longitudinalDelta - 2.8) * 0.85, 0.4, cruiseSpeed * 0.88);
-          } else {
-            targetSpeed = Math.min(cruiseSpeed, Math.max(0.6, obs.speed * 0.95));
-          }
-        } else if (isOncomingInOurLane) {
-          // Oncoming traffic in our lane: yield smoothly on the right shoulder, reducing speed
-          shouldCourteousStandOff = true;
-          currentStandoffLabel = 'YIELDING TO ONCOMING TRAFFIC • REDUCED SPEED';
-          targetSpeed = THREE.MathUtils.clamp((obs.longitudinalDelta - 2.8) * 0.7, 0, cruiseSpeed * 0.65);
-        } else if (isBlockingRoute) {
-          // Obstacle is blocking our assigned lane directly in front of the robot:
+        if (isObstructingLane) {
+          // Obstacle is blocking or slowly traveling in our assigned lane directly in front of the robot:
           // Check whether there is enough safe, clear space on the road to divert:
           const obsRadius = obs.type === 'car' ? 0.68 : (obs.type === 'static' ? 0.55 : 0.38);
           const robotRadius = 0.40;
-          const minSafetyBuffer = 0.45; // Strict clearance: at least 45cm between outer hulls
+          const minSafetyBuffer = 0.45; // Strict clearance: at least 45cm between outer hulls (total >= 1.40m separation)
           const requiredSeparation = obsRadius + robotRadius + minSafetyBuffer;
 
-          // Since obstacle is on the right side of the road, the natural safe passing space is the left passing lane
-          const targetPassingOffset = Math.max(-1.15, Math.min(-0.70, obs.sideDot - requiredSeparation));
+          // Since obstacle is in the right lane (+0.35m), safe passing space is the left passing lane (-0.75m to -1.05m)
+          const targetPassingOffset = Math.max(-1.15, Math.min(-0.75, obs.sideDot - requiredSeparation));
           const leftWithinRoad = targetPassingOffset >= -1.25;
 
           // Check if left passing lane has oncoming vehicles
@@ -1970,12 +1956,14 @@ const Robot = ({
             // Enough safe, clear space exists on the road:
             // Create a smooth temporary yellow diversion line around the obstacle
             const peakDelta = targetPassingOffset - ASSIGNED_LANE_OFFSET;
-            const sigma = 2.8;
-            const divEndS = Math.min(totalLength, obs.sObstacle + 2.5 * sigma);
+            const halfSpan = Math.max(3.2, Math.min(5.5, obs.longitudinalDelta));
+            const divStartS = Math.max(0, s);
+            const divEndS = Math.min(totalLength, obs.sObstacle + halfSpan);
 
             if (!activeDiversionRef.current) {
               activeDiversionRef.current = {
                 obstacleId: obs.id,
+                sStart: divStartS,
                 sObstacle: obs.sObstacle,
                 peakAmplitude: peakDelta,
                 clearanceMeters: requiredSeparation,
@@ -1984,12 +1972,15 @@ const Robot = ({
                 createdAt: Date.now(),
               };
               if (addExplanation) {
-                addExplanation('⚡ Safe yellow diversion selected: Smoothly bypassing obstacle.');
+                addExplanation('⚡ Safe yellow diversion selected: Smoothly bypassing road obstacle.');
               }
             } else if (activeDiversionRef.current.obstacleId === obs.id) {
-              activeDiversionRef.current.sObstacle = obs.sObstacle;
-              activeDiversionRef.current.diversionEndS = divEndS;
-              activeDiversionRef.current.peakAmplitude = peakDelta;
+              if (s < obs.sObstacle) {
+                activeDiversionRef.current.sObstacle = obs.sObstacle;
+                activeDiversionRef.current.diversionEndS = divEndS;
+                activeDiversionRef.current.peakAmplitude = peakDelta;
+                activeDiversionRef.current.targetPassingOffset = targetPassingOffset;
+              }
             }
 
             isOvertakeFeasible = true;
@@ -2011,6 +2002,10 @@ const Robot = ({
               targetSpeed = THREE.MathUtils.clamp((obs.longitudinalDelta - 3.0) * 0.8, 0, cruiseSpeed * 0.5);
             }
           }
+        } else {
+          // Normal traffic moving ahead at good speed in lane
+          shouldCourteousStandOff = false;
+          targetSpeed = cruiseSpeed;
         }
       }
 
@@ -2019,10 +2014,9 @@ const Robot = ({
       if (activeDiversionRef.current) {
         const div = activeDiversionRef.current;
         const hasPassedObstacle = s >= div.sObstacle + 0.3;
-        const lateralDistToBlue = Math.abs(smoothedLateralOffsetRef.current - ASSIGNED_LANE_OFFSET);
-        const hasRejoinedBlue = hasPassedObstacle && lateralDistToBlue < 0.04 && s >= div.diversionEndS - 0.4;
+        const hasRejoinedBlue = s >= div.diversionEndS - 0.25;
 
-        if (hasRejoinedBlue) {
+        if (hasPassedObstacle && hasRejoinedBlue) {
           activeDiversionRef.current = null;
           if (diversionRouteRef) {
             diversionRouteRef.current = [];
