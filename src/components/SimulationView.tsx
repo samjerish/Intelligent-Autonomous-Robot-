@@ -187,7 +187,7 @@ const MovingEntity = ({ obstacle, gridSize, isMapView, robotPosRef, allObstacles
     let isYielding = false;
     let speedFactor = 1.0;
 
-    // Smooth obstacle dynamics & mutual safety with robot (obstacles stay on full continuous movement directly on the road)
+    // ── 1. Obstacle-to-Robot Collision Avoidance & Safe Following ──
     if (robotPosRef && robotPosRef.current) {
       const distToRobot = currentPos.distanceTo(robotPosRef.current);
       const toRobotX = robotPosRef.current.x - currentPos.x;
@@ -195,60 +195,100 @@ const MovingEntity = ({ obstacle, gridSize, isMapView, robotPosRef, allObstacles
       const fwdToRobot = toRobotX * dirX + toRobotZ * dirZ;
       const latToRobot = Math.abs(toRobotX * latX + toRobotZ * latZ);
 
-      // "Place moving obstacles directly on the road, within the robot’s driving path."
-      // Moving obstacles stay directly in the driving lane on the road surface (+0.35m)
+      // Moving obstacles stay on the road in the driving lane (+0.35m)
       yieldTarget = baseOffset;
 
-      // When robot approaches or is passing nearby, maintain continuous fluid motion
-      if (distToRobot < 6.5 && fwdToRobot > -2.0) {
-        if (fwdToRobot > 0.2 && fwdToRobot < 4.0 && latToRobot < 1.30) {
-          const adapted = THREE.MathUtils.clamp((fwdToRobot - 0.5) / 3.5, 0.75, 0.95);
-          speedFactor = Math.min(speedFactor, adapted);
+      // Case 1: Obstacle is following the robot (robot is in front of obstacle)
+      // "Obstacles must also avoid one another: they should never collide, overlap, freeze into each other, or cross through the robot."
+      if (fwdToRobot > 0.1 && fwdToRobot < 6.0 && latToRobot < 1.30) {
+        isYielding = true;
+        // Maintain strict safe following distance behind robot (min 2.2m)
+        if (fwdToRobot <= 2.2) {
+          // Smoothly hold safe standoff distance behind robot
+          speedFactor = Math.min(speedFactor, 0.0);
+        } else {
+          // Smoothly pace following speed behind robot
+          const followFactor = THREE.MathUtils.clamp((fwdToRobot - 2.2) / 2.8, 0.15, 0.95);
+          speedFactor = Math.min(speedFactor, followFactor);
+        }
+      } 
+      // Case 2: Robot is passing alongside or oncoming
+      else if (fwdToRobot <= 0.1 && distToRobot < 4.0) {
+        if (latToRobot < 1.35) {
+          // Nudge slightly right (+0.50) to give the robot a wide, generous passing gap
+          yieldTarget = Math.max(yieldTarget, 0.50);
+          speedFactor = Math.min(speedFactor, 0.85);
         }
       }
+
+      // Hard physical exclusion: obstacle must NEVER touch or penetrate robot hull
+      if (distToRobot < 1.35 && distToRobot > 0.001) {
+        const pushX = (currentPos.x - robotPosRef.current.x) / distToRobot;
+        const pushZ = (currentPos.z - robotPosRef.current.z) / distToRobot;
+        const overlap = 1.35 - distToRobot;
+        currentPos.x += pushX * overlap * delta * 2.5;
+        currentPos.z += pushZ * overlap * delta * 2.5;
+      }
     }
-    
-    // Vehicle-to-vehicle & vehicle-to-pedestrian safe spacing (Continuous motion, no freezing, zero collisions)
+
+    // ── 2. Obstacle-to-Obstacle Mutual Collision Avoidance & Safe Spacing ──
+    const myRadius = isCar ? 0.65 : 0.38;
     if (allObstaclesRef && allObstaclesRef.current) {
       for (const other of allObstaclesRef.current) {
         if (other.id === obstacle.id) continue;
         const otherPos = other.pos3D;
         if (!otherPos) continue;
+        const otherIsCar = other.type === 'car';
+        const otherRadius = otherIsCar ? 0.65 : 0.38;
+        const minCenterSep = myRadius + otherRadius + 0.65; // Minimum safe buffer: at least 65cm between hulls
+
         const distToOther = currentPos.distanceTo(otherPos);
-        if (distToOther < 6.0) {
+        if (distToOther < 7.0) {
           const toOtherX = otherPos.x - currentPos.x;
           const toOtherZ = otherPos.z - currentPos.z;
           const fwd = toOtherX * dirX + toOtherZ * dirZ;
           const lat = Math.abs(toOtherX * latX + toOtherZ * latZ);
-          
-          // Case A: Following another entity ahead in the same lane / corridor
-          if (fwd > 0.2 && fwd < 5.0 && lat < 1.15) {
+
+          // Case A: Following another entity ahead in the same path / lane
+          if (fwd > 0.1 && fwd < 6.0 && lat < 1.20) {
             isYielding = true;
-            // Shift towards lane edge to increase visibility and safe spacing
-            yieldTarget = baseOffset >= 0 ? 0.65 : -0.65;
-            // Smoothly pace following speed to match leader while maintaining continuous flow
-            const adapted = THREE.MathUtils.clamp((fwd - 1.2) / 3.5, 0.68, 0.92);
-            speedFactor = Math.min(speedFactor, adapted);
+            // Shift towards lane edge to maximize visibility & safe gap
+            yieldTarget = baseOffset >= 0 ? 0.60 : -0.60;
+
+            // Safe following distance: if too close, smoothly decelerate to maintain minCenterSep
+            if (fwd <= minCenterSep) {
+              speedFactor = Math.min(speedFactor, 0.0);
+            } else {
+              const paceFactor = THREE.MathUtils.clamp((fwd - minCenterSep) / 3.0, 0.15, 0.95);
+              speedFactor = Math.min(speedFactor, paceFactor);
+            }
           }
 
-          // Case B: Oncoming traffic approaching head-on
+          // Case B: Oncoming traffic approaching
           const otherVel = other.velocity;
           if (otherVel) {
             const closingSpeed = -(otherVel.x * dirX + otherVel.z * dirZ);
-            if (closingSpeed > 0.4 && distToOther < 5.0 && lat < 1.15) {
+            if (closingSpeed > 0.3 && distToOther < 6.0 && lat < 1.30) {
               isYielding = true;
-              // Both entities yield towards their respective right (+0.70) to pass each other smoothly
+              // Both entities yield towards their respective right (+0.70) to pass each other with wide clearance
               yieldTarget = 0.70;
-              const adapted = THREE.MathUtils.clamp(distToOther / 4.0, 0.75, 0.95);
+              const adapted = THREE.MathUtils.clamp((distToOther - minCenterSep) / 3.5, 0.50, 0.95);
               speedFactor = Math.min(speedFactor, adapted);
             }
+          }
+
+          // Case C: Critical overlap prevention / repulsion
+          if (distToOther < minCenterSep && distToOther > 0.001) {
+            // Smoothly push apart to guarantee zero mesh overlap
+            const pushDirX = (currentPos.x - otherPos.x) / distToOther;
+            const pushDirZ = (currentPos.z - otherPos.z) / distToOther;
+            const overlapAmount = minCenterSep - distToOther;
+            currentPos.x += pushDirX * overlapAmount * delta * 2.0;
+            currentPos.z += pushDirZ * overlapAmount * delta * 2.0;
           }
         }
       }
     }
-
-    // Strictly enforce continuous motion: speedFactor never drops below 0.68
-    speedFactor = Math.max(0.68, speedFactor);
 
     // Smoothly shift laterally to lane / shoulder position
     yieldOffsetRef.current = THREE.MathUtils.lerp(yieldOffsetRef.current, yieldTarget, delta * 4.0);
@@ -258,16 +298,16 @@ const MovingEntity = ({ obstacle, gridSize, isMapView, robotPosRef, allObstacles
       taillightMatRef.current.emissiveIntensity = isYielding ? 2.2 : 1.0;
     }
 
-    // Smooth rate-limited speed transitions (fluid, natural, never stops)
-    const lerpRate = speedFactor < smoothedSpeedFactorRef.current ? 4.5 : 3.5;
+    // Smooth rate-limited speed transitions (fluid, natural, gradual acceleration and braking)
+    const lerpRate = speedFactor < smoothedSpeedFactorRef.current ? 4.5 : 2.5;
     smoothedSpeedFactorRef.current = THREE.MathUtils.clamp(
       THREE.MathUtils.lerp(smoothedSpeedFactorRef.current, speedFactor, delta * lerpRate),
-      0.68,
+      0.0,
       1.0
     );
 
-    // Full continuous movement speed (strictly positive at all times, never 0)
-    const currentSpeed = Math.max(0.75, obstacle.speed * smoothedSpeedFactorRef.current);
+    // Realistic continuous movement speed with gradual adjustments
+    const currentSpeed = obstacle.speed * smoothedSpeedFactorRef.current;
 
     // Walking animation for pedestrians
     if (!isCar) {
@@ -306,15 +346,15 @@ const MovingEntity = ({ obstacle, gridSize, isMapView, robotPosRef, allObstacles
       obstacle.pos = obstacle.path[obstacle.currentIndex];
     }
 
-    // Anti-stuck watchdog: ensure moving obstacles never get stuck, freeze, or stall anywhere
+    // Anti-stuck watchdog: only trigger if NOT intentionally yielding/waiting
     if (!lastCheckPosRef.current) {
       lastCheckPosRef.current = currentPos.clone();
     } else {
       const stepMoved = currentPos.distanceTo(lastCheckPosRef.current);
-      if (stepMoved < 0.08 * delta) {
+      if (!isYielding && stepMoved < 0.08 * delta) {
         stuckTimerRef.current += delta;
-        if (stuckTimerRef.current > 1.0) {
-          // If stationary/stuck for > 1.0s, advance waypoint to keep continuous movement
+        if (stuckTimerRef.current > 2.0) {
+          // If stationary/stuck for > 2.0s without yielding, advance waypoint to restore flow
           if (obstacle.currentIndex < obstacle.path.length - 1) {
             obstacle.currentIndex++;
           } else {
