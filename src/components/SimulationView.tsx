@@ -1859,6 +1859,11 @@ const Robot = ({
         const distAhead = primaryAheadObs.longitudinalDelta;
         const gap = Math.max(0, distAhead - 1.8);
         targetSpeed = cruiseSpeed * Math.min(1.0, Math.max(0.0, gap / 2.0));
+        const now = Date.now();
+        if (now - lastFollowingLogTime.current > 4000 && addExplanation) {
+          lastFollowingLogTime.current = now;
+          addExplanation(`⏳ Road obstructed (${currentStandoffLabel}). Waiting for clear space.`);
+        }
       } else if (isOvertakingActive) {
         // Overtakes smoothly WITHOUT stopping, maintaining stable, steady speed
         targetSpeed = cruiseSpeed * 0.92;
@@ -1976,15 +1981,14 @@ const Robot = ({
       setStandoffReason(currentStandoffLabel);
       isCourteousStandoffRef.current = shouldCourteousStandOff;
 
-      const isFollowing = shouldCourteousStandOff && primaryAheadObs !== null && primaryAheadObs.longitudinalDelta <= (SAFE_FOLLOW_DIST + 0.8);
+      const isFollowing = shouldCourteousStandOff && primaryAheadObs !== null;
       setIsFollowingObstacle(isFollowing);
       if (primaryAheadObs) {
         setFollowingDistanceLabel(`${Math.max(0.1, primaryAheadObs.longitudinalDelta).toFixed(1)}m`);
       }
 
-      const isOvertakingActive = isOvertakeFeasible || (plannedDiversions.length > 0 && plannedDiversions.some(d => Math.abs(s - d.sObstacle) < 3.2));
       setIsOvertaking(isOvertakingActive);
-      setIsSlowCaution(isOvertakingActive || targetSpeed < cruiseSpeed * 0.75);
+      setIsSlowCaution(isOvertakingActive || targetSpeed < cruiseSpeed * 0.85);
       setIsWaiting(shouldCourteousStandOff || (targetSpeed === 0 && actualSpeedRef.current < 0.1));
 
       // Waypoint & Mission Completion Tracking
