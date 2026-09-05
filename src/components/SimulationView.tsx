@@ -2117,17 +2117,33 @@ const Robot = ({
         }
       }
 
-      // Mathematical function to compute exact lateral offset relative to assigned lane
+      // Analytical raised-cosine function to compute exact lateral offset relative to assigned lane (+0.35m)
       // When no diversion is needed: returns ASSIGNED_LANE_OFFSET (+0.35m)
-      // When diverting: smoothly arches out to safe passing lane (e.g. -0.85m to -1.05m), passes obstacle, and smoothly merges back to ASSIGNED_LANE_OFFSET (+0.35m)
+      // When diverting: smooth raised-cosine arch out to targetPassingOffset, passes obstacle, and merges seamlessly back to ASSIGNED_LANE_OFFSET (+0.35m)
       const getDrivableOffsetAt = (evalS: number): number => {
+        if (!activeDiversionRef.current) {
+          return ASSIGNED_LANE_OFFSET;
+        }
+
+        const div = activeDiversionRef.current;
+        const sStart = div.sStart;
+        const sObs = div.sObstacle;
+        const sEnd = div.diversionEndS;
+        const A = div.peakAmplitude;
+
         let diversionDelta = 0;
-        const sigma = 2.8; // Wide, natural Gaussian envelope starting ~7.0m ahead and merging back ~7.0m after
-        if (activeDiversionRef.current) {
-          const div = activeDiversionRef.current;
-          const distFromObs = evalS - div.sObstacle;
-          const bell = div.peakAmplitude * Math.exp(-(distFromObs * distFromObs) / (2 * sigma * sigma));
-          diversionDelta = bell;
+        if (evalS <= sStart) {
+          diversionDelta = 0;
+        } else if (evalS <= sObs) {
+          const span = Math.max(0.01, sObs - sStart);
+          const p = (evalS - sStart) / span;
+          diversionDelta = A * Math.sin((Math.PI / 2) * p) ** 2;
+        } else if (evalS < sEnd) {
+          const span = Math.max(0.01, sEnd - sObs);
+          const q = (evalS - sObs) / span;
+          diversionDelta = A * Math.cos((Math.PI / 2) * q) ** 2;
+        } else {
+          diversionDelta = 0;
         }
 
         // Smooth dampening near destination endpoint (< 2.0m from end)
@@ -2146,21 +2162,12 @@ const Robot = ({
       // "the robot should not change its positions rapidly"
       const safeDelta = Math.min(0.04, delta);
 
-      // 1. Strictly rate-limit lateral offset changes (maximum 0.85 m/s lateral transition)
-      const targetOffset = getDrivableOffsetAt(s);
-      const maxOffsetDelta = 0.85 * safeDelta;
-      smoothedLateralOffsetRef.current = THREE.MathUtils.clamp(
-        targetOffset,
-        smoothedLateralOffsetRef.current - maxOffsetDelta,
-        smoothedLateralOffsetRef.current + maxOffsetDelta
-      );
-
-      // 2. Smooth rate-limited acceleration and deceleration (no sudden braking or jerky stops)
+      // 1. Smooth rate-limited acceleration and deceleration (no sudden braking or jerky stops)
       const isBraking = targetSpeed < actualSpeedRef.current;
-      const speedRate = isBraking ? 1.8 : 1.0;
+      const speedRate = isBraking ? 2.0 : 1.2;
       actualSpeedRef.current = THREE.MathUtils.lerp(actualSpeedRef.current, targetSpeed, safeDelta * speedRate);
 
-      // 3. Advance distance along the road spline continuously
+      // 2. Advance distance along the road spline continuously
       if (Math.abs(actualSpeedRef.current) > 0.01) {
         if (!isMovingRef.current) { isMovingRef.current = true; setIsMoving(true); }
         distanceTraveledRef.current = Math.max(0, Math.min(totalLength, distanceTraveledRef.current + actualSpeedRef.current * safeDelta));
@@ -2168,28 +2175,22 @@ const Robot = ({
         if (isMovingRef.current) { isMovingRef.current = false; setIsMoving(false); }
       }
 
-      // Compute smoothly displaced 3D position along curved diversion
+      // 3. Exact position on trajectory: follow blue route when normal, follow yellow line precisely when diverting
       const currentU = Math.min(1.0, Math.max(0.0, distanceTraveledRef.current / totalLength));
       const baseSplinePos = curve.getPointAt(currentU);
       const baseSplineTangent = curve.getTangentAt(currentU).normalize();
       const baseSplineNormal = new THREE.Vector3(baseSplineTangent.z, 0, -baseSplineTangent.x);
 
+      const exactOffset = getDrivableOffsetAt(distanceTraveledRef.current);
+      smoothedLateralOffsetRef.current = exactOffset;
+
       const targetWithCurvedDiversion = baseSplinePos.clone().add(
-        baseSplineNormal.clone().multiplyScalar(smoothedLateralOffsetRef.current)
+        baseSplineNormal.clone().multiplyScalar(exactOffset)
       );
 
-      // 4. Position update: strictly smooth movement along the road network without rapid jumping or snapping
-      const distToTarget = currentPos.distanceTo(targetWithCurvedDiversion);
-      if (distToTarget > 0.0001) {
-        const safeSpeed = Math.abs(actualSpeedRef.current);
-        const maxPhysicalStep = Math.max(0.04, (safeSpeed + 0.6) * safeDelta * 1.5);
-        if (distToTarget <= maxPhysicalStep) {
-          currentPos.copy(targetWithCurvedDiversion);
-        } else {
-          // Smoothly glide to target without any instantaneous teleportation
-          currentPos.lerp(targetWithCurvedDiversion, Math.min(1.0, 8.0 * safeDelta));
-        }
-      }
+      // 4. Precision tracking: Robot travels directly on the visible route line at all times (blue for normal, yellow for diversion)
+      currentPos.copy(targetWithCurvedDiversion);
+      currentPos.y = 0.22;
 
       // --- Update Navigation Route Lines ---
       // (1) Continuous Blue Route Line: Always displays the full normal patrol route ahead on the robot's assigned side of the road (+0.35m)
@@ -2230,7 +2231,7 @@ const Robot = ({
           yellowPts.push(currentPos.x, 0.20, currentPos.z);
           const step = 0.15;
           for (let testS = s + step; testS <= activeDiv.diversionEndS; testS += step) {
-            const u = testS / totalLength;
+            const u = Math.min(1.0, testS / totalLength);
             const basePt = curve.getPointAt(u);
             const tangent = curve.getTangentAt(u).normalize();
             const normal = new THREE.Vector3(tangent.z, 0, -tangent.x);
@@ -2239,7 +2240,7 @@ const Robot = ({
             yellowPts.push(divPt.x, 0.20, divPt.z);
           }
           // Seamlessly reconnects back onto the blue route at the assigned lane center
-          const endU = activeDiv.diversionEndS / totalLength;
+          const endU = Math.min(1.0, activeDiv.diversionEndS / totalLength);
           const endBase = curve.getPointAt(endU);
           const endTangent = curve.getTangentAt(endU).normalize();
           const endNormal = new THREE.Vector3(endTangent.z, 0, -endTangent.x);
@@ -2256,8 +2257,8 @@ const Robot = ({
         }
       }
 
-      // 5. Stable orientation: lookahead point with rate-limited yaw damping
-      const lookaheadDist = 1.2;
+      // 5. Stable orientation: lookahead point with rate-limited yaw damping aligned with the path
+      const lookaheadDist = 0.8;
       const lookaheadS = Math.min(totalLength, Math.max(0, distanceTraveledRef.current + lookaheadDist));
       const lookaheadU = lookaheadS / totalLength;
       const lookaheadBasePos = curve.getPointAt(lookaheadU);
@@ -2270,16 +2271,12 @@ const Robot = ({
       );
 
       const forwardVector = new THREE.Vector3().subVectors(lookaheadTarget, currentPos);
-      if (forwardVector.lengthSq() > 0.04 && (Math.abs(actualSpeedRef.current) > 0.04 || !isCourteousStandoff)) {
+      if (forwardVector.lengthSq() > 0.001) {
         const targetYaw = Math.atan2(forwardVector.x, forwardVector.z);
         let diff = targetYaw - ref.current.rotation.y;
         while (diff < -Math.PI) diff += Math.PI * 2;
         while (diff > Math.PI) diff -= Math.PI * 2;
-
-        if (Math.abs(diff) > 0.008) {
-          const maxYawRate = 2.0 * safeDelta;
-          ref.current.rotation.y += THREE.MathUtils.clamp(diff, -maxYawRate, maxYawRate);
-        }
+        ref.current.rotation.y += diff * Math.min(1.0, 10.0 * safeDelta);
       }
 
       // State updates for UI badges
@@ -2401,22 +2398,31 @@ const Robot = ({
           if (activeDiversionRef.current || idleDiversions.length > 0) {
             const div = activeDiversionRef.current || idleDiversions[0];
             const yellowPts: number[] = [];
-            const divEndS = Math.min(totalLength, div.sObstacle + 2.5 * 2.8);
+            const halfSpan = Math.max(3.2, Math.min(5.5, div.sObstacle - s));
+            const divStartS = Math.max(0, s);
+            const divEndS = Math.min(totalLength, div.sObstacle + halfSpan);
             yellowPts.push(currentPos.x, 0.20, currentPos.z);
             for (let testS = s + 0.15; testS <= divEndS; testS += 0.15) {
-              const u = testS / totalLength;
+              const u = Math.min(1.0, testS / totalLength);
               const basePt = curve.getPointAt(u);
               const tangent = curve.getTangentAt(u).normalize();
               const normal = new THREE.Vector3(tangent.z, 0, -tangent.x);
               let deltaOff = 0;
-              const distFromObs = testS - div.sObstacle;
-              deltaOff = div.peakAmplitude * Math.exp(-(distFromObs * distFromObs) / (2 * 2.8 * 2.8));
+              if (testS <= divStartS) {
+                deltaOff = 0;
+              } else if (testS <= div.sObstacle) {
+                const p = (testS - divStartS) / Math.max(0.01, div.sObstacle - divStartS);
+                deltaOff = div.peakAmplitude * Math.sin((Math.PI / 2) * p) ** 2;
+              } else if (testS < divEndS) {
+                const q = (testS - div.sObstacle) / Math.max(0.01, divEndS - div.sObstacle);
+                deltaOff = div.peakAmplitude * Math.cos((Math.PI / 2) * q) ** 2;
+              }
               const off = Math.max(-1.15, Math.min(1.15, ASSIGNED_LANE_OFFSET + deltaOff));
               const divPt = basePt.clone().add(normal.clone().multiplyScalar(off));
               yellowPts.push(divPt.x, 0.20, divPt.z);
             }
             // Seamlessly reconnects back onto the blue route at the assigned lane center
-            const endU = divEndS / totalLength;
+            const endU = Math.min(1.0, divEndS / totalLength);
             const endBase = curve.getPointAt(endU);
             const endTangent = curve.getTangentAt(endU).normalize();
             const endNormal = new THREE.Vector3(endTangent.z, 0, -endTangent.x);
@@ -2876,6 +2882,44 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
       setRobotState('patrol');
       setIsPlaying(true);
       addExplanation(`🚀 Checkpoint [${safeIdx + 1}/${PATROL_CHECKPOINTS.length}]: Continuous road patrol to ${targetName} engaged.`);
+
+      // Place moving obstacles directly on the road in the robot's driving path on this checkpoint leg
+      if (patrolPath.length >= 6) {
+        const M = patrolPath.length;
+        const i1 = Math.max(2, Math.floor(M * 0.30));
+        const j1 = Math.min(M - 1, i1 + 7);
+        const p1 = patrolPath.slice(i1, j1 + 1);
+
+        const i2 = Math.max(i1 + 4, Math.floor(M * 0.65));
+        const j2 = Math.min(M - 1, i2 + 6);
+        const p2 = patrolPath.slice(i2, j2 + 1);
+
+        setDynamicObstacles(prev => {
+          return prev.map(o => {
+            if (o.id === 'obs_road_0' && p1.length >= 2) {
+              return {
+                ...o,
+                path: p1,
+                currentIndex: 0,
+                pos: p1[0],
+                targetPos: p1[p1.length - 1],
+                isMoving: true,
+              };
+            }
+            if (o.id === 'obs_road_1' && p2.length >= 2) {
+              return {
+                ...o,
+                path: p2,
+                currentIndex: 0,
+                pos: p2[0],
+                targetPos: p2[p2.length - 1],
+                isMoving: true,
+              };
+            }
+            return o;
+          });
+        });
+      }
     }
   };
 
