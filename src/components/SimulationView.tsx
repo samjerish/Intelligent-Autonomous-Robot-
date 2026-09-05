@@ -1603,7 +1603,7 @@ export const DetailedRobot = ({
           <Html position={[0, 1.55, 0]} center style={{ pointerEvents: 'none' }}>
             <div className="flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-orange-500/95 border border-orange-200 text-slate-950 font-mono font-black text-[10.5px] tracking-wider uppercase shadow-[0_0_22px_rgba(249,115,22,0.95)] whitespace-nowrap">
               <span className="w-2.5 h-2.5 rounded-full bg-slate-950 animate-ping"></span>
-              <span>⏪ REVERSING • MAKING WAY FOR OBSTACLE</span>
+              <span>⏪ {standoffLabel || 'REVERSING • CREATING SAFE TURNING ROOM'}</span>
             </div>
           </Html>
         )}
@@ -2115,10 +2115,10 @@ const Robot = ({
       staticBarricadesAhead.sort((a, b) => a.longitudinalDelta - b.longitudinalDelta);
       const primaryBarricade = staticBarricadesAhead[0] || null;
 
-      // Detect obstacles approaching directly in front of the robot in its assigned lane (ahead within 8.0m)
-      // Assigned lane is centered around +0.35m; an obstacle directly blocks it if |o.sideDot - ASSIGNED_LANE_OFFSET| <= 0.65m
+      // Detect obstacles approaching directly in front of the robot in its assigned lane (ahead within 8.5m)
+      // Assigned lane is centered around +0.35m; an obstacle directly blocks it if |o.sideDot - ASSIGNED_LANE_OFFSET| <= 0.85m
       const obstructingAhead = scannedObstacles.filter(
-        o => o.longitudinalDelta >= 0.3 && o.longitudinalDelta <= 8.0 && Math.abs(o.sideDot - ASSIGNED_LANE_OFFSET) <= 0.65
+        o => o.longitudinalDelta >= 0.1 && o.longitudinalDelta <= 8.5 && Math.abs(o.sideDot - ASSIGNED_LANE_OFFSET) <= 0.85
       );
       obstructingAhead.sort((a, b) => a.longitudinalDelta - b.longitudinalDelta);
       const primaryDirectObstacle = obstructingAhead[0] || null;
@@ -2144,47 +2144,42 @@ const Robot = ({
         requiredSeparation: number;
       }
 
-      // "When a diversion is needed, calculate a complete safe path on the road before the robot begins turning."
-      // "The yellow line must guide the robot around the obstacle with wide clearance, remain within the correct side of the road, and smoothly merge back into the blue route. Do not create a diversion if the available road space is unsafe; instead, slow down and maintain a safe distance until a safe path is available."
+      // "If a vehicle or obstacle is ahead, the robot must immediately evaluate the available space on both sides of the road."
+      // "If a safe gap exists, generate a yellow diversion path, gradually steer around the obstacle with a wide clearance, pass it smoothly, and merge back onto the blue route."
       const calculateSafeDiversionPlan = (
         obs: ScannedObs
       ): CandidateDiversionPlan | null => {
-        const obsRadius = obs.type === 'car' ? 0.68 : (obs.type === 'static' ? 0.55 : 0.38);
-        const robotRadius = 0.40;
-        const minSafetyBuffer = 0.55; // Strict clearance: at least 55cm between outer hulls
-        const requiredSeparation = obsRadius + robotRadius + minSafetyBuffer;
+        const obsRadius = obs.type === 'car' ? 0.42 : (obs.type === 'static' ? 0.45 : 0.28);
+        const robotRadius = 0.38;
+        const minPhysicalBuffer = 0.30; // At least 30cm of open air between vehicle/robot hulls
+        const requiredSeparation = obsRadius + robotRadius + minPhysicalBuffer; // ~1.10m
 
-        // Candidate passing lane offsets: must stay within road boundaries
-        const candidateOffsets: number[] = [];
-        if (obs.sideDot >= 0.05) {
-          // Obstacle is in right lane: candidate offsets in left passing corridor
-          candidateOffsets.push(
-            Math.max(-1.15, Math.min(-0.75, obs.sideDot - requiredSeparation)),
-            -0.95,
-            -0.85,
-            -0.75
-          );
-        } else {
-          // Obstacle is towards the left: candidate offsets in right passing corridor
-          candidateOffsets.push(
-            Math.min(1.15, Math.max(0.75, obs.sideDot + requiredSeparation)),
-            0.95,
-            0.85,
-            0.75
-          );
-        }
+        // Candidate passing lane offsets on BOTH sides of the road
+        const leftCandidateOffsets = [-0.55, -0.70, -0.85, -0.98, -1.10, -1.20];
+        const rightCandidateOffsets = [0.55, 0.70, 0.85, 0.98, 1.10, 1.20];
 
-        const uniqueOffsets = Array.from(new Set(candidateOffsets));
+        // If obstacle is to the right or center (sideDot >= 0.1), evaluate left corridor first, then right corridor.
+        // If obstacle is to the left (sideDot < 0.1), evaluate right corridor first, then left corridor.
+        const candidateOffsets = obs.sideDot >= 0.1
+          ? [...leftCandidateOffsets, ...rightCandidateOffsets]
+          : [...rightCandidateOffsets, ...leftCandidateOffsets];
+
         const sStart = Math.max(0, s);
         const sObs = obs.sObstacle;
-        const halfSpan = Math.max(3.2, Math.min(5.5, obs.longitudinalDelta));
+        const halfSpan = Math.max(2.8, Math.min(5.2, Math.max(1.5, obs.longitudinalDelta) * 1.2));
         const sEnd = Math.min(totalLength, sObs + halfSpan);
 
-        if (obs.longitudinalDelta < 1.2) {
-          return null; // Too close for a smooth turn, must slow down and yield
+        if (obs.longitudinalDelta < 0.7) {
+          return null; // Too close for immediate forward turn; triggers safe reverse to create turning room
         }
 
-        for (const passingOffset of uniqueOffsets) {
+        for (const passingOffset of candidateOffsets) {
+          // Check lateral separation from target obstacle at apex
+          const lateralSepAtApex = Math.abs(passingOffset - obs.sideDot);
+          if (lateralSepAtApex < requiredSeparation) {
+            continue; // Insufficient separation from obstacle
+          }
+
           const peakDelta = passingOffset - ASSIGNED_LANE_OFFSET;
           let isPlanSafe = true;
 
@@ -2212,15 +2207,15 @@ const Robot = ({
             const candPt = basePt.clone().add(normal.clone().multiplyScalar(totalOffset));
 
             // 1. Must be strictly on drivable road surface (never grass, curb, sidewalk, building)
-            if (!isPointOnDrivableRoad(candPt.x, candPt.z, mapData, 0.20)) {
+            if (!isPointOnDrivableRoad(candPt.x, candPt.z, mapData, 0.10)) {
               isPlanSafe = false;
               break;
             }
 
-            // 2. Wide clearance around the obstacle at apex
-            if (Math.abs(testS - sObs) < 0.6) {
+            // 2. Wide clearance around target obstacle near apex
+            if (Math.abs(testS - sObs) < 0.7) {
               const distToTargetObs = candPt.distanceTo(obs.pos3D);
-              if (distToTargetObs < obsRadius + robotRadius + 0.45) {
+              if (distToTargetObs < obsRadius + robotRadius + 0.28) {
                 isPlanSafe = false;
                 break;
               }
@@ -2229,9 +2224,9 @@ const Robot = ({
             // 3. Collision-free against all other obstacles and oncoming traffic
             for (const other of scannedObstacles) {
               if (other.id === obs.id) continue;
-              const otherRadius = other.type === 'car' ? 0.65 : (other.type === 'static' ? 0.55 : 0.38);
+              const otherRadius = other.type === 'car' ? 0.42 : (other.type === 'static' ? 0.45 : 0.28);
               const distToOther = candPt.distanceTo(other.pos3D);
-              if (distToOther < robotRadius + otherRadius + 0.45) {
+              if (distToOther < robotRadius + otherRadius + 0.30) {
                 isPlanSafe = false;
                 break;
               }
@@ -2239,7 +2234,7 @@ const Robot = ({
               // Oncoming vehicle conflict check in passing lane
               if (other.relForwardVel < -0.15 &&
                   other.longitudinalDelta > -1.0 && other.longitudinalDelta < 8.0 &&
-                  Math.abs(other.sideDot - passingOffset) < 0.85) {
+                  Math.abs(other.sideDot - passingOffset) < 0.80) {
                 isPlanSafe = false;
                 break;
               }
@@ -2367,10 +2362,11 @@ const Robot = ({
               shouldCourteousStandOff = false;
               targetSpeed = cruiseSpeed * 0.95;
             } else {
-              // Calculate complete safe path on the road before the robot begins turning:
+              // 1. Immediately evaluate available space on both sides of the road:
               const safePlan = calculateSafeDiversionPlan(obs);
 
               if (safePlan) {
+                // Safe gap exists on the road: immediately generate yellow diversion path and execute bypass!
                 activeDiversionRef.current = {
                   obstacleId: obs.id,
                   sStart: safePlan.sStart,
@@ -2381,20 +2377,61 @@ const Robot = ({
                   targetPassingOffset: safePlan.targetPassingOffset,
                   createdAt: Date.now(),
                 };
+                if (isReversingRef.current) {
+                  isReversingRef.current = false;
+                  setIsReversing(false);
+                }
                 isOvertakeFeasible = true;
                 shouldCourteousStandOff = false;
                 targetSpeed = cruiseSpeed * 0.95;
                 if (addExplanation) {
-                  addExplanation('⚡ Complete safe road diversion verified: Executing bypass around obstacle.');
+                  addExplanation('⚡ Available road space verified on road corridor: Executing smooth yellow diversion bypass around obstacle.');
                 }
               } else {
-                // Road space unsafe for diversion: slow down and maintain safe distance
-                shouldCourteousStandOff = true;
-                currentStandoffLabel = 'WAITING FOR SAFE DIVERSION PATH • HOLDING STANDOFF';
-                if (obs.longitudinalDelta < 3.0) {
-                  targetSpeed = 0;
+                // 2. Forward passing is temporarily unsafe or constrained.
+                // Check if there is clear space behind to reverse slowly and safely to create enough turning room:
+                const canReverseSpline = s >= 0.8;
+                let isRearRoadClear = canReverseSpline;
+                if (canReverseSpline) {
+                  const rearCheckStep = 0.25;
+                  const rearEndS = Math.max(0.1, s - 1.8);
+                  for (let rS = s - rearCheckStep; rS >= rearEndS; rS -= rearCheckStep) {
+                    const u = rS / totalLength;
+                    const rPt = curve.getPointAt(u);
+                    if (!isPointOnDrivableRoad(rPt.x, rPt.z, mapData, 0.10)) {
+                      isRearRoadClear = false;
+                      break;
+                    }
+                  }
+                }
+
+                // Check no obstacles behind in reverse path
+                const hasRearObstacle = scannedObstacles.some(
+                  o => o.longitudinalDelta < -0.15 && o.longitudinalDelta > -2.8 && Math.abs(o.sideDot - ASSIGNED_LANE_OFFSET) < 0.90
+                );
+                const isSafeToReverse = isRearRoadClear && !hasRearObstacle;
+
+                if (isSafeToReverse && (obs.longitudinalDelta < 2.3 || !activeDiversionRef.current)) {
+                  // Initiate / maintain safe reverse to create turning room
+                  if (!isReversingRef.current) {
+                    isReversingRef.current = true;
+                    setIsReversing(true);
+                    reverseTargetSRef.current = Math.max(0.2, s - 1.8);
+                    if (addExplanation) {
+                      addExplanation('⏪ Forward turning room constrained: Reversing slowly to create safe turning clearance for diversion.');
+                    }
+                  }
+                  targetSpeed = -0.55;
+                  shouldCourteousStandOff = true;
+                  currentStandoffLabel = 'REVERSING • CREATING SAFE TURNING ROOM';
                 } else {
-                  targetSpeed = THREE.MathUtils.clamp((obs.longitudinalDelta - 2.8) * 0.7, 0, cruiseSpeed * 0.45);
+                  // 3. Only hold position when no safe forward, side, or reverse maneuver exists.
+                  // Recalculate continuously; do not freeze or wait indefinitely.
+                  shouldCourteousStandOff = true;
+                  currentStandoffLabel = isSafeToReverse
+                    ? 'EVALUATING ROAD CORRIDORS • RECALCULATING'
+                    : 'ALL PATHS BLOCKED • HOLDING STANDOFF';
+                  targetSpeed = 0;
                 }
               }
             }
