@@ -1799,6 +1799,9 @@ const Robot = ({
     setIsYieldWaiting(false);
     conflictingObsIdRef.current = null;
     activeDiversionRef.current = null;
+    barricadeInspectionRef.current = null;
+    setIsBarricadeBlocked(false);
+    setBarricadeStatusLabel('');
   }, [path]);
 
   useFrame((_state, delta) => {
@@ -2104,6 +2107,13 @@ const Robot = ({
       // ── Step 2: Active Free Space Assessment & Pre-Turn Safe Path Calculation ──
       // ASSIGNED_LANE_OFFSET is defined above (+0.35m)
 
+      // Detect static road barricades blocking the robot's driving corridor ahead
+      const staticBarricadesAhead = scannedObstacles.filter(
+        o => o.type === 'static' && o.longitudinalDelta >= 0.15 && o.longitudinalDelta <= 8.5 && o.lateralDist <= 1.45
+      );
+      staticBarricadesAhead.sort((a, b) => a.longitudinalDelta - b.longitudinalDelta);
+      const primaryBarricade = staticBarricadesAhead[0] || null;
+
       // Detect obstacles approaching directly in front of the robot in its assigned lane (ahead within 8.0m)
       // Assigned lane is centered around +0.35m; an obstacle directly blocks it if |o.sideDot - ASSIGNED_LANE_OFFSET| <= 0.65m
       const obstructingAhead = scannedObstacles.filter(
@@ -2117,7 +2127,7 @@ const Robot = ({
         o => o.longitudinalDelta >= 0.2 && o.longitudinalDelta <= 8.5 && (o.lateralDist < 1.45 || o.minCpaDist < 2.0)
       );
       corridorObstacles.sort((a, b) => a.longitudinalDelta - b.longitudinalDelta);
-      const primaryAheadObs = primaryDirectObstacle || corridorObstacles[0] || null;
+      const primaryAheadObs = primaryBarricade || primaryDirectObstacle || corridorObstacles[0] || null;
 
       let shouldCourteousStandOff = false;
       let currentStandoffLabel = '';
@@ -2252,52 +2262,145 @@ const Robot = ({
         return null;
       };
 
-      if (primaryDirectObstacle) {
-        const obs = primaryDirectObstacle;
-        const isObstructingLane = !obs.isMoving || obs.relForwardVel < cruiseSpeed * 0.85 || obs.longitudinalDelta < 7.5;
+      if (primaryBarricade) {
+        const barricade = primaryBarricade;
+        const isAlreadyDiverting = activeDiversionRef.current && activeDiversionRef.current.obstacleId === barricade.id;
 
-        if (isObstructingLane) {
-          const isAlreadyDivertingForThisObs = activeDiversionRef.current && activeDiversionRef.current.obstacleId === obs.id;
+        if (isAlreadyDiverting) {
+          isOvertakeFeasible = true;
+          shouldCourteousStandOff = false;
+          targetSpeed = cruiseSpeed * 0.95;
+        } else {
+          // Approach slowly and stop at safe viewing distance (~2.7m - 2.8m)
+          shouldCourteousStandOff = true;
 
-          if (isAlreadyDivertingForThisObs) {
-            isOvertakeFeasible = true;
-            shouldCourteousStandOff = false;
-            targetSpeed = cruiseSpeed * 0.95;
-          } else {
-            // Calculate complete safe path on the road before the robot begins turning:
-            const safePlan = calculateSafeDiversionPlan(obs);
+          if (barricade.longitudinalDelta > 2.75 && barricade.distToRobot > 2.80) {
+            // Approach slowly: smooth deceleration between 6.5m and 2.75m
+            const approachSpeed = THREE.MathUtils.clamp((barricade.longitudinalDelta - 2.75) * 0.35, 0.15, cruiseSpeed * 0.40);
+            targetSpeed = Math.min(targetSpeed, approachSpeed);
+            currentStandoffLabel = 'ROAD BARRICADE AHEAD • APPROACHING SLOWLY';
+            setBarricadeStatusLabel('ROAD BARRICADE AHEAD • APPROACHING SLOWLY');
+            setIsBarricadeBlocked(true);
 
-            if (safePlan) {
-              activeDiversionRef.current = {
-                obstacleId: obs.id,
-                sStart: safePlan.sStart,
-                sObstacle: safePlan.sObstacle,
-                peakAmplitude: safePlan.peakAmplitude,
-                clearanceMeters: safePlan.requiredSeparation,
-                diversionEndS: safePlan.diversionEndS,
-                targetPassingOffset: safePlan.targetPassingOffset,
-                createdAt: Date.now(),
+            if (!barricadeInspectionRef.current || barricadeInspectionRef.current.blockerId !== barricade.id) {
+              barricadeInspectionRef.current = {
+                blockerId: barricade.id,
+                inspectionTimer: 0,
+                stage: 'approaching',
+                loggedApproach: false,
+                loggedViewing: false,
+                loggedReroute: false,
               };
-              isOvertakeFeasible = true;
-              shouldCourteousStandOff = false;
-              targetSpeed = cruiseSpeed * 0.95;
+            }
+            if (barricadeInspectionRef.current && !barricadeInspectionRef.current.loggedApproach) {
+              barricadeInspectionRef.current.loggedApproach = true;
               if (addExplanation) {
-                addExplanation('⚡ Complete safe road diversion verified: Executing bypass around obstacle.');
+                addExplanation(`🚧 Road barricade detected blocking route ahead (${barricade.longitudinalDelta.toFixed(1)}m). Approaching slowly to safe viewing distance...`);
               }
-            } else {
-              // Road space unsafe for diversion: slow down and maintain safe distance
-              shouldCourteousStandOff = true;
-              currentStandoffLabel = 'WAITING FOR SAFE DIVERSION PATH • HOLDING STANDOFF';
-              if (obs.longitudinalDelta < 3.0) {
-                targetSpeed = 0;
+            }
+          } else {
+            // Stopped at safe viewing distance (~2.7m)! Zero speed, safe buffer maintained, no collision or close pass
+            targetSpeed = 0;
+            setIsBarricadeBlocked(true);
+
+            if (!barricadeInspectionRef.current || barricadeInspectionRef.current.blockerId !== barricade.id) {
+              barricadeInspectionRef.current = {
+                blockerId: barricade.id,
+                inspectionTimer: 0,
+                stage: 'viewing',
+                loggedApproach: true,
+                loggedViewing: false,
+                loggedReroute: false,
+              };
+            }
+
+            if (barricadeInspectionRef.current) {
+              barricadeInspectionRef.current.stage = 'viewing';
+              if (!barricadeInspectionRef.current.loggedViewing) {
+                barricadeInspectionRef.current.loggedViewing = true;
+                if (addExplanation) {
+                  addExplanation('🛑 Stopped at safe viewing distance (2.8m). Recognizing road barricade: Blue route cannot continue.');
+                }
+              }
+
+              barricadeInspectionRef.current.inspectionTimer += safeDelta;
+              const inspectTime = barricadeInspectionRef.current.inspectionTimer;
+
+              if (inspectTime < 0.8) {
+                currentStandoffLabel = 'ROAD BARRICADE DETECTED • SAFE VIEWING DISTANCE (2.8m)';
+                setBarricadeStatusLabel('ROAD BARRICADE DETECTED • SAFE VIEWING DISTANCE (2.8m)');
+              } else if (inspectTime < 1.6) {
+                currentStandoffLabel = 'INSPECTING ROAD CLOSURE • EVALUATING ROAD NETWORK';
+                setBarricadeStatusLabel('INSPECTING ROAD CLOSURE • EVALUATING ROAD NETWORK');
               } else {
-                targetSpeed = THREE.MathUtils.clamp((obs.longitudinalDelta - 2.8) * 0.7, 0, cruiseSpeed * 0.45);
+                currentStandoffLabel = 'ROAD BLOCKED • RE-ROUTING TO DESTINATION VIA OPEN ROADS';
+                setBarricadeStatusLabel('ROAD BLOCKED • RE-ROUTING TO DESTINATION VIA OPEN ROADS');
+                if (!barricadeInspectionRef.current.loggedReroute) {
+                  barricadeInspectionRef.current.loggedReroute = true;
+                  barricadeInspectionRef.current.stage = 'rerouting';
+                  if (addExplanation) {
+                    addExplanation('🧠 Road closure confirmed: Blue route cannot continue. Calculating valid alternative road route to destination...');
+                  }
+                  if (onBarricadeBlocked) {
+                    onBarricadeBlocked(currentPos, barricade.pos3D);
+                  }
+                }
               }
             }
           }
-        } else {
-          shouldCourteousStandOff = false;
-          targetSpeed = cruiseSpeed;
+        }
+      } else {
+        if (isBarricadeBlocked && (!barricadeInspectionRef.current || barricadeInspectionRef.current.stage !== 'rerouting')) {
+          setIsBarricadeBlocked(false);
+          setBarricadeStatusLabel('');
+        }
+        if (primaryDirectObstacle) {
+          const obs = primaryDirectObstacle;
+          const isObstructingLane = !obs.isMoving || obs.relForwardVel < cruiseSpeed * 0.85 || obs.longitudinalDelta < 7.5;
+
+          if (isObstructingLane) {
+            const isAlreadyDivertingForThisObs = activeDiversionRef.current && activeDiversionRef.current.obstacleId === obs.id;
+
+            if (isAlreadyDivertingForThisObs) {
+              isOvertakeFeasible = true;
+              shouldCourteousStandOff = false;
+              targetSpeed = cruiseSpeed * 0.95;
+            } else {
+              // Calculate complete safe path on the road before the robot begins turning:
+              const safePlan = calculateSafeDiversionPlan(obs);
+
+              if (safePlan) {
+                activeDiversionRef.current = {
+                  obstacleId: obs.id,
+                  sStart: safePlan.sStart,
+                  sObstacle: safePlan.sObstacle,
+                  peakAmplitude: safePlan.peakAmplitude,
+                  clearanceMeters: safePlan.requiredSeparation,
+                  diversionEndS: safePlan.diversionEndS,
+                  targetPassingOffset: safePlan.targetPassingOffset,
+                  createdAt: Date.now(),
+                };
+                isOvertakeFeasible = true;
+                shouldCourteousStandOff = false;
+                targetSpeed = cruiseSpeed * 0.95;
+                if (addExplanation) {
+                  addExplanation('⚡ Complete safe road diversion verified: Executing bypass around obstacle.');
+                }
+              } else {
+                // Road space unsafe for diversion: slow down and maintain safe distance
+                shouldCourteousStandOff = true;
+                currentStandoffLabel = 'WAITING FOR SAFE DIVERSION PATH • HOLDING STANDOFF';
+                if (obs.longitudinalDelta < 3.0) {
+                  targetSpeed = 0;
+                } else {
+                  targetSpeed = THREE.MathUtils.clamp((obs.longitudinalDelta - 2.8) * 0.7, 0, cruiseSpeed * 0.45);
+                }
+              }
+            }
+          } else {
+            shouldCourteousStandOff = false;
+            targetSpeed = cruiseSpeed;
+          }
         }
       }
 
