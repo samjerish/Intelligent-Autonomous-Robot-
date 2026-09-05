@@ -2287,10 +2287,10 @@ const Robot = ({
           return null;
         }
 
-        const obsRadius = obs.type === 'car' ? 0.42 : 0.28;
-        const robotRadius = 0.38;
-        const wideAirBuffer = 0.45; // Generous wide clearance between hulls (45cm open air)
-        const requiredSeparation = obsRadius + robotRadius + wideAirBuffer; // ~1.25m to 1.28m
+        const obsRadius = obs.type === 'car' ? 0.45 : 0.32;
+        const robotRadius = 0.40;
+        const wideAirBuffer = 0.52; // Generous physical clearance between hulls (>52cm pure open air)
+        const requiredSeparation = obsRadius + robotRadius + wideAirBuffer; // ~1.24m to 1.37m center-to-center
 
         // Candidate passing lane offsets on BOTH sides of the road
         // Normal lane is ASSIGNED_LANE_OFFSET (+0.35m on right side of road)
@@ -2309,13 +2309,13 @@ const Robot = ({
         const sObs = obs.sObstacle;
         const leadInSpan = Math.max(0.1, sObs - sStart);
 
-        // Never make a last-second dodge: require at least 1.4m of lead-in distance before the obstacle
-        if (leadInSpan < 1.4) {
+        // Never make a last-second dodge: require at least 2.0m of lead-in distance before the obstacle
+        if (leadInSpan < 2.0) {
           return null; // Too close for a safe, gradual, smooth curve; must slow down and wait at safe distance
         }
 
         // Complete, smooth route: generous early lead-in and gentle, gradual merge-back
-        const trailSpan = Math.max(3.8, Math.min(6.2, leadInSpan * 0.85));
+        const trailSpan = Math.max(4.0, Math.min(6.5, leadInSpan * 0.90));
         const sEnd = Math.min(totalLength, sObs + trailSpan);
 
         for (const passingOffset of candidateOffsets) {
@@ -2329,7 +2329,7 @@ const Robot = ({
           let isPlanSafe = true;
 
           // Simulate and verify complete path from sStart to sEnd before turning
-          for (let testS = sStart; testS <= sEnd; testS += 0.15) {
+          for (let testS = sStart; testS <= sEnd; testS += 0.12) {
             const u = Math.min(1.0, Math.max(0.0, testS / totalLength));
             const basePt = curve.getPointAt(u);
             const tangent = curve.getTangentAt(u).normalize();
@@ -2351,27 +2351,31 @@ const Robot = ({
             const totalOffset = ASSIGNED_LANE_OFFSET + diversionDelta;
             const candPt = basePt.clone().add(normal.clone().multiplyScalar(totalOffset));
 
-            // 1. Must be strictly on drivable asphalt road surface (never grass, curb, sidewalk, building)
-            if (!isPointOnDrivableRoad(candPt.x, candPt.z, mapData, 0.12)) {
+            // 1. Must be strictly on drivable asphalt road surface with safety margin 0.20m (never grass, curb, sidewalk, building)
+            if (!isPointOnDrivableRoad(candPt.x, candPt.z, mapData, 0.20)) {
               isPlanSafe = false;
               break;
             }
 
             // 2. Wide clearance around target obstacle near apex
-            if (Math.abs(testS - sObs) < 0.9) {
+            if (Math.abs(testS - sObs) < 1.0) {
               const distToTargetObs = candPt.distanceTo(obs.pos3D);
-              if (distToTargetObs < obsRadius + robotRadius + 0.38) {
+              if (distToTargetObs < requiredSeparation) {
                 isPlanSafe = false;
                 break;
               }
             }
 
-            // 3. Collision-free against all other obstacles, avoiding pedestrians and traffic (never force anyone to react)
+            // 3. Collision-free against all other obstacles, predicting their paths and never forcing anyone to react
+            const tReach = Math.max(0, (testS - sStart) / Math.max(0.6, actualSpeedRef.current || 1.2));
             for (const other of scannedObstacles) {
               if (other.id === obs.id) continue;
-              const otherRadius = other.type === 'car' ? 0.42 : (other.type === 'static' ? 0.45 : 0.30);
-              const extraBuffer = other.type === 'person' ? 0.50 : 0.35;
-              const distToOther = candPt.distanceTo(other.pos3D);
+              const otherPredictedPos = other.isDynamic
+                ? other.pos3D.clone().add(other.vel3D.clone().multiplyScalar(tReach))
+                : other.pos3D;
+              const otherRadius = other.radius;
+              const extraBuffer = other.type === 'person' ? 0.60 : (other.type === 'car' ? 0.45 : 0.40);
+              const distToOther = candPt.distanceTo(otherPredictedPos);
               if (distToOther < robotRadius + otherRadius + extraBuffer) {
                 isPlanSafe = false;
                 break;
@@ -2379,16 +2383,16 @@ const Robot = ({
 
               // Oncoming vehicle conflict check in passing corridor (never cut off oncoming traffic)
               if (other.relForwardVel < -0.10 &&
-                  other.longitudinalDelta > -1.0 && other.longitudinalDelta < 12.0 &&
-                  Math.abs(other.sideDot - passingOffset) < 0.95) {
+                  other.longitudinalDelta > -1.0 && other.longitudinalDelta < 14.0 &&
+                  Math.abs(other.sideDot - passingOffset) < 1.0) {
                 isPlanSafe = false;
                 break;
               }
 
               // Pedestrian in or near passing corridor
               if (other.type === 'person' &&
-                  other.longitudinalDelta > -1.0 && other.longitudinalDelta < (sEnd - sStart) + 2.0 &&
-                  Math.abs(other.sideDot - passingOffset) < 0.90) {
+                  other.longitudinalDelta > -1.0 && other.longitudinalDelta < (sEnd - sStart) + 2.5 &&
+                  Math.abs(other.sideDot - passingOffset) < 0.95) {
                 isPlanSafe = false;
                 break;
               }
@@ -2631,8 +2635,8 @@ const Robot = ({
       const now = Date.now();
       const reverseCooldownElapsed = now - lastReverseEndTimeRef.current > 3500;
 
-      // Emergency Fallback: Reverse ONLY if physical clearance is critically breached (< 0.50m)
-      const robotRadius = 0.45;
+      // Step 3: Predictive Collision Prevention & Forward Corridor Envelope
+      const robotRadius = 0.40;
       const robotHeading = new THREE.Vector3(
         Math.sin(ref.current.rotation.y),
         0,
@@ -2653,7 +2657,7 @@ const Robot = ({
           continue;
         }
 
-        const obsRadius = obs.type === 'car' ? 0.42 : (obs.type === 'static' ? 0.45 : 0.28);
+        const obsRadius = obs.radius;
         const distCenter = currentPos.distanceTo(obs.pos3D);
         const edgeDist = Math.max(0, distCenter - (robotRadius + obsRadius));
 
@@ -2661,20 +2665,32 @@ const Robot = ({
         const fwdDist = toObs.dot(robotHeading);
         const latDist = Math.abs(toObs.dot(robotLateral));
 
-        // Forward corridor speed envelope for OTHER obstacles:
-        // If an obstacle is ahead in the robot's driving corridor (fwdDist > 0.05m, latDist < 0.90m):
-        if (fwdDist > 0.05 && fwdDist < 4.5 && latDist < 0.90) {
-          // If edge clearance drops below 1.40m, smoothly cap targetSpeed:
-          if (edgeDist < 1.40) {
-            const speedCap = THREE.MathUtils.clamp((edgeDist - 0.50) * 1.2, 0, cruiseSpeed);
+        // A. Predictive CPA Collision Warning Envelope:
+        // Continuously predict possible collisions before they occur and choose a safe response
+        if (obs.timeAtCpa > 0.05 && obs.timeAtCpa <= 3.8 && obs.minCpaDist < (robotRadius + obsRadius + 0.65)) {
+          const timeFactor = Math.min(1.0, obs.timeAtCpa / 3.8);
+          const cpaSpeedCap = Math.max(0, (obs.minCpaDist - (robotRadius + obsRadius + 0.20)) * 1.6 * timeFactor);
+          if (cpaSpeedCap < forwardCorridorSpeedCap) {
+            forwardCorridorSpeedCap = cpaSpeedCap;
+          }
+        }
+
+        // B. Forward Corridor Safety Envelope:
+        // Scan forward corridor (fwdDist in [0.05, 5.5m], latDist < 1.15m)
+        if (fwdDist > 0.05 && fwdDist < 5.5 && latDist < 1.15) {
+          // If edge clearance drops to or below 0.65m, smoothly cap forward speed to 0 (wide buffer stop)
+          if (edgeDist <= 0.65) {
+            forwardCorridorSpeedCap = 0;
+          } else if (edgeDist < 2.0) {
+            const speedCap = THREE.MathUtils.clamp((edgeDist - 0.65) * 1.4, 0, cruiseSpeed);
             if (speedCap < forwardCorridorSpeedCap) {
               forwardCorridorSpeedCap = speedCap;
             }
           }
         }
 
-        // Emergency reverse trigger: if clearance is critically breached (< 0.40m) in forward corridor
-        if (fwdDist > -0.15 && fwdDist < 1.4 && latDist < 0.85 && edgeDist < 0.40) {
+        // C. Emergency proximity trigger: if clearance is critically breached (< 0.45m) in forward corridor
+        if (fwdDist > -0.15 && fwdDist < 1.6 && latDist < 0.90 && edgeDist < 0.45) {
           criticalDeadlockObs = obs;
         }
       }
@@ -2877,13 +2893,13 @@ const Robot = ({
         baseSplineNormal.clone().multiplyScalar(exactOffset)
       );
 
-      // Verify and guarantee robot chassis stays strictly on drivable road surface
-      if (!isPointOnDrivableRoad(targetWithCurvedDiversion.x, targetWithCurvedDiversion.z, mapData, 0.18)) {
+      // Verify and guarantee robot chassis stays strictly on drivable road surface (margin = 0.20m from curbs/edges/buildings)
+      if (!isPointOnDrivableRoad(targetWithCurvedDiversion.x, targetWithCurvedDiversion.z, mapData, 0.20)) {
         for (let scale = 0.85; scale >= 0.2; scale -= 0.15) {
           const testPos = baseSplinePos.clone().add(
             baseSplineNormal.clone().multiplyScalar(exactOffset * scale)
           );
-          if (isPointOnDrivableRoad(testPos.x, testPos.z, mapData, 0.18)) {
+          if (isPointOnDrivableRoad(testPos.x, testPos.z, mapData, 0.20)) {
             targetWithCurvedDiversion = testPos;
             exactOffset *= scale;
             break;
@@ -2908,13 +2924,13 @@ const Robot = ({
 
       // ── Soft Continuous Hull Repulsion Buffer (No Teleporting Repulsion) ──
       for (const obs of scannedObstacles) {
-        const obsRadius = obs.type === 'car' ? 0.42 : (obs.type === 'static' ? 0.45 : 0.28);
-        const minDist = robotRadius + obsRadius + 0.15; // Hard physical boundary (~0.95m center-to-center)
+        const obsRadius = obs.radius || (obs.type === 'car' ? 0.45 : (obs.type === 'static' ? 0.50 : 0.32));
+        const minSafeDist = robotRadius + obsRadius + 0.35; // 35cm buffer outside physical radii (~1.25m center-to-center)
         const distCenter = currentPos.distanceTo(obs.pos3D);
-        if (distCenter < minDist && distCenter > 0.001) {
+        if (distCenter < minSafeDist && distCenter > 0.001) {
           const pushDir = new THREE.Vector3().subVectors(currentPos, obs.pos3D).normalize();
-          const overlap = minDist - distCenter;
-          const pushDist = Math.min(overlap, overlap * safeDelta * 2.5 + 0.01);
+          const overlap = minSafeDist - distCenter;
+          const pushDist = Math.min(overlap, overlap * safeDelta * 3.0 + 0.015);
           currentPos.add(pushDir.multiplyScalar(pushDist));
         }
       }
@@ -3493,6 +3509,10 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
   const [isIdleMode, setIsIdleMode] = useState(false);
   const [userBlockers, setUserBlockers] = useState<GridPoint[]>([]);
   const [crowds, setCrowds] = useState<GridPoint[]>([]);
+
+  const allStaticObstacles = useMemo(() => {
+    return [...(mapData?.obstacles || []), ...userBlockers];
+  }, [mapData?.obstacles, userBlockers]);
 
   const [policeState, setPoliceState] = useState<PoliceState>({ active: false, path: [], targetPos: null, phase: 'idle' });
   const policeStateRef = useRef<PoliceState>(policeState);
@@ -5132,7 +5152,7 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
               isMapView={isMapView} 
               speed={(robotState === 'emergency_response' ? 25 : 10) * (speedLimit / 50)} 
               dynamicObstaclesRef={dynamicObstaclesRef}
-              staticObstacles={userBlockers}
+              staticObstacles={allStaticObstacles}
               drivableRouteRef={drivableRouteRef}
               diversionRouteRef={diversionRouteRef}
               drivableRouteColorsRef={drivableRouteColorsRef}
