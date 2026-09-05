@@ -1405,12 +1405,6 @@ const SciFiGate = ({ position, scale = 1, rotation = [0, 0, 0] }: { position: [n
        <Box args={[3.2, 0.1, 0.1]} position={[0, 2.9, 0]}>
          <meshStandardMaterial color="#0ea5e9" emissive="#0ea5e9" emissiveIntensity={2} />
        </Box>
-       {/* Title Text */}
-       <Html position={[0, 4, 0]} center style={{ pointerEvents: 'none' }}>
-          <div className="text-[12px] font-black text-cyan-400 bg-black/80 px-3 py-1 rounded shadow-lg whitespace-nowrap border border-cyan-500/50 uppercase tracking-[0.3em]">
-             CAMPUS GATEWAY
-          </div>
-       </Html>
     </group>
   );
 };
@@ -1719,18 +1713,8 @@ export const DetailedRobot = ({
           </Html>
         )}
 
-        {/* Destination Pause Countdown Badge */}
-        {checkpointCountdown !== null && checkpointCountdown !== undefined && (
-          <Html position={[0, 1.55, 0]} center style={{ pointerEvents: 'none' }}>
-            <div className="flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-emerald-500/95 border border-emerald-200 text-slate-950 font-mono font-black text-[11px] tracking-wider uppercase shadow-[0_0_20px_rgba(16,185,129,0.9)] whitespace-nowrap">
-              <span className="w-2.5 h-2.5 rounded-full bg-slate-950 animate-pulse"></span>
-              <span>📍 {checkpointName || 'CHECKPOINT'} • PAUSING {checkpointCountdown.toFixed(1)}s</span>
-            </div>
-          </Html>
-        )}
-
         {/* Real-time Reversing & Making Way Badge */}
-        {isReversing && checkpointCountdown === null && (
+        {isReversing && (
           <Html position={[0, 1.55, 0]} center style={{ pointerEvents: 'none' }}>
             <div className="flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-orange-500/95 border border-orange-200 text-slate-950 font-mono font-black text-[10.5px] tracking-wider uppercase shadow-[0_0_22px_rgba(249,115,22,0.95)] whitespace-nowrap">
               <span className="w-2.5 h-2.5 rounded-full bg-slate-950 animate-ping"></span>
@@ -1740,7 +1724,7 @@ export const DetailedRobot = ({
         )}
 
         {/* Real-time Yield Waiting Badge */}
-        {isYieldWaiting && !isReversing && checkpointCountdown === null && (
+        {isYieldWaiting && !isReversing && (
           <Html position={[0, 1.50, 0]} center style={{ pointerEvents: 'none' }}>
             <div className="flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-amber-500/95 border border-amber-200 text-slate-950 font-mono font-black text-[10.5px] tracking-wider uppercase shadow-[0_0_18px_rgba(245,158,11,0.9)] whitespace-nowrap">
               <span className="w-2 h-2 rounded-full bg-slate-950 animate-pulse"></span>
@@ -1750,7 +1734,7 @@ export const DetailedRobot = ({
         )}
 
         {/* Real-time Courteous Standoff Badge */}
-        {isCourteousStandoff && !isReversing && !isYieldWaiting && checkpointCountdown === null && (
+        {isCourteousStandoff && !isReversing && !isYieldWaiting && (
           <Html position={[0, 1.50, 0]} center style={{ pointerEvents: 'none' }}>
             <div className="flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-amber-500/95 border border-amber-200 text-slate-950 font-mono font-black text-[10.5px] tracking-wider uppercase shadow-[0_0_18px_rgba(245,158,11,0.9)] whitespace-nowrap">
               <span className="w-2 h-2 rounded-full bg-slate-950 animate-pulse"></span>
@@ -1760,7 +1744,7 @@ export const DetailedRobot = ({
         )}
 
         {/* Real-time Courteous Following Badge */}
-        {isFollowingObstacle && !isCourteousStandoff && !isOvertaking && checkpointCountdown === null && (
+        {isFollowingObstacle && !isCourteousStandoff && !isOvertaking && (
           <Html position={[0, 1.50, 0]} center style={{ pointerEvents: 'none' }}>
             <div className="flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-blue-600/95 border border-blue-200 text-white font-mono font-black text-[10.5px] tracking-wider uppercase shadow-[0_0_18px_rgba(37,99,235,0.9)] whitespace-nowrap">
               <span className="w-2 h-2 rounded-full bg-white animate-pulse"></span>
@@ -1769,18 +1753,18 @@ export const DetailedRobot = ({
           </Html>
         )}
 
-        {/* Real-time Safe Yellow Diversion Badge */}
-        {isOvertaking && checkpointCountdown === null && (
+        {/* Real-time Safe Orange Diversion Badge */}
+        {isOvertaking && (
           <Html position={[0, 1.50, 0]} center style={{ pointerEvents: 'none' }}>
-            <div className="flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-yellow-400 border border-yellow-200 text-slate-950 font-mono font-black text-[10.5px] tracking-wider uppercase shadow-[0_0_20px_rgba(250,204,21,0.95)] whitespace-nowrap">
-              <span className="w-2 h-2 rounded-full bg-slate-950 animate-ping"></span>
-              <span>⚡ SAFE YELLOW DIVERSION • COMFORTABLE CLEARANCE</span>
+            <div className="flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-orange-500 border border-orange-200 text-white font-mono font-black text-[10.5px] tracking-wider uppercase shadow-[0_0_20px_rgba(249,115,22,0.95)] whitespace-nowrap">
+              <span className="w-2 h-2 rounded-full bg-white animate-ping"></span>
+              <span>⚡ SAFE ORANGE DIVERSION • COMFORTABLE CLEARANCE</span>
             </div>
           </Html>
         )}
 
         {/* Real-time Yielding/Slow Caution fallback Badge */}
-        {!isCourteousStandoff && !isFollowingObstacle && !isOvertaking && (isSlowCaution || isWaiting) && checkpointCountdown === null && (
+        {!isCourteousStandoff && !isFollowingObstacle && !isOvertaking && (isSlowCaution || isWaiting) && (
           <Html position={[0, 1.45, 0]} center style={{ pointerEvents: 'none' }}>
             <div className={`flex items-center gap-1.5 px-3 py-1 rounded-full ${isWaiting ? 'bg-amber-500/95 border-amber-200 shadow-[0_0_16px_rgba(245,158,11,0.9)]' : 'bg-sky-500/95 border-sky-200 shadow-[0_0_16px_rgba(56,189,248,0.9)]'} text-black font-mono font-black text-[10px] tracking-wider uppercase border whitespace-nowrap`}>
               <span className={`w-2 h-2 rounded-full bg-black ${isWaiting ? 'animate-pulse' : 'animate-ping'}`}></span>
@@ -3249,11 +3233,11 @@ const DrivablePathLine = ({
     return obj;
   }, [blueLineGeom, blueGlowMat]);
 
-  // (2) Radiant Yellow Temporary Diversion Line (Appears ONLY for active safe diversion)
+  // (2) Radiant Orange Temporary Diversion Line (Appears ONLY for active safe diversion)
   // Drawn above blue route line, thick, high-contrast, and never hidden
-  const yellowLineGeom = useMemo(() => new LineGeometry(), []);
-  const yellowLineMat = useMemo(() => new LineMaterial({
-    color: new THREE.Color('#ffe600').getHex(),
+  const orangeLineGeom = useMemo(() => new LineGeometry(), []);
+  const orangeLineMat = useMemo(() => new LineMaterial({
+    color: new THREE.Color('#f97316').getHex(),
     linewidth: lineWidth * 1.25,
     resolution: new THREE.Vector2(size.width, size.height),
     transparent: true,
@@ -3262,26 +3246,26 @@ const DrivablePathLine = ({
     depthWrite: false,
   }), [lineWidth, size.width, size.height]);
 
-  const yellowGlowMat = useMemo(() => new LineMaterial({
+  const orangeGlowMat = useMemo(() => new LineMaterial({
     color: new THREE.Color('#ea580c').getHex(),
     linewidth: lineWidth * 2.6,
     resolution: new THREE.Vector2(size.width, size.height),
     transparent: true,
-    opacity: 0.65,
+    opacity: 0.70,
     depthTest: false,
     depthWrite: false,
   }), [lineWidth, size.width, size.height]);
 
-  const yellowLineObj = useMemo(() => {
-    const obj = new Line2(yellowLineGeom, yellowLineMat);
+  const orangeLineObj = useMemo(() => {
+    const obj = new Line2(orangeLineGeom, orangeLineMat);
     obj.renderOrder = 103;
     return obj;
-  }, [yellowLineGeom, yellowLineMat]);
-  const yellowGlowObj = useMemo(() => {
-    const obj = new Line2(yellowLineGeom, yellowGlowMat);
+  }, [orangeLineGeom, orangeLineMat]);
+  const orangeGlowObj = useMemo(() => {
+    const obj = new Line2(orangeLineGeom, orangeGlowMat);
     obj.renderOrder = 102;
     return obj;
-  }, [yellowLineGeom, yellowGlowMat]);
+  }, [orangeLineGeom, orangeGlowMat]);
 
   // Initial fallback points along assigned lane from path before dynamic simulation frames begin
   const fallbackPoints = useMemo(() => {
@@ -3308,8 +3292,8 @@ const DrivablePathLine = ({
   useFrame(() => {
     blueLineMat.resolution.set(size.width, size.height);
     blueGlowMat.resolution.set(size.width, size.height);
-    yellowLineMat.resolution.set(size.width, size.height);
-    yellowGlowMat.resolution.set(size.width, size.height);
+    orangeLineMat.resolution.set(size.width, size.height);
+    orangeGlowMat.resolution.set(size.width, size.height);
 
     // Update Continuous Blue Normal Patrol Route Line
     const bluePts = (drivableRouteRef.current && drivableRouteRef.current.length >= 6) 
@@ -3327,17 +3311,17 @@ const DrivablePathLine = ({
       blueGlowObj.visible = false;
     }
 
-    // Update Temporary Yellow Diversion Line (Only visible during active diversion)
-    const yellowPts = diversionRouteRef && diversionRouteRef.current;
-    if (yellowPts && yellowPts.length >= 6) {
-      yellowLineGeom.setPositions(yellowPts);
-      yellowLineObj.computeLineDistances();
-      yellowGlowObj.computeLineDistances();
-      yellowLineObj.visible = true;
-      yellowGlowObj.visible = true;
+    // Update Temporary Orange Diversion Line (Only visible during active diversion)
+    const orangePts = diversionRouteRef && diversionRouteRef.current;
+    if (orangePts && orangePts.length >= 6) {
+      orangeLineGeom.setPositions(orangePts);
+      orangeLineObj.computeLineDistances();
+      orangeGlowObj.computeLineDistances();
+      orangeLineObj.visible = true;
+      orangeGlowObj.visible = true;
     } else {
-      yellowLineObj.visible = false;
-      yellowGlowObj.visible = false;
+      orangeLineObj.visible = false;
+      orangeGlowObj.visible = false;
     }
   });
 
@@ -3345,8 +3329,8 @@ const DrivablePathLine = ({
     <group>
       <primitive object={blueGlowObj} />
       <primitive object={blueLineObj} />
-      <primitive object={yellowGlowObj} />
-      <primitive object={yellowLineObj} />
+      <primitive object={orangeGlowObj} />
+      <primitive object={orangeLineObj} />
     </group>
   );
 };
