@@ -301,8 +301,8 @@ const MovingEntity = ({
         }
       }
 
-      // Hard physical exclusion: obstacle must NEVER touch or penetrate robot hull
-      const minRobotSep = myRadius + 0.38 + 0.20;
+      // Hard physical exclusion: obstacle must NEVER touch or penetrate robot hull (generous safety buffer)
+      const minRobotSep = myRadius + 0.40 + 0.35;
       if (distToRobot < minRobotSep && distToRobot > 0.001) {
         const pushDir = toRobot.clone().negate().normalize();
         const overlap = minRobotSep - distToRobot;
