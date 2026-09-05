@@ -1414,13 +1414,12 @@ export const DetailedRobot = ({
   isMoving, showFeatures = false, activeFeature = "", isEmergency = false, 
   isSlowCaution = false, isWaiting = false, isCourteousStandoff = false, standoffLabel = "",
   isFollowingObstacle = false, isOvertaking = false, followingDistanceLabel = "",
-  checkpointCountdown = null, checkpointName = "", isReversing = false, isYieldWaiting = false,
+  isReversing = false, isYieldWaiting = false,
   isBarricadeBlocked = false, barricadeLabel = ""
 }: { 
   isMoving: boolean; showFeatures?: boolean; activeFeature?: string; isEmergency?: boolean; 
   isSlowCaution?: boolean; isWaiting?: boolean; isCourteousStandoff?: boolean; standoffLabel?: string;
   isFollowingObstacle?: boolean; isOvertaking?: boolean; followingDistanceLabel?: string;
-  checkpointCountdown?: number | null; checkpointName?: string; 
   isReversing?: boolean; isYieldWaiting?: boolean;
   isBarricadeBlocked?: boolean; barricadeLabel?: string;
 }) => {
@@ -3107,15 +3106,15 @@ const Robot = ({
           drivableRouteRef.current = bluePts;
         }
 
-        // Build temporary yellow diversion line if active or idle diversion exists
+        // Build temporary orange diversion line if active or idle diversion exists
         if (diversionRouteRef) {
           if (activeDiversionRef.current || idleDiversions.length > 0) {
             const div = activeDiversionRef.current || idleDiversions[0];
-            const yellowPts: number[] = [];
+            const orangePts: number[] = [];
             const halfSpan = Math.max(3.2, Math.min(5.5, div.sObstacle - s));
             const divStartS = Math.max(0, s);
             const divEndS = Math.min(totalLength, div.sObstacle + halfSpan);
-            yellowPts.push(currentPos.x, 0.20, currentPos.z);
+            orangePts.push(currentPos.x, 0.20, currentPos.z);
             for (let testS = s + 0.15; testS <= divEndS; testS += 0.15) {
               const u = Math.min(1.0, testS / totalLength);
               const basePt = curve.getPointAt(u);
@@ -3133,7 +3132,7 @@ const Robot = ({
               }
               const off = Math.max(-1.15, Math.min(1.15, ASSIGNED_LANE_OFFSET + deltaOff));
               const divPt = basePt.clone().add(normal.clone().multiplyScalar(off));
-              yellowPts.push(divPt.x, 0.20, divPt.z);
+              orangePts.push(divPt.x, 0.20, divPt.z);
             }
             // Seamlessly reconnects back onto the blue route at the assigned lane center
             const endU = Math.min(1.0, divEndS / totalLength);
@@ -3141,9 +3140,9 @@ const Robot = ({
             const endTangent = curve.getTangentAt(endU).normalize();
             const endNormal = new THREE.Vector3(endTangent.z, 0, -endTangent.x);
             const endPt = endBase.clone().add(endNormal.clone().multiplyScalar(ASSIGNED_LANE_OFFSET));
-            yellowPts.push(endPt.x, 0.20, endPt.z);
+            orangePts.push(endPt.x, 0.20, endPt.z);
 
-            diversionRouteRef.current = yellowPts;
+            diversionRouteRef.current = orangePts;
           } else {
             diversionRouteRef.current = [];
           }
@@ -5092,7 +5091,7 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
              <SciFiGate position={getGridPosition({ x: 62, y: 86, f: 0 }, gridSize, 0)} scale={3} />
           )}
 
-          {/* Continuous Clear Drivable Blue Route Line & Temporary Yellow Diversion Line */}
+          {/* Continuous Clear Drivable Blue Route Line & Temporary Orange Diversion Line */}
           <DrivablePathLine 
             drivableRouteRef={drivableRouteRef} 
             diversionRouteRef={diversionRouteRef}
