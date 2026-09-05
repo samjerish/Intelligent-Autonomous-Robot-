@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState, useMemo, useCallback } from 'react';
 import type { MapData, GridPoint, Room } from '../types';
-import { calculatePath, calculateLongPath, calculateEvadePath } from '../utils/simulationEngine';
+import { calculatePath, calculateLongPath } from '../utils/simulationEngine';
 import { Play, RotateCcw, Activity, ShieldAlert, Crosshair, Maximize, Minimize, Bot, Power, Send, Construction, Pause, Users, Utensils, Cross } from 'lucide-react';
 import { DeliveryModal } from './DeliveryModal';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
@@ -4853,6 +4853,7 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
               onReachNode={handleReachNode}
               onMissionComplete={handleMissionComplete}
               onObstacleDetected={handleObstacleDetected}
+              onBarricadeBlocked={handleBarricadeBlocked}
               robotPosRef={robotPosRef}
               robotRotRef={robotRotRef}
               isEmergency={robotState === 'emergency_response' || robotState === 'emergency_to_ctr' || robotState === 'ctr_to_emergency'}
