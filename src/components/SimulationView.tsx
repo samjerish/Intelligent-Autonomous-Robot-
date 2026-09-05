@@ -2493,10 +2493,10 @@ const DrivablePathLine = ({
     linewidth: lineWidth,
     resolution: new THREE.Vector2(size.width, size.height),
     transparent: true,
-    opacity: 1.0,
+    opacity: opacity,
     depthTest: false,
     depthWrite: false,
-  }), [lineWidth, size.width, size.height, color]);
+  }), [lineWidth, opacity, size.width, size.height, color]);
 
   const blueGlowMat = useMemo(() => new LineMaterial({
     color: new THREE.Color('#0284c7').getHex(),
@@ -4210,8 +4210,8 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
             gridSize={gridSize} 
             isMapView={isMapView} 
             color={activePathColor} 
-            lineWidth={4.8} 
-            opacity={0.95} 
+            lineWidth={8.0} 
+            opacity={1.0} 
           />
           
           {dynamicObstacles.map((obs, idx) => (
