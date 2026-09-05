@@ -1540,7 +1540,7 @@ export const DetailedRobot = ({
 
 const Robot = ({
   path, currentIndex, isPlaying, gridSize, isMapView, speed, dynamicObstaclesRef,
-  staticObstacles = [], drivableRouteRef, drivableRouteColorsRef, upcomingLoopPoints3D = [],
+  staticObstacles = [], drivableRouteRef, drivableRouteColorsRef, diversionRouteRef, upcomingLoopPoints3D = [],
   onReachNode, onMissionComplete, onObstacleDetected: _onObstacleDetected, robotPosRef, robotRotRef, isEmergency = false,
   checkpointCountdown = null, checkpointName = "",
   addExplanation
@@ -1648,77 +1648,6 @@ const Robot = ({
     setIsYieldWaiting(false);
     conflictingObsIdRef.current = null;
   }, [path]);
-
-  // Helper function to build the complete, continuous 3D planned navigation line
-  // Normal route: blue (#38bdf8), Diversion segment alone: vibrant yellow (#ffd600)
-  const buildFullRouteLine = (
-    evalCurve: THREE.CatmullRomCurve3,
-    currentS: number,
-    posVec: THREE.Vector3,
-    offsetFn: (sVal: number) => number,
-    isDivertingNow: boolean = false
-  ): { points: number[]; colors: number[] } => {
-    const flatRoute: number[] = [];
-    const flatColors: number[] = [];
-
-    const blueColor = new THREE.Color('#38bdf8');
-    const yellowColor = new THREE.Color('#ffd600');
-
-    // Point 0: Robot's exact current 3D position (elevated slightly to y=0.08 above asphalt)
-    flatRoute.push(posVec.x, 0.08, posVec.z);
-    const p0Off = Math.abs(offsetFn(currentS));
-    if (isDivertingNow || p0Off > 0.05) {
-      flatColors.push(yellowColor.r, yellowColor.g, yellowColor.b);
-    } else {
-      flatColors.push(blueColor.r, blueColor.g, blueColor.b);
-    }
-
-    const sampleStep = 0.20; // High-density 20cm sampling for ultra-smooth curved trajectory
-    const startS = Math.min(totalLength, currentS + sampleStep);
-    for (let testS = startS; testS < totalLength; testS += sampleStep) {
-      const u = testS / totalLength;
-      const basePt = evalCurve.getPointAt(u);
-      const tangent = evalCurve.getTangentAt(u).normalize();
-      const normal = new THREE.Vector3(tangent.z, 0, -tangent.x);
-      const off = offsetFn(testS);
-      const drivablePt = basePt.clone().add(normal.clone().multiplyScalar(off));
-      flatRoute.push(drivablePt.x, 0.08, drivablePt.z);
-
-      // Yellow line only when a temporary diversion is needed; normal route maintains blue color
-      if (Math.abs(off) > 0.05) {
-        flatColors.push(yellowColor.r, yellowColor.g, yellowColor.b);
-      } else {
-        flatColors.push(blueColor.r, blueColor.g, blueColor.b);
-      }
-    }
-
-    // Destination endpoint of active leg
-    const endPt = evalCurve.getPointAt(1.0);
-    const endTangent = evalCurve.getTangentAt(1.0).normalize();
-    const endNormal = new THREE.Vector3(endTangent.z, 0, -endTangent.x);
-    const endOff = offsetFn(totalLength);
-    const endDrivablePt = endPt.clone().add(endNormal.clone().multiplyScalar(endOff));
-    flatRoute.push(endDrivablePt.x, 0.08, endDrivablePt.z);
-    if (Math.abs(endOff) > 0.05) {
-      flatColors.push(yellowColor.r, yellowColor.g, yellowColor.b);
-    } else {
-      flatColors.push(blueColor.r, blueColor.g, blueColor.b);
-    }
-
-    // Seamlessly append all subsequent patrol destinations along the road network in standard blue
-    if (upcomingLoopPoints3D && upcomingLoopPoints3D.length > 0) {
-      for (let i = 0; i < upcomingLoopPoints3D.length; i++) {
-        const pt3d = upcomingLoopPoints3D[i];
-        if (i === 0 && Math.hypot(pt3d.x - endDrivablePt.x, pt3d.z - endDrivablePt.z) < 0.25) {
-          continue;
-        }
-        flatRoute.push(pt3d.x, 0.08, pt3d.z);
-        flatColors.push(blueColor.r, blueColor.g, blueColor.b);
-      }
-    }
-
-    return { points: flatRoute, colors: flatColors };
-  };
 
   useFrame((_state, delta) => {
     if (!ref.current) return;
