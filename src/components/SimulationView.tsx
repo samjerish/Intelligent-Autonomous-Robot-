@@ -2711,7 +2711,7 @@ const Robot = ({
             };
             isOvertakeFeasible = true;
             shouldCourteousStandOff = false;
-            targetSpeed = cruiseSpeed * 0.95;
+            targetSpeed = Math.min(cruiseSpeed * 0.50, 1.65);
             if (addExplanation) {
               addExplanation('⚡ Turning clearance achieved: Executing safe yellow diversion bypass.');
             }
@@ -2739,7 +2739,7 @@ const Robot = ({
               };
               isOvertakeFeasible = true;
               shouldCourteousStandOff = false;
-              targetSpeed = cruiseSpeed * 0.95;
+              targetSpeed = Math.min(cruiseSpeed * 0.50, 1.65);
             } else {
               targetSpeed = 0;
             }
@@ -2747,7 +2747,6 @@ const Robot = ({
         }
       } else if (isYieldWaitingRef.current) {
         targetSpeed = 0;
-        actualSpeedRef.current = 0;
         yieldWaitTimerRef.current += delta;
         shouldCourteousStandOff = true;
         currentStandoffLabel = 'YIELDING • PREPARING TO PROCEED';
@@ -2761,12 +2760,12 @@ const Robot = ({
         }
       } else {
         if (isOvertakingActive) {
-          // Continuous, smooth passing speed (95% cruise speed) along safe yellow diversion without stopping
-          targetSpeed = cruiseSpeed * 0.95;
+          // "the robot may slowly and smoothly overtake using a planned yellow diversion route, maintaining wide clearance throughout... The robot must never rush past"
+          targetSpeed = Math.min(cruiseSpeed * 0.50, 1.65);
           const logTime = Date.now();
           if (logTime - lastOvertakeLogTime.current > 4000 && addExplanation) {
             lastOvertakeLogTime.current = logTime;
-            addExplanation('⚡ Genuinely necessary & safe: Taking yellow diversion around obstruction.');
+            addExplanation('⚡ Safe Diversion: Slowly and smoothly overtaking obstruction with wide clearance.');
           }
         } else if (!shouldCourteousStandOff) {
           // Normal patrol along the blue route
@@ -2790,13 +2789,65 @@ const Robot = ({
         }
       }
 
-      // "the robot should not change its positions rapidly"
-      // 1. Smooth rate-limited acceleration and deceleration (no sudden braking or jerky stops)
-      const isBraking = targetSpeed < actualSpeedRef.current;
-      const speedRate = isBraking ? 2.0 : 1.2;
-      actualSpeedRef.current = THREE.MathUtils.lerp(actualSpeedRef.current, targetSpeed, safeDelta * speedRate);
+      // ── Physical Lateral & Orientation Control (Lookahead Steering) ──
+      // Evaluated before longitudinal dynamics so vehicle anticipates turns and dampens speed gently
+      const lookaheadDist = activeDiversionRef.current ? 1.25 : 0.85;
+      const lookaheadS = Math.min(totalLength, Math.max(0, distanceTraveledRef.current + lookaheadDist));
+      const lookaheadU = lookaheadS / totalLength;
+      const lookaheadBasePos = curve.getPointAt(lookaheadU);
+      const lookaheadTangent = curve.getTangentAt(lookaheadU).normalize();
+      const lookaheadNormal = new THREE.Vector3(lookaheadTangent.z, 0, -lookaheadTangent.x);
 
-      // 2. Advance distance along the road spline continuously
+      let lookaheadOffset = getDrivableOffsetAt(lookaheadS);
+      let lookaheadTarget = lookaheadBasePos.clone().add(
+        lookaheadNormal.clone().multiplyScalar(lookaheadOffset)
+      );
+      if (!isPointOnDrivableRoad(lookaheadTarget.x, lookaheadTarget.z, mapData, 0.18)) {
+        for (let scale = 0.85; scale >= 0.2; scale -= 0.15) {
+          const testPos = lookaheadBasePos.clone().add(
+            lookaheadNormal.clone().multiplyScalar(lookaheadOffset * scale)
+          );
+          if (isPointOnDrivableRoad(testPos.x, testPos.z, mapData, 0.18)) {
+            lookaheadTarget = testPos;
+            break;
+          }
+        }
+      }
+
+      const forwardVector = new THREE.Vector3().subVectors(lookaheadTarget, currentPos);
+      let yawDiff = 0;
+      if (forwardVector.lengthSq() > 0.001) {
+        const targetYaw = Math.atan2(forwardVector.x, forwardVector.z);
+        let diff = targetYaw - ref.current.rotation.y;
+        while (diff < -Math.PI) diff += Math.PI * 2;
+        while (diff > Math.PI) diff -= Math.PI * 2;
+        yawDiff = diff;
+        // Physically realistic, gradual steering (rate capped at 1.65 rad/s ~ 94 deg/s)
+        const maxTurnRate = 1.65;
+        const turnDelta = THREE.MathUtils.clamp(diff, -maxTurnRate * safeDelta, maxTurnRate * safeDelta);
+        ref.current.rotation.y += turnDelta;
+      }
+
+      // Smooth cornering speed dampening: when steering into sharp curves or diversions,
+      // gently reduce targetSpeed beforehand instead of abrupt deceleration
+      if (Math.abs(yawDiff) > 0.22 && targetSpeed > 0) {
+        const curveSeverity = Math.min(1.0, (Math.abs(yawDiff) - 0.22) / 0.80);
+        const cornerDamping = THREE.MathUtils.lerp(1.0, 0.45, curveSeverity);
+        targetSpeed *= cornerDamping;
+      }
+
+      // ── Physical Longitudinal Dynamics (Gentle Acceleration & Controlled Braking) ──
+      // "It must never jump, teleport, snap to a new position, or suddenly change direction."
+      // "Every movement must be continuous and physically believable, using smooth steering, gradual turning, gentle acceleration, and controlled braking."
+      if (targetSpeed > actualSpeedRef.current) {
+        const maxAccel = 1.6; // m/s^2 gentle, realistic acceleration
+        actualSpeedRef.current = Math.min(targetSpeed, actualSpeedRef.current + maxAccel * safeDelta);
+      } else if (targetSpeed < actualSpeedRef.current) {
+        const maxBrake = 2.4; // m/s^2 controlled, smooth braking without jerky stops
+        actualSpeedRef.current = Math.max(targetSpeed, actualSpeedRef.current - maxBrake * safeDelta);
+      }
+
+      // ── Continuous Distance Integration ──
       if (Math.abs(actualSpeedRef.current) > 0.01) {
         if (!isMovingRef.current) { isMovingRef.current = true; setIsMoving(true); }
         distanceTraveledRef.current = Math.max(0, Math.min(totalLength, distanceTraveledRef.current + actualSpeedRef.current * safeDelta));
@@ -2804,7 +2855,7 @@ const Robot = ({
         if (isMovingRef.current) { isMovingRef.current = false; setIsMoving(false); }
       }
 
-      // 3. Exact position on trajectory: follow blue route when normal, follow yellow line precisely when diverting
+      // ── Exact Road Surface Trajectory Tracking ──
       const currentU = Math.min(1.0, Math.max(0.0, distanceTraveledRef.current / totalLength));
       const baseSplinePos = curve.getPointAt(currentU);
       const baseSplineTangent = curve.getTangentAt(currentU).normalize();
@@ -2831,11 +2882,20 @@ const Robot = ({
 
       smoothedLateralOffsetRef.current = exactOffset;
 
-      // 4. Precision tracking: Robot travels directly on the visible route line at all times (blue for normal, yellow for diversion)
-      currentPos.copy(targetWithCurvedDiversion);
+      // ── Kinematic Position Continuity: Zero Snapping / Zero Teleportation ──
+      // Physical vehicle position displacement per frame is bounded by current vehicle velocity.
+      const stepDist = currentPos.distanceTo(targetWithCurvedDiversion);
+      const maxDisplacementPerFrame = (Math.abs(actualSpeedRef.current) + 0.25) * safeDelta + 0.015;
+      if (stepDist > maxDisplacementPerFrame) {
+        // Smoothly close any residual gap over consecutive frames at physical vehicle speed
+        const moveDir = new THREE.Vector3().subVectors(targetWithCurvedDiversion, currentPos).normalize();
+        currentPos.add(moveDir.multiplyScalar(maxDisplacementPerFrame));
+      } else {
+        currentPos.copy(targetWithCurvedDiversion);
+      }
       currentPos.y = 0.22;
 
-      // Hard physical exclusion boundary: Robot must NEVER touch or penetrate obstacle outer hulls
+      // ── Soft Continuous Hull Repulsion Buffer (No Teleporting Repulsion) ──
       for (const obs of scannedObstacles) {
         const obsRadius = obs.type === 'car' ? 0.42 : (obs.type === 'static' ? 0.45 : 0.28);
         const minDist = robotRadius + obsRadius + 0.15; // Hard physical boundary (~0.95m center-to-center)
@@ -2843,7 +2903,8 @@ const Robot = ({
         if (distCenter < minDist && distCenter > 0.001) {
           const pushDir = new THREE.Vector3().subVectors(currentPos, obs.pos3D).normalize();
           const overlap = minDist - distCenter;
-          currentPos.add(pushDir.multiplyScalar(overlap));
+          const pushDist = Math.min(overlap, overlap * safeDelta * 2.5 + 0.01);
+          currentPos.add(pushDir.multiplyScalar(pushDist));
         }
       }
 
@@ -2945,47 +3006,6 @@ const Robot = ({
           }
         } else {
           diversionRouteRef.current = [];
-        }
-      }
-
-      // 5. Stable orientation: lookahead point with rate-limited yaw damping aligned with the path
-      // Uses extended lookahead (1.25m) during active diversion so robot initiates turn early and smoothly
-      const lookaheadDist = activeDiversionRef.current ? 1.25 : 0.8;
-      const lookaheadS = Math.min(totalLength, Math.max(0, distanceTraveledRef.current + lookaheadDist));
-      const lookaheadU = lookaheadS / totalLength;
-      const lookaheadBasePos = curve.getPointAt(lookaheadU);
-      const lookaheadTangent = curve.getTangentAt(lookaheadU).normalize();
-      const lookaheadNormal = new THREE.Vector3(lookaheadTangent.z, 0, -lookaheadTangent.x);
-
-      let lookaheadOffset = getDrivableOffsetAt(lookaheadS);
-      let lookaheadTarget = lookaheadBasePos.clone().add(
-        lookaheadNormal.clone().multiplyScalar(lookaheadOffset)
-      );
-      if (!isPointOnDrivableRoad(lookaheadTarget.x, lookaheadTarget.z, mapData, 0.18)) {
-        for (let scale = 0.85; scale >= 0.2; scale -= 0.15) {
-          const testPos = lookaheadBasePos.clone().add(
-            lookaheadNormal.clone().multiplyScalar(lookaheadOffset * scale)
-          );
-          if (isPointOnDrivableRoad(testPos.x, testPos.z, mapData, 0.18)) {
-            lookaheadTarget = testPos;
-            break;
-          }
-        }
-      }
-
-      const forwardVector = new THREE.Vector3().subVectors(lookaheadTarget, currentPos);
-      if (forwardVector.lengthSq() > 0.001) {
-        const targetYaw = Math.atan2(forwardVector.x, forwardVector.z);
-        let diff = targetYaw - ref.current.rotation.y;
-        while (diff < -Math.PI) diff += Math.PI * 2;
-        while (diff > Math.PI) diff -= Math.PI * 2;
-        const maxTurnRate = 2.0; // rad/s realistic smooth steering without snapping
-        const turnDelta = THREE.MathUtils.clamp(diff, -maxTurnRate * safeDelta, maxTurnRate * safeDelta);
-        ref.current.rotation.y += turnDelta;
-
-        // When negotiating sharp road turns or branches, smoothly cap speed so robot turns calmly without veering off-road
-        if (Math.abs(diff) > 0.35) {
-          actualSpeedRef.current = Math.min(actualSpeedRef.current, cruiseSpeed * 0.40);
         }
       }
 
