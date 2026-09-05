@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState, useMemo, useCallback } from 'react';
 import type { MapData, GridPoint, Room } from '../types';
 import { calculatePath, calculateLongPath } from '../utils/simulationEngine';
-import { trackEnvironmentObjects, type TrackedObject, type PerceptionScanResult } from '../utils/perceptionSystem';
+import { trackEnvironmentObjects, type PerceptionScanResult } from '../utils/perceptionSystem';
 import { Play, RotateCcw, Activity, ShieldAlert, Crosshair, Maximize, Minimize, Bot, Power, Send, Construction, Pause, Users, Utensils, Cross } from 'lucide-react';
 import { DeliveryModal } from './DeliveryModal';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
