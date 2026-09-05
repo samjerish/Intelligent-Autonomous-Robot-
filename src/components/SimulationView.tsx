@@ -178,32 +178,29 @@ const MovingEntity = ({ obstacle, gridSize, isMapView, robotPosRef, allObstacles
     const latZ = -dirX;
     
     // Lane offset:
-    // Cars drive on the right side of the lane (+0.22)
-    // Road-walking people walk down the roadway (-0.18 or +0.18)
-    // Shoulder-walking people walk on the sidewalk (+0.45)
-    const baseOffset = isCar ? 0.22 : (isRoadWalker ? (carIndex % 2 === 0 ? -0.18 : 0.18) : 0.45);
+    // Cars drive on the right side of the lane (+0.35)
+    // Road-walking people walk down the roadway (-0.22 or +0.22)
+    // Shoulder-walking people walk on the sidewalk (+0.55)
+    const baseOffset = isCar ? 0.35 : (isRoadWalker ? (carIndex % 2 === 0 ? -0.22 : 0.22) : 0.55);
     let yieldTarget = baseOffset;
     let isYielding = false;
     let isTooCloseToRobot = false;
 
-    // Smooth obstacle avoidance & mutual collision safety bubble
+    // Smooth obstacle avoidance & mutual collision safety bubble with robot
     if (robotPosRef && robotPosRef.current) {
       const distToRobot = currentPos.distanceTo(robotPosRef.current);
-      if (distToRobot < 1.35) {
-        // Mutual safety bubble: freeze forward motion so obstacle never moves into robot
+      const toRobotX = robotPosRef.current.x - currentPos.x;
+      const toRobotZ = robotPosRef.current.z - currentPos.z;
+      const fwdToRobot = toRobotX * dirX + toRobotZ * dirZ;
+      const latToRobot = Math.abs(toRobotX * latX + toRobotZ * latZ);
+
+      // Strict safety buffer: stop if robot is ahead within 3.2m or proximity < 2.2m
+      if ((fwdToRobot > -0.4 && fwdToRobot < 3.2 && latToRobot < 1.1) || distToRobot < 2.2) {
         isTooCloseToRobot = true;
       }
-      if (distToRobot < 4.8) {
-        const toRobotX = robotPosRef.current.x - currentPos.x;
-        const toRobotZ = robotPosRef.current.z - currentPos.z;
-        const dotForward = toRobotX * dirX + toRobotZ * dirZ;
-        
-        // If robot is ahead or approaching
-        if (dotForward > -0.6) {
-          isYielding = true;
-          // Step towards road shoulder to maintain wide open passing corridor
-          yieldTarget = baseOffset >= 0 ? 0.50 : -0.50;
-        }
+      if (distToRobot < 5.2 && fwdToRobot > -0.8) {
+        isYielding = true;
+        yieldTarget = baseOffset >= 0 ? 0.60 : -0.60;
       }
     }
     
@@ -215,9 +212,33 @@ const MovingEntity = ({ obstacle, gridSize, isMapView, robotPosRef, allObstacles
       taillightMatRef.current.emissiveIntensity = isYielding ? 2.5 : 1.2;
     }
 
+    // Vehicle-to-vehicle & vehicle-to-pedestrian collision avoidance (NO PILEUPS!)
+    let isBlockedByTrafficAhead = false;
+    if (allObstaclesRef && allObstaclesRef.current) {
+      for (const other of allObstaclesRef.current) {
+        if (other.id === obstacle.id) continue;
+        const otherPos = other.pos3D;
+        if (!otherPos) continue;
+        const distToOther = currentPos.distanceTo(otherPos);
+        if (distToOther < 3.2) {
+          const toOtherX = otherPos.x - currentPos.x;
+          const toOtherZ = otherPos.z - currentPos.z;
+          const fwd = toOtherX * dirX + toOtherZ * dirZ;
+          const lat = Math.abs(toOtherX * latX + toOtherZ * latZ);
+          // If another entity is ahead in our path (within 2.6m and lateral < 0.95m)
+          if (fwd > 0.05 && fwd < 2.6 && lat < 0.95) {
+            isBlockedByTrafficAhead = true;
+            break;
+          }
+        }
+      }
+    }
+
+    const isStopped = isTooCloseToRobot || isBlockedByTrafficAhead;
+
     // Walking animation for pedestrians
     if (!isCar) {
-      const walkSpeed = (isTooCloseToRobot ? 0 : obstacle.speed) * 3.2;
+      const walkSpeed = (isStopped ? 0 : obstacle.speed) * 3.2;
       const legAngle = Math.sin(t * walkSpeed) * 0.45;
       const armAngle = Math.sin(t * walkSpeed) * -0.4;
       if (leftLegRef.current) leftLegRef.current.rotation.x = legAngle;
@@ -226,24 +247,11 @@ const MovingEntity = ({ obstacle, gridSize, isMapView, robotPosRef, allObstacles
       if (rightArmRef.current) rightArmRef.current.rotation.x = -armAngle;
     } else {
       // Wheel spin animation for cars
-      const wheelSpin = delta * (isTooCloseToRobot ? 0 : obstacle.speed) * 3.5;
+      const wheelSpin = delta * (isStopped ? 0 : obstacle.speed) * 3.5;
       if (wheel1Ref.current) wheel1Ref.current.rotation.x += wheelSpin;
       if (wheel2Ref.current) wheel2Ref.current.rotation.x += wheelSpin;
       if (wheel3Ref.current) wheel3Ref.current.rotation.x += wheelSpin;
       if (wheel4Ref.current) wheel4Ref.current.rotation.x += wheelSpin;
-    }
-
-    // Anti-overlap with other dynamic obstacles
-    if (allObstaclesRef && allObstaclesRef.current) {
-       const isNearAnother = allObstaclesRef.current.some(other => 
-           other.id !== obstacle.id && 
-           other.pos.x === targetNode.x && 
-           other.pos.y === targetNode.y && 
-           other.id < obstacle.id
-       );
-       if (isNearAnother) {
-          obstacle.speed = Math.max(1.0, obstacle.speed * 0.95);
-       }
     }
 
     const [baseTx, ty, baseTz] = getGridPosition(targetNode, gridSize, 0.05, isMapView);
@@ -264,8 +272,8 @@ const MovingEntity = ({ obstacle, gridSize, isMapView, robotPosRef, allObstacles
       obstacle.pos = obstacle.path[obstacle.currentIndex];
     } else {
       let currentSpeed = isYielding ? obstacle.speed * 0.85 : obstacle.speed;
-      if (isTooCloseToRobot) {
-        currentSpeed = 0; // Hold position completely until robot diversion clears
+      if (isStopped) {
+        currentSpeed = 0; // Hold position completely until road clears: never push into traffic or robot
       }
       // Set real-time velocity vector for predictive dynamic obstacle modeling
       obstacle.velocity = new THREE.Vector3(dirX * currentSpeed, 0, dirZ * currentSpeed);
@@ -2331,21 +2339,6 @@ const EnvironmentMap = React.memo(({ mapData, isNight, isTargeting, onMapClick }
       <Box args={[wallThickness, wallHeight, compSizeY]} position={[-halfX - wallThickness/2, wallHeight/2, 0]} castShadow receiveShadow>
         <meshStandardMaterial color={wallColor} />
       </Box>
-
-      {/* ASPIRE Text on the inner front wall */}
-      <Text
-        position={[0, wallHeight/2 + 0.5, -halfY + 0.1]}
-        rotation={[0, 0, 0]}
-        fontSize={8}
-        fontWeight="900"
-        color="#0ea5e9"
-        anchorX="center"
-        anchorY="middle"
-        outlineWidth={0.2}
-        outlineColor="#ffffff"
-      >
-        ASPIRE
-      </Text>
     </group>
   );
 });
@@ -2852,17 +2845,27 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
     const roads = mapData.roads;
     const obs: DynamicObstacle[] = [];
     
-    // Spawn 28 dynamic traffic entities: 16 vehicles and 12 pedestrians
-    const TOTAL_TRAFFIC = 28;
-    const CAR_COUNT = 16;
+    // Spawn 16 well-spaced dynamic traffic entities: 8 vehicles and 8 pedestrians
+    const TOTAL_TRAFFIC = 16;
+    const CAR_COUNT = 8;
     
     for (let i = 0; i < TOTAL_TRAFFIC; i++) {
       const isCar = i < CAR_COUNT;
       let path: GridPoint[] = [];
-      for (let attempt = 0; attempt < 10; attempt++) {
+      for (let attempt = 0; attempt < 25; attempt++) {
         const start = roads[Math.floor(Math.random() * roads.length)];
         const end = roads[Math.floor(Math.random() * roads.length)];
         if (start.x === end.x && start.y === end.y) continue;
+
+        // Ensure new spawn point is spaced at least 4.0m away from existing entities
+        const [sx, , sz] = getGridPosition(start, mapData.gridSize, 0.05, isMapView);
+        const tooClose = obs.some(o => {
+          if (!o.path || o.path.length === 0) return false;
+          const [ox, , oz] = getGridPosition(o.path[0], mapData.gridSize, 0.05, isMapView);
+          return Math.hypot(sx - ox, sz - oz) < 4.0;
+        });
+        if (tooClose) continue;
+
         path = calculatePath(start, end, [...(mapData.obstacles || []), ...userBlockers], mapData, true);
         if (path.length >= 3) break;
       }
@@ -2875,7 +2878,7 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
           targetPos: path[path.length - 1],
           path,
           currentIndex: 0,
-          speed: isCar ? (3.8 + Math.random() * 1.6) : (1.8 + Math.random() * 1.0),
+          speed: isCar ? (3.2 + Math.random() * 1.2) : (1.6 + Math.random() * 0.8),
           isMoving: true,
           isRoadWalker: !isCar && (i % 3 !== 0)
         });
