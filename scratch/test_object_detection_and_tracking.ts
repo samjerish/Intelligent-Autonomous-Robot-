@@ -39,8 +39,8 @@ function mockGetGridPos(pt: GridPoint): [number, number, number] {
 }
 
 function mockIsPointOnDrivableRoad(x: number, z: number): boolean {
-  // Road corridor between x=3.5 and 6.5 along z=5..25
-  return x >= 3.5 && x <= 6.5 && z >= 4.0 && z <= 26.0;
+  // Standard 3.0m road corridor centered at x=5 (drivable between 3.8 and 6.2 with 0.3m curb margins)
+  return x >= 3.8 && x <= 6.2 && z >= 4.0 && z <= 26.0;
 }
 
 // Nominal straight route curve along z axis
@@ -73,12 +73,12 @@ console.log('\n--- TEST 2: Closest Point of Approach (CPA) & Safety Buffer ---')
 {
   const robotPos = new THREE.Vector3(5, 0, 5);
   const robotVel = new THREE.Vector3(0, 0, 1.0);
-  const obsPos = new THREE.Vector3(5.5, 0, 12);
+  const obsPos = new THREE.Vector3(5.2, 0, 7.5);
   const obsVel = new THREE.Vector3(0, 0, 0.2);
 
-  const { timeToCpa, cpaDistance } = computeCPA(robotPos, robotVel, obsPos, obsVel, 10.0);
-  assert(timeToCpa > 0, `Time to CPA is positive (${timeToCpa.toFixed(2)}s)`);
-  assert(cpaDistance >= 0.49 && cpaDistance <= 0.55, `CPA separation accounts for lateral offset (${cpaDistance.toFixed(2)}m)`);
+  const { timeToCpa, cpaDistance } = computeCPA(robotPos, robotVel, obsPos, obsVel, 5.0);
+  assert(timeToCpa > 0 && timeToCpa < 3.5, `Time to CPA is within reactive horizon (${timeToCpa.toFixed(2)}s)`);
+  assert(cpaDistance >= 0.19 && cpaDistance <= 0.25, `CPA separation accounts for lateral offset (${cpaDistance.toFixed(2)}m)`);
 
   const safetyBuffer = 1.25;
   const risk = evaluateRiskTier(cpaDistance, safetyBuffer, timeToCpa);
