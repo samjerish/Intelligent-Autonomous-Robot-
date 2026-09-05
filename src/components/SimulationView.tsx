@@ -2465,13 +2465,13 @@ const Robot = ({
                 currentStandoffLabel = 'INSPECTING ROAD CLOSURE • EVALUATING ROAD NETWORK';
                 setBarricadeStatusLabel('INSPECTING ROAD CLOSURE • EVALUATING ROAD NETWORK');
               } else {
-                currentStandoffLabel = 'ROAD BLOCKED • RE-ROUTING TO DESTINATION VIA OPEN ROADS';
-                setBarricadeStatusLabel('ROAD BLOCKED • RE-ROUTING TO DESTINATION VIA OPEN ROADS');
+                currentStandoffLabel = 'ROAD BLOCKED • RE-ROUTING VIA OPEN ROADS';
+                setBarricadeStatusLabel('ROAD BLOCKED • RE-ROUTING VIA OPEN ROADS');
                 if (!barricadeInspectionRef.current.loggedReroute) {
                   barricadeInspectionRef.current.loggedReroute = true;
                   barricadeInspectionRef.current.stage = 'rerouting';
                   if (addExplanation) {
-                    addExplanation('🧠 Road closure confirmed: Blue route cannot continue. Calculating valid alternative road route to destination...');
+                    addExplanation('🧠 Road closure confirmed: Blue route cannot continue. Calculating valid alternative road route...');
                   }
                   if (onBarricadeBlocked) {
                     onBarricadeBlocked(currentPos, barricade.pos3D);
@@ -2561,7 +2561,7 @@ const Robot = ({
                 targetSpeed = Math.min(cruiseSpeed * 0.50, 1.65);
                 setFollowingDistanceLabel('SLOW & SMOOTH OVERTAKE • WIDE CLEARANCE');
                 if (addExplanation) {
-                  addExplanation(`⚡ Road blocked ahead (${obs.longitudinalDelta.toFixed(1)}m). Executing slow, smooth diversion with wide clearance.`);
+                  addExplanation(`⚡ Road blocked ahead (${obs.longitudinalDelta.toFixed(1)}m). Executing slow, smooth orange diversion with wide clearance.`);
                 }
               } else {
                 // "If overtaking is unsafe, the robot should reduce speed, keep a safe following distance, and give the obstacle enough space to move ahead."
