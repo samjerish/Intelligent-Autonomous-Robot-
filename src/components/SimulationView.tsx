@@ -16,7 +16,6 @@ import {
   Sphere,
   Cylinder,
   RoundedBox,
-  Text,
 } from '@react-three/drei';
 import * as THREE from 'three';
 import { Line2, LineMaterial, LineGeometry } from 'three-stdlib';
@@ -1514,7 +1513,6 @@ const Robot = ({
 
   const isCourteousStandoffRef = useRef(false);
   const courteousClearTimerRef = useRef(0);
-  const lastFollowingLogTime = useRef(0);
   const lastOvertakeLogTime = useRef(0);
   const hasCompletedRef = useRef(false);
   const actualSpeedRef = useRef(0);
@@ -2595,6 +2593,7 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
 
   // Real-time dynamic drivable route polyline coordinates (flat [x, y, z, ...])
   const drivableRouteRef = useRef<number[]>([]);
+  const drivableRouteColorsRef = useRef<number[]>([]);
   const isRecalculating = useRef(false);
 
   const [battery, setBattery] = useState(100);
@@ -3962,6 +3961,7 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
           {/* Continuous Clear Drivable Blue Route Line */}
           <DrivablePathLine 
             drivableRouteRef={drivableRouteRef} 
+            drivableRouteColorsRef={drivableRouteColorsRef}
             path={path} 
             gridSize={gridSize} 
             isMapView={isMapView} 
@@ -3992,6 +3992,7 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
               dynamicObstaclesRef={dynamicObstaclesRef}
               staticObstacles={userBlockers}
               drivableRouteRef={drivableRouteRef}
+              drivableRouteColorsRef={drivableRouteColorsRef}
               upcomingLoopPoints3D={robotState === 'patrol' ? upcomingPatrolPoints3D : []}
               onReachNode={handleReachNode}
               onMissionComplete={handleMissionComplete}
