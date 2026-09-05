@@ -149,7 +149,7 @@ export function generateDynamicEvent(_mapData: MapData, currentPath: GridPoint[]
   return { type: eventType, position: newObstacle };
 }
 
-export function calculateLongPath(start: GridPoint, end: GridPoint, obstacles: GridPoint[], mapData: MapData, requireRoads: boolean = false): GridPoint[] {
+export function calculateLongPath(start: GridPoint, end: GridPoint, obstacles: GridPoint[], mapData: MapData, requireRoads: boolean = true): GridPoint[] {
   if (!mapData.rooms || mapData.rooms.length === 0) {
     return calculatePath(start, end, obstacles, mapData, requireRoads);
   }
@@ -175,7 +175,7 @@ export function calculateLongPath(start: GridPoint, end: GridPoint, obstacles: G
 
   if (!detourPoint) {
     // If no good detour found, fallback to shortest
-    return calculatePath(start, end, obstacles, mapData);
+    return calculatePath(start, end, obstacles, mapData, requireRoads);
   }
 
   if (detourPoint) {

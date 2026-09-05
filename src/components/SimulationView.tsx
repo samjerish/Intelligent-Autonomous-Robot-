@@ -478,6 +478,25 @@ const getGridPointFromVector3 = (point: THREE.Vector3, gridSize: GridPoint): Gri
   return { x: clampedX, y: clampedZ, f: 0 };
 };
 
+const getNearestRoadPoint = (pt: GridPoint, mapData: MapData): GridPoint => {
+  if (!mapData || !mapData.roads || mapData.roads.length === 0) return pt;
+  const targetF = pt.f || 0;
+  const isAlreadyRoad = mapData.roads.some(r => r.x === pt.x && r.y === pt.y && r.f === targetF);
+  if (isAlreadyRoad) return pt;
+
+  let bestDistSq = Infinity;
+  let bestPt = pt;
+  for (const r of mapData.roads) {
+    if (r.f !== targetF) continue;
+    const dSq = (r.x - pt.x) * (r.x - pt.x) + (r.y - pt.y) * (r.y - pt.y);
+    if (dSq < bestDistSq) {
+      bestDistSq = dSq;
+      bestPt = r;
+    }
+  }
+  return bestPt;
+};
+
 const RoadsRender = ({ roads, gridSize }: { roads: GridPoint[], gridSize: GridPoint }) => {
   if (!roads || roads.length === 0) return null;
   return (
@@ -1552,7 +1571,15 @@ const Robot = ({
       return { curve: null, totalLength: 0, waypointDistances: [] };
     }
 
-    const catmull = new THREE.CatmullRomCurve3(unique3DPoints, false, 'centripetal', 0.5);
+    // Anchor first point to exact current robot position if nearby to eliminate startup jumps
+    if (ref.current && unique3DPoints.length > 0) {
+      const cur = ref.current.position;
+      if (cur.distanceTo(unique3DPoints[0]) < 2.5) {
+        unique3DPoints[0].set(cur.x, unique3DPoints[0].y, cur.z);
+      }
+    }
+
+    const catmull = new THREE.CatmullRomCurve3(unique3DPoints, false, 'centripetal');
     const len = catmull.getLength();
     return { curve: catmull, totalLength: len, waypointDistances: wpDists };
   }, [path, gridSize, isMapView]);
