@@ -586,6 +586,80 @@ const getNearestRoadPoint = (pt: GridPoint, mapData: MapData): GridPoint => {
   return bestPt;
 };
 
+// Cached lookup set for mapData road network to allow O(1) drivable road validation
+const roadSetCache = new WeakMap<MapData, Set<string>>();
+const getRoadSet = (mapData: MapData): Set<string> => {
+  let set = roadSetCache.get(mapData);
+  if (!set) {
+    set = new Set<string>();
+    if (mapData.roads) {
+      for (const r of mapData.roads) {
+        set.add(`${r.x},${r.y}`);
+      }
+    }
+    roadSetCache.set(mapData, set);
+  }
+  return set;
+};
+
+// Strict check: Determines if a 3D world coordinate is strictly on the drivable road surface,
+// never touching grass, curb, sidewalk, or building room boundaries.
+export const isPointOnDrivableRoad = (
+  worldX: number,
+  worldZ: number,
+  mapData: MapData | null | undefined,
+  margin = 0.20
+): boolean => {
+  if (!mapData || !mapData.roads || mapData.roads.length === 0) return true;
+  const { gridSize } = mapData;
+  const offsetX = (gridSize.x * CELL_SIZE) / 2;
+  const offsetZ = (gridSize.y * CELL_SIZE) / 2;
+  const roadSet = getRoadSet(mapData);
+
+  // Probes around the test point to guarantee full clearance from non-drivable edges (grass, curbs, sidewalks)
+  const probes: [number, number][] = [
+    [0, 0],
+    [margin, 0],
+    [-margin, 0],
+    [0, margin],
+    [0, -margin],
+    [margin * 0.707, margin * 0.707],
+    [-margin * 0.707, margin * 0.707],
+    [margin * 0.707, -margin * 0.707],
+    [-margin * 0.707, -margin * 0.707],
+  ];
+
+  for (let i = 0; i < probes.length; i++) {
+    const px = worldX + probes[i][0];
+    const pz = worldZ + probes[i][1];
+    const gx = Math.floor((px + offsetX) / CELL_SIZE);
+    const gy = Math.floor((pz + offsetZ) / CELL_SIZE);
+    if (gx < 0 || gx >= gridSize.x || gy < 0 || gy >= gridSize.y) {
+      return false; // Beyond campus boundaries
+    }
+    if (!roadSet.has(`${gx},${gy}`)) {
+      return false; // Non-drivable area (grass, curb, or sidewalk)
+    }
+  }
+
+  // Ensure not intersecting or touching any building room footprint
+  if (mapData.rooms) {
+    for (let i = 0; i < mapData.rooms.length; i++) {
+      const room = mapData.rooms[i];
+      const rMinX = (room.start.x * CELL_SIZE) - offsetX;
+      const rMaxX = ((room.end.x + 1) * CELL_SIZE) - offsetX;
+      const rMinZ = (room.start.y * CELL_SIZE) - offsetZ;
+      const rMaxZ = ((room.end.y + 1) * CELL_SIZE) - offsetZ;
+      if (worldX >= rMinX - margin && worldX <= rMaxX + margin &&
+          worldZ >= rMinZ - margin && worldZ <= rMaxZ + margin) {
+        return false; // Building wall/interior
+      }
+    }
+  }
+
+  return true;
+};
+
 const RoadsRender = ({ roads, gridSize }: { roads: GridPoint[], gridSize: GridPoint }) => {
   if (!roads || roads.length === 0) return null;
   return (
@@ -1581,7 +1655,8 @@ const Robot = ({
   staticObstacles = [], drivableRouteRef, drivableRouteColorsRef, diversionRouteRef, upcomingLoopPoints3D = [],
   onReachNode, onMissionComplete, onObstacleDetected: _onObstacleDetected, robotPosRef, robotRotRef, isEmergency = false,
   checkpointCountdown = null, checkpointName = "",
-  addExplanation
+  addExplanation,
+  mapData,
 }: {
   path: GridPoint[];
   currentIndex: number;
@@ -1604,6 +1679,7 @@ const Robot = ({
   checkpointCountdown?: number | null;
   checkpointName?: string;
   addExplanation?: (msg: string) => void;
+  mapData?: MapData | null;
 }) => {
   const ref = useRef<THREE.Group>(null);
   const isMovingRef = useRef(false);
