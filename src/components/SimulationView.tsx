@@ -2697,7 +2697,7 @@ const Robot = ({
             shouldCourteousStandOff = false;
             targetSpeed = Math.min(cruiseSpeed * 0.50, 1.65);
             if (addExplanation) {
-              addExplanation('⚡ Turning clearance achieved: Executing safe yellow diversion bypass.');
+              addExplanation('⚡ Turning clearance achieved: Executing safe orange diversion bypass.');
             }
           }
         }
@@ -2744,12 +2744,12 @@ const Robot = ({
         }
       } else {
         if (isOvertakingActive) {
-          // "the robot may slowly and smoothly overtake using a planned yellow diversion route, maintaining wide clearance throughout... The robot must never rush past"
+          // Slowly and smoothly overtake using a planned orange diversion route, maintaining wide clearance throughout
           targetSpeed = Math.min(cruiseSpeed * 0.50, 1.65);
           const logTime = Date.now();
           if (logTime - lastOvertakeLogTime.current > 4000 && addExplanation) {
             lastOvertakeLogTime.current = logTime;
-            addExplanation('⚡ Safe Diversion: Slowly and smoothly overtaking obstruction with wide clearance.');
+            addExplanation('⚡ Safe Diversion: Slowly and smoothly overtaking obstruction along orange route with wide clearance.');
           }
         } else if (!shouldCourteousStandOff) {
           // Normal patrol along the blue route
@@ -3565,7 +3565,7 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
       setCurrentPosIndex(0);
       setRobotState('patrol');
       setIsPlaying(true);
-      addExplanation(`🚀 Checkpoint [${safeIdx + 1}/${PATROL_CHECKPOINTS.length}]: Continuous road patrol to ${targetName} engaged.`);
+      addExplanation('🚀 Continuous autonomous road patrol engaged. Navigating along drivable corridor.');
 
       // Place moving obstacles directly on the road in the robot's driving path on this checkpoint leg
       if (patrolPath.length >= 6) {
