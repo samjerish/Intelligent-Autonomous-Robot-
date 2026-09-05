@@ -2145,7 +2145,7 @@ const Robot = ({
       interface ScannedObs {
         id: string;
         isDynamic: boolean;
-        type: 'car' | 'person' | 'static';
+        type: 'car' | 'person' | 'static' | 'barricade';
         pos3D: THREE.Vector3;
         radius: number; // Hull collision radius
         vel3D: THREE.Vector3;
@@ -2298,13 +2298,14 @@ const Robot = ({
             const sideDot = toObs.dot(normAtObs);
             const longitudinalDelta = sObstacle - s;
             const obsHeading = tangentAtObs.clone().normalize();
+            const isUserBarricade = userBlockers.some(b => b.x === blocker.x && b.y === blocker.y);
 
             scannedObstacles.push({
-              id: `static-${blocker.x}-${blocker.y}-${idx}`,
+              id: `${isUserBarricade ? 'barricade' : 'static'}-${blocker.x}-${blocker.y}-${idx}`,
               isDynamic: false,
-              type: 'static',
+              type: isUserBarricade ? 'barricade' : 'static',
               pos3D: bPos,
-              radius: 0.50, // Physical static obstacle radius
+              radius: isUserBarricade ? 0.55 : 0.45, // Physical static obstacle radius
               vel3D: new THREE.Vector3(0, 0, 0),
               heading: obsHeading,
               distToRobot,
@@ -2333,22 +2334,22 @@ const Robot = ({
 
       // Detect static road barricades blocking the robot's driving corridor ahead (up to 8.5m)
       const staticBarricadesAhead = scannedObstacles.filter(
-        o => o.type === 'static' && o.longitudinalDelta >= 0.20 && o.longitudinalDelta <= BARRICADE_DETECT_HORIZON && o.lateralDist <= 1.35
+        o => o.type === 'barricade' && o.longitudinalDelta >= 0.20 && o.longitudinalDelta <= BARRICADE_DETECT_HORIZON && o.lateralDist <= 1.35
       );
       staticBarricadesAhead.sort((a, b) => a.longitudinalDelta - b.longitudinalDelta);
       const primaryBarricade = staticBarricadesAhead[0] || null;
 
-      // Detect dynamic obstacles directly in front of the robot in its assigned lane (ahead up to 14.0m)
+      // Detect dynamic or static obstacles directly in front of the robot in its assigned lane (ahead up to 14.0m)
       // Assigned lane is centered around +0.35m; an obstacle directly blocks it if |o.sideDot - ASSIGNED_LANE_OFFSET| <= 0.85m
       const obstructingAhead = scannedObstacles.filter(
-        o => o.type !== 'static' && o.longitudinalDelta >= 0.1 && o.longitudinalDelta <= 14.0 && Math.abs(o.sideDot - ASSIGNED_LANE_OFFSET) <= 0.85
+        o => o.type !== 'barricade' && o.longitudinalDelta >= 0.1 && o.longitudinalDelta <= 14.0 && Math.abs(o.sideDot - ASSIGNED_LANE_OFFSET) <= 0.85
       );
       obstructingAhead.sort((a, b) => a.longitudinalDelta - b.longitudinalDelta);
       const primaryDirectObstacle = obstructingAhead[0] || null;
 
-      // Wider detection for general awareness and safe distance tracking (dynamic obstacles)
+      // Wider detection for general awareness and safe distance tracking (dynamic and static obstacles)
       const corridorObstacles = scannedObstacles.filter(
-        o => o.type !== 'static' && o.longitudinalDelta >= 0.2 && o.longitudinalDelta <= 14.0 && (o.lateralDist < 1.45 || o.minCpaDist < 2.0)
+        o => o.type !== 'barricade' && o.longitudinalDelta >= 0.2 && o.longitudinalDelta <= 14.0 && (o.lateralDist < 1.45 || o.minCpaDist < 2.0)
       );
       corridorObstacles.sort((a, b) => a.longitudinalDelta - b.longitudinalDelta);
       const primaryAheadObs = primaryBarricade || primaryDirectObstacle || corridorObstacles[0] || null;
@@ -2373,12 +2374,12 @@ const Robot = ({
       const calculateSafeDiversionPlan = (
         obs: ScannedObs
       ): CandidateDiversionPlan | null => {
-        // Static road barricades block the entire roadway: never attempt to drive around or overtake a barricade
-        if (obs.type === 'static') {
+        // Road barricades block the entire roadway: never attempt to drive around or overtake a barricade
+        if (obs.type === 'barricade') {
           return null;
         }
 
-        const obsRadius = obs.type === 'car' ? 0.45 : 0.32;
+        const obsRadius = obs.type === 'car' ? 0.45 : obs.type === 'person' ? 0.32 : 0.45;
         const robotRadius = 0.40;
         const wideAirBuffer = 0.52; // Generous physical clearance between hulls (>52cm pure open air)
         const requiredSeparation = obsRadius + robotRadius + wideAirBuffer; // ~1.24m to 1.37m center-to-center
@@ -3572,6 +3573,13 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
   const [userBlockers, setUserBlockers] = useState<GridPoint[]>([]);
   const [crowds, setCrowds] = useState<GridPoint[]>([]);
   const [isFollowingAlternateRoute, setIsFollowingAlternateRoute] = useState(false);
+  const [perceptionScanResult, setPerceptionScanResult] = useState<PerceptionScanResult | null>(null);
+  const [trackedObjects, setTrackedObjects] = useState<TrackedObject[]>([]);
+
+  const handlePerceptionUpdate = useCallback((res: PerceptionScanResult) => {
+    setPerceptionScanResult(res);
+    setTrackedObjects(res.trackedObjects);
+  }, []);
 
   const allStaticObstacles = useMemo(() => {
     return [...(mapData?.obstacles || []), ...userBlockers];
@@ -5238,8 +5246,16 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
               mapData={mapData}
               isPausedAtDestination={isPausedAtDestination}
               isFollowingAlternateRoute={isFollowingAlternateRoute}
+              userBlockers={userBlockers}
+              onPerceptionUpdate={handlePerceptionUpdate}
             />
           )}
+
+          {/* 3D LiDAR Scanner Sweep & Object Tracking Visualizer */}
+          <PerceptionWorldVisualizer 
+            robotPosRef={robotPosRef} 
+            trackedObjects={trackedObjects} 
+          />
         </Canvas>
       </div>
 
