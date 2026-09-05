@@ -2016,14 +2016,15 @@ const Robot = ({
       setStandoffReason(currentStandoffLabel);
       isCourteousStandoffRef.current = shouldCourteousStandOff;
 
-      const isFollowing = shouldCourteousStandOff && primaryObs !== null && primaryObs.longitudinalDelta <= (SAFE_FOLLOW_DIST + 0.8);
+      const isFollowing = shouldCourteousStandOff && primaryAheadObs !== null && primaryAheadObs.longitudinalDelta <= (SAFE_FOLLOW_DIST + 0.8);
       setIsFollowingObstacle(isFollowing);
-      if (primaryObs) {
-        setFollowingDistanceLabel(`${Math.max(0.1, primaryObs.longitudinalDelta).toFixed(1)}m`);
+      if (primaryAheadObs) {
+        setFollowingDistanceLabel(`${Math.max(0.1, primaryAheadObs.longitudinalDelta).toFixed(1)}m`);
       }
 
-      setIsOvertaking(isOvertakeFeasible);
-      setIsSlowCaution(isOvertakeFeasible || targetSpeed < cruiseSpeed * 0.75);
+      const isOvertakingActive = isOvertakeFeasible || (plannedDiversions.length > 0 && plannedDiversions.some(d => Math.abs(s - d.sObstacle) < 3.2));
+      setIsOvertaking(isOvertakingActive);
+      setIsSlowCaution(isOvertakingActive || targetSpeed < cruiseSpeed * 0.75);
       setIsWaiting(shouldCourteousStandOff || (targetSpeed === 0 && actualSpeedRef.current < 0.1));
 
       // Waypoint & Mission Completion Tracking
@@ -2051,7 +2052,70 @@ const Robot = ({
       }
       // Always display clear blue navigation line showing full planned route ahead even when paused or idle
       if (drivableRouteRef && curve) {
-        const flatRoute = buildFullRouteLine(curve, distanceTraveledRef.current, currentPos, () => 0);
+        const s = distanceTraveledRef.current;
+        // Check for any stationary obstacles along the planned curve to preview safe diversions
+        const idleDiversions: { sObstacle: number; peakAmplitude: number }[] = [];
+        const allObs: { pos: THREE.Vector3; id: string }[] = [];
+        if (staticObstacles && staticObstacles.length > 0) {
+          for (let idx = 0; idx < staticObstacles.length; idx++) {
+            const [bx, , bz] = getGridPosition(staticObstacles[idx], gridSize, 0.05, isMapView);
+            allObs.push({ pos: new THREE.Vector3(bx, currentPos.y, bz), id: `s-${idx}` });
+          }
+        }
+        if (dynamicObstaclesRef && dynamicObstaclesRef.current) {
+          for (const d of dynamicObstaclesRef.current) {
+            if (d.type !== 'person' && (!d.isMoving || (d.velocity && d.velocity.length() < 0.08))) {
+              const pos3d = d.pos3D || (() => {
+                const [ox, , oz] = getGridPosition(d.pos, gridSize, 0.05, isMapView);
+                return new THREE.Vector3(ox, currentPos.y, oz);
+              })();
+              allObs.push({ pos: pos3d, id: d.id });
+            }
+          }
+        }
+
+        for (const obs of allObs) {
+          let bestDistSq = 9999;
+          let sObstacle = s;
+          let tangentAtObs = curve.getTangentAt(0);
+          let ptAtObs = curve.getPointAt(0);
+          for (let testS = 0; testS <= totalLength; testS += 0.35) {
+            const u = testS / totalLength;
+            const pt = curve.getPointAt(u);
+            const dSq = pt.distanceToSquared(obs.pos);
+            if (dSq < bestDistSq) {
+              bestDistSq = dSq;
+              sObstacle = testS;
+              ptAtObs = pt;
+              tangentAtObs = curve.getTangentAt(u);
+            }
+          }
+          if (bestDistSq < 1.35 * 1.35 && sObstacle > s - 1.0) {
+            const normAtObs = new THREE.Vector3(tangentAtObs.z, 0, -tangentAtObs.x).normalize();
+            const toObs = new THREE.Vector3().subVectors(obs.pos, ptAtObs);
+            const sideDot = toObs.dot(normAtObs);
+            const preferredSide = sideDot >= 0 ? -1 : 1;
+            const clearance = preferredSide < 0 ? (2.0 + sideDot) : (2.0 - sideDot);
+            if (clearance >= 1.35) {
+              idleDiversions.push({ sObstacle, peakAmplitude: preferredSide * 0.82 });
+            }
+          }
+        }
+
+        const idleOffsetFn = (evalS: number): number => {
+          let maxOff = 0;
+          const sigma = 1.9;
+          for (const div of idleDiversions) {
+            const distFromObs = evalS - div.sObstacle;
+            const bell = div.peakAmplitude * Math.exp(-(distFromObs * distFromObs) / (2 * sigma * sigma));
+            if (Math.abs(bell) > Math.abs(maxOff)) maxOff = bell;
+          }
+          const distFromEnd = totalLength - evalS;
+          if (distFromEnd < 2.0) maxOff *= Math.max(0.0, distFromEnd / 2.0);
+          return Math.max(-0.85, Math.min(0.85, maxOff));
+        };
+
+        const flatRoute = buildFullRouteLine(curve, distanceTraveledRef.current, currentPos, idleOffsetFn);
         if (flatRoute.length >= 6) {
           drivableRouteRef.current = flatRoute;
         }
@@ -2106,6 +2170,7 @@ const DrivablePathLine = ({
     transparent: true,
     opacity: opacity,
     depthTest: true,
+    depthWrite: false,
   }), [color, lineWidth, opacity, size.width, size.height]);
 
   const glowMat = useMemo(() => new LineMaterial({
@@ -2115,6 +2180,7 @@ const DrivablePathLine = ({
     transparent: true,
     opacity: 0.28,
     depthTest: true,
+    depthWrite: false,
   }), [color, lineWidth, size.width, size.height]);
 
   const lineObj = useMemo(() => new Line2(lineGeom, lineMat), [lineGeom, lineMat]);
@@ -2479,26 +2545,13 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
 
   useEffect(() => {
     switch(robotState) {
-      case 'patrol':
-        setActivePathColor('#38bdf8'); // clear vibrant blue
-        break;
-      case 'mission':
-        setActivePathColor('#22c55e'); // green
-        break;
       case 'emergency_response':
       case 'emergency_to_ctr':
       case 'ctr_to_emergency':
-        setActivePathColor('#ef4444'); // red
-        break;
-      case 'charging':
-      case 'returning_home':
-        setActivePathColor('#eab308'); // yellow
-        break;
-      case 'evading_obstacle':
-        setActivePathColor('#f97316'); // orange
+        setActivePathColor('#ef4444'); // red for high-priority emergency siren
         break;
       default:
-        setActivePathColor('#00ffff'); // cyan
+        setActivePathColor('#38bdf8'); // Always display clear vibrant blue navigation line
     }
   }, [robotState]);
 
