@@ -144,13 +144,13 @@ const MovingEntity = ({
   const carIndex = parseInt(obstacle.id.replace(/\D/g, '') || '0', 10);
   const carColor = CAR_COLORS[carIndex % CAR_COLORS.length];
   const isCar = obstacle.type === 'car';
-  const isRoadWalker = !isCar && (carIndex % 3 !== 0); // 70% of people walk directly on the roadway
+  const isRoadWalker = obstacle.isRoadWalker ?? (!isCar && (carIndex % 3 !== 0));
   const shirtColor = SHIRT_COLORS[carIndex % SHIRT_COLORS.length];
   const pantsColor = PANTS_COLORS[carIndex % PANTS_COLORS.length];
   const skinColor = SKIN_TONES[carIndex % SKIN_TONES.length];
   
-  // Lane offset: Assigned right lane (+0.35m from road centerline)
-  const baseOffset = 0.35;
+  // Lane offset: Road walkers and vehicles stay on right lane (+0.35m); sidewalk walkers use outer margin (+0.60m)
+  const baseOffset = (isCar || isRoadWalker) ? 0.35 : 0.60;
   const yieldOffsetRef = useRef(baseOffset);
   const lastDirRef = useRef({ x: 0, z: 1 });
   const walkClockRef = useRef(Math.random() * 10);
