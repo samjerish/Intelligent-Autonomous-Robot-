@@ -500,18 +500,30 @@ const MovingEntity = ({
 
   const startNode = obstacle.path[0] || { x: 0, y: 0, f: 0 };
   const baseStart = getGridPosition(startNode, gridSize, 0.05, isMapView);
-  let startX = baseStart[0];
-  let startZ = baseStart[2];
-  if (obstacle.path.length >= 2) {
-    const [n1x, , n1z] = getGridPosition(obstacle.path[1], gridSize, 0.05, isMapView);
-    const initH = new THREE.Vector3(n1x - startX, 0, n1z - startZ).normalize();
-    const initNorm = new THREE.Vector3(initH.z, 0, -initH.x);
-    startX += initNorm.x * baseOffset;
-    startZ += initNorm.z * baseOffset;
-  } else {
-    startX += baseOffset;
+  let startX = obstacle.pos3D ? obstacle.pos3D.x : baseStart[0];
+  let startZ = obstacle.pos3D ? obstacle.pos3D.z : baseStart[2];
+  if (!obstacle.pos3D) {
+    if (obstacle.path.length >= 2) {
+      const [n1x, , n1z] = getGridPosition(obstacle.path[1], gridSize, 0.05, isMapView);
+      const initH = new THREE.Vector3(n1x - startX, 0, n1z - startZ).normalize();
+      const initNorm = new THREE.Vector3(initH.z, 0, -initH.x);
+      startX += initNorm.x * baseOffset;
+      startZ += initNorm.z * baseOffset;
+    } else {
+      startX += baseOffset;
+    }
   }
-  const startPos: [number, number, number] = [startX, baseStart[1], startZ];
+  const startPos: [number, number, number] = [startX, obstacle.pos3D ? obstacle.pos3D.y : baseStart[1], startZ];
+
+  useEffect(() => {
+    if (ref.current && obstacle.path.length >= 2) {
+      const [p0x, , p0z] = getGridPosition(obstacle.path[0], gridSize, 0.05, isMapView);
+      const [p1x, , p1z] = getGridPosition(obstacle.path[1], gridSize, 0.05, isMapView);
+      const initYaw = Math.atan2(p1x - p0x, p1z - p0z);
+      ref.current.rotation.y = initYaw;
+      lastDirRef.current = { x: Math.sin(initYaw), z: Math.cos(initYaw) };
+    }
+  }, []);
 
   return (
     <group ref={ref} position={startPos}>
@@ -3527,34 +3539,69 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
       if (patrolPath.length >= 6) {
         const M = patrolPath.length;
         const i1 = Math.max(2, Math.floor(M * 0.30));
-        const j1 = Math.min(M - 1, i1 + 7);
-        const p1 = patrolPath.slice(i1, j1 + 1);
+        const p1 = patrolPath.slice(i1);
 
-        const i2 = Math.max(i1 + 4, Math.floor(M * 0.65));
-        const j2 = Math.min(M - 1, i2 + 6);
-        const p2 = patrolPath.slice(i2, j2 + 1);
+        const i2 = Math.max(i1 + 3, Math.floor(M * 0.60));
+        const p2 = patrolPath.slice(i2);
 
         setDynamicObstacles(prev => {
           return prev.map(o => {
-            if (o.id === 'obs_road_0' && p1.length >= 2) {
-              return {
-                ...o,
-                path: p1,
-                currentIndex: 0,
-                pos: p1[0],
-                targetPos: p1[p1.length - 1],
-                isMoving: true,
-              };
+            if (o.id === 'obs_road_0') {
+              // If already active on the map, maintain continuous motion without snapping or teleporting
+              if (o.pos && (o.path.length - o.currentIndex > 2)) {
+                const targetPt = p1[p1.length - 1];
+                const smoothConnector = calculatePath(o.pos, targetPt, allObstacles, mapData, true);
+                if (smoothConnector && smoothConnector.length >= 2) {
+                  return {
+                    ...o,
+                    path: smoothConnector,
+                    currentIndex: 0,
+                    targetPos: targetPt,
+                    isMoving: true,
+                  };
+                }
+                return o;
+              }
+              if (p1.length >= 2) {
+                return {
+                  ...o,
+                  path: p1,
+                  currentIndex: 0,
+                  pos: p1[0],
+                  targetPos: p1[p1.length - 1],
+                  speed: 2.5,
+                  isMoving: true,
+                  isRoadWalker: true,
+                };
+              }
             }
-            if (o.id === 'obs_road_1' && p2.length >= 2) {
-              return {
-                ...o,
-                path: p2,
-                currentIndex: 0,
-                pos: p2[0],
-                targetPos: p2[p2.length - 1],
-                isMoving: true,
-              };
+            if (o.id === 'obs_road_1') {
+              if (o.pos && (o.path.length - o.currentIndex > 2)) {
+                const targetPt = p2[p2.length - 1];
+                const smoothConnector = calculatePath(o.pos, targetPt, allObstacles, mapData, true);
+                if (smoothConnector && smoothConnector.length >= 2) {
+                  return {
+                    ...o,
+                    path: smoothConnector,
+                    currentIndex: 0,
+                    targetPos: targetPt,
+                    isMoving: true,
+                  };
+                }
+                return o;
+              }
+              if (p2.length >= 2) {
+                return {
+                  ...o,
+                  path: p2,
+                  currentIndex: 0,
+                  pos: p2[0],
+                  targetPos: p2[p2.length - 1],
+                  speed: 1.35,
+                  isMoving: true,
+                  isRoadWalker: true,
+                };
+              }
             }
             return o;
           });
@@ -3896,8 +3943,7 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
       const M = activeRoadPath.length;
       // 1. Moving vehicle / car directly in driving path ahead
       const i1 = Math.max(2, Math.floor(M * 0.30));
-      const j1 = Math.min(M - 1, i1 + 7);
-      const path1 = activeRoadPath.slice(i1, j1 + 1);
+      const path1 = activeRoadPath.slice(i1);
       if (path1.length >= 2) {
         obs.push({
           id: 'obs_road_0',
@@ -3906,16 +3952,15 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
           targetPos: path1[path1.length - 1],
           path: path1,
           currentIndex: 0,
-          speed: 1.1,
+          speed: 2.6,
           isMoving: true,
           isRoadWalker: true,
         });
       }
 
       // 2. Moving pedestrian walking directly on the road in the driving path
-      const i2 = Math.max(i1 + 4, Math.floor(M * 0.65));
-      const j2 = Math.min(M - 1, i2 + 6);
-      const path2 = activeRoadPath.slice(i2, j2 + 1);
+      const i2 = Math.max(i1 + 3, Math.floor(M * 0.60));
+      const path2 = activeRoadPath.slice(i2);
       if (path2.length >= 2) {
         obs.push({
           id: 'obs_road_1',
@@ -3924,7 +3969,7 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
           targetPos: path2[path2.length - 1],
           path: path2,
           currentIndex: 0,
-          speed: 0.9,
+          speed: 1.35,
           isMoving: true,
           isRoadWalker: true,
         });
@@ -3965,7 +4010,7 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
           targetPos: p[p.length - 1],
           path: p,
           currentIndex: 0,
-          speed: isCar ? (2.8 + Math.random() * 1.0) : (1.5 + Math.random() * 0.6),
+          speed: isCar ? (2.5 + Math.random() * 0.8) : (1.25 + Math.random() * 0.4),
           isMoving: true,
           isRoadWalker: !isCar && (i % 3 !== 0),
         });
@@ -5032,12 +5077,14 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
           
           {dynamicObstacles.map((obs, idx) => (
             <MovingEntity 
-              key={idx} 
+              key={obs.id || idx} 
               obstacle={obs} 
               gridSize={gridSize} 
               isMapView={isMapView} 
               robotPosRef={robotPosRef}
               allObstaclesRef={dynamicObstaclesRef}
+              mapData={mapData}
+              userBlockers={userBlockers}
             />
           ))}
 
