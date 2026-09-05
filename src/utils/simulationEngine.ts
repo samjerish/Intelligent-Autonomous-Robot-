@@ -1,14 +1,20 @@
 import type { GridPoint, MapData } from '../types';
 
-export function calculatePath(start: GridPoint, end: GridPoint, obstacles: GridPoint[], mapData: MapData, requireRoads: boolean = false): GridPoint[] {
-  // 3D A* pathfinding implementation
+export function calculatePath(start: GridPoint, end: GridPoint, obstacles: GridPoint[], mapData: MapData, requireRoads: boolean = true): GridPoint[] {
+  // 3D A* pathfinding implementation strictly adhering to road network
   const { gridSize, stairs } = mapData;
 
   const getStairAt = (x: number, y: number, f: number) => {
     return stairs?.find(s => s.x === x && s.y === y && s.f === f);
   };
 
-  const obstacleSet = new Set(obstacles?.map(o => `${o.x},${o.y},${o.f}`));
+  const roadSet = new Set(mapData.roads?.map(r => `${r.x},${r.y},${r.f}`) || []);
+  const obstacleSet = new Set(obstacles?.map(o => `${o.x},${o.y},${o.f}`) || []);
+
+  // Ensure start and end locations are not blocked by obstacle set
+  obstacleSet.delete(`${start.x},${start.y},${start.f}`);
+  obstacleSet.delete(`${end.x},${end.y},${end.f}`);
+
   const isObstacle = (x: number, y: number, f: number) => {
     return obstacleSet.has(`${x},${y},${f}`);
   };
@@ -79,22 +85,26 @@ export function calculatePath(start: GridPoint, end: GridPoint, obstacles: GridP
     }
 
     for (const neighbor of neighbors) {
-      const isRoad = !requireRoads || !mapData.roads || mapData.roads.some(r => r.x === neighbor.x && r.y === neighbor.y && r.f === neighbor.f) || (neighbor.x === end.x && neighbor.y === end.y && neighbor.f === end.f);
-      
+      const isNeighborRoad = roadSet.size === 0 || roadSet.has(`${neighbor.x},${neighbor.y},${neighbor.f}`) ||
+        (neighbor.x === end.x && neighbor.y === end.y && neighbor.f === end.f) ||
+        (neighbor.x === start.x && neighbor.y === start.y && neighbor.f === start.f);
+
+      if (requireRoads && !isNeighborRoad) continue;
+
       if (
         neighbor.x >= 0 && neighbor.x < gridSize.x &&
         neighbor.y >= 0 && neighbor.y < gridSize.y &&
         neighbor.f >= 0 && neighbor.f < (gridSize.f || 1) &&
         !isObstacle(neighbor.x, neighbor.y, neighbor.f) &&
-        !closedList.has(`${neighbor.x},${neighbor.y},${neighbor.f}`) &&
-        isRoad
+        !closedList.has(`${neighbor.x},${neighbor.y},${neighbor.f}`)
       ) {
-        // Changing floors has a higher cost to simulate stair climbing
         let gCost = neighbor.f !== current.pos.f ? 5 : 1;
-        
-        // Add penalty for proximity to obstacles to maintain a minimum gap
+        if (!isNeighborRoad) {
+          gCost += 500;
+        }
+
         if (neighbor.x !== end.x || neighbor.y !== end.y || neighbor.f !== end.f) {
-           gCost += getObstaclePenalty(neighbor.x, neighbor.y, neighbor.f);
+          gCost += getObstaclePenalty(neighbor.x, neighbor.y, neighbor.f);
         }
 
         const g = current.g + gCost;
