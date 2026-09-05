@@ -2942,15 +2942,15 @@ const Robot = ({
         }
       }
 
-      // (2) Temporary Yellow Diversion Line:
-      // "When an obstacle blocks the robot’s path and a safe diversion is selected, immediately show a clearly visible yellow line from the robot’s current position, around the obstacle, and back to the blue route. Keep this yellow line visible for the entire diversion. Remove it only after the robot has fully rejoined the blue route."
+      // (2) Temporary Orange Diversion Line:
+      // Show radiant orange diversion route from robot's position, around obstacle, and merging back to blue route.
       // Must NEVER go onto sidewalks, grass, buildings, or any non-drivable area
       if (diversionRouteRef) {
         if (activeDiversionRef.current) {
           const activeDiv = activeDiversionRef.current;
-          const yellowPts: number[] = [];
+          const orangePts: number[] = [];
           // Starts at robot's current 3D position (elevated to 0.20m above road surface)
-          yellowPts.push(currentPos.x, 0.20, currentPos.z);
+          orangePts.push(currentPos.x, 0.20, currentPos.z);
           const step = 0.15;
           for (let testS = s + step; testS <= activeDiv.diversionEndS; testS += step) {
             const u = Math.min(1.0, testS / totalLength);
@@ -2960,7 +2960,7 @@ const Robot = ({
             const off = getDrivableOffsetAt(testS);
             let divPt = basePt.clone().add(normal.clone().multiplyScalar(off));
 
-            // Strictly clamp points to ensure yellow line remains 100% on drivable road
+            // Strictly clamp points to ensure orange line remains 100% on drivable road
             if (!isPointOnDrivableRoad(divPt.x, divPt.z, mapData, 0.18)) {
               for (let scale = 0.9; scale >= 0.3; scale -= 0.1) {
                 const alt = basePt.clone().add(normal.clone().multiplyScalar(off * scale));
@@ -2970,7 +2970,7 @@ const Robot = ({
                 }
               }
             }
-            yellowPts.push(divPt.x, 0.20, divPt.z);
+            orangePts.push(divPt.x, 0.20, divPt.z);
           }
           // Seamlessly reconnects back onto the blue route at the assigned lane center
           const endU = Math.min(1.0, activeDiv.diversionEndS / totalLength);
@@ -2981,10 +2981,10 @@ const Robot = ({
           if (!isPointOnDrivableRoad(endPt.x, endPt.z, mapData, 0.18)) {
             endPt = endBase.clone();
           }
-          yellowPts.push(endPt.x, 0.20, endPt.z);
+          orangePts.push(endPt.x, 0.20, endPt.z);
 
-          if (yellowPts.length >= 6) {
-            diversionRouteRef.current = yellowPts;
+          if (orangePts.length >= 6) {
+            diversionRouteRef.current = orangePts;
           } else {
             diversionRouteRef.current = [];
           }
@@ -4251,7 +4251,7 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
     
     if (initialPath.length > 0 && mapData.tasks && mapData.tasks.length > 0) {
       setPath(initialPath);
-      addExplanation(`Planned route to destination. Estimated distance: ${initialPath.length}m.`);
+      addExplanation(`Planned route along drivable roads. Estimated distance: ${initialPath.length}m.`);
       
       const isBlocked = false;
       if (isBlocked && dynamicObstaclesRef.current.length > 0) {
@@ -4286,7 +4286,7 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
     if (!mapData || !mapData.rooms) return;
     isRecalculating.current = true;
     setIsPlaying(false);
-    addExplanation(`BATTERY CRITICAL: Diverting to Generator Room for charging...`);
+    addExplanation('BATTERY CRITICAL: Diverting to charging station...');
     
     originalMissionRef.current = { path: [...path], index: currentPosIndex };
     const generatorRoom = mapData.rooms.find(r => r.name.toLowerCase().includes('generator')) || mapData.rooms[0];
@@ -4544,7 +4544,7 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
       setCurrentPosIndex(newPath.length > 1 ? 1 : 0);
       setActivePathColor('#38bdf8');
       setIsPlaying(true);
-      addExplanation(`⚡ Smooth diversion route active (${newPath.length}m). Navigating towards destination.`);
+      addExplanation(`⚡ Safe orange diversion active (${newPath.length}m). Navigating along open road.`);
       setTimeout(() => {
         isRecalculating.current = false;
       }, 1500);
@@ -4601,7 +4601,7 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
           if (altPath.length >= 2) {
             patrolIndexRef.current = nextIdx;
             setCurrentPatrolTarget(nextTargetName);
-            addExplanation(`🔄 Sector closed by road barricade. Re-routing to next accessible checkpoint: ${nextTargetName}.`);
+            addExplanation('🔄 Sector closed by road barricade. Calculating alternative path via open drivable roads.');
             break;
           }
         }
@@ -4615,13 +4615,13 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
         const homeTarget = getNearestRoadPoint(homeRoom.door || homeRoom.start, mapData);
         altPath = calculatePath(currentLoc, homeTarget, allObstacles, mapData, true);
         if (altPath.length >= 2) {
-          addExplanation(`🏠 Destination inaccessible due to road barricade. Calmly navigating to base via open roads.`);
+          addExplanation('🏠 Road route closed by barricade. Calmly navigating to base via open roads.');
         }
       }
     }
 
     if (altPath.length >= 2) {
-      // Clear any yellow diversion line
+      // Clear any temporary diversion line
       if (diversionRouteRef) {
         diversionRouteRef.current = [];
       }
@@ -4651,7 +4651,7 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
       });
       
       setIsPlaying(true);
-      addExplanation('Executing mission. Moving to target.');
+      addExplanation('Executing mission. Moving along planned road route.');
     }
   };
 
@@ -4727,7 +4727,7 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
         const nextTask = mapData.tasks[currentTaskIndexRef.current];
         
         setIsPlaying(false);
-        addExplanation(`📍 Destination reached: ${prevTask.locationName}. Pausing exactly 5.0 seconds before proceeding to ${nextTask.locationName}.`);
+        addExplanation('📍 Waypoint reached. Pausing exactly 5.0 seconds for inspection before proceeding.');
 
         if (patrolTimerRef.current) {
           clearInterval(patrolTimerRef.current);
@@ -4759,9 +4759,9 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
               setCurrentPosIndex(0);
               setRobotState(prev => prev === 'mission' ? 'mission' : 'patrol');
               setIsPlaying(true);
-              addExplanation(`🚀 Resuming mission to ${nextTask.locationName}.`);
+              addExplanation('🚀 Resuming navigation along designated route.');
             } else {
-              addExplanation(`Route calculation to ${nextTask.locationName} failed.`);
+              addExplanation('Route calculation failed: path obstructed.');
               setRobotState('idle');
             }
           }
@@ -4769,9 +4769,7 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
       } else {
         // Continuous Repeating Patrol Loop: Pause exactly 5.0 seconds at destination, then smoothly advance
         setIsPlaying(false);
-        const currentIdx = patrolIndexRef.current % PATROL_CHECKPOINTS.length;
-        const currentCheckpointName = PATROL_CHECKPOINTS[currentIdx];
-        addExplanation(`📍 Checkpoint arrived: [${currentCheckpointName}]. Mandatory 5.0-second inspection pause initiated.`);
+        addExplanation('📍 Waypoint arrived. Mandatory 5.0-second inspection pause initiated.');
 
         if (patrolTimerRef.current) {
           clearInterval(patrolTimerRef.current);
@@ -4794,11 +4792,11 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
 
             if (isIdleMode) {
               setRobotState('idle');
-              addExplanation('Idle mode active. Holding position at checkpoint.');
+              addExplanation('Idle mode active. Holding position.');
             } else {
               // Advance smoothly to next checkpoint in repeating loop
               const nextIdx = (patrolIndexRef.current + 1) % PATROL_CHECKPOINTS.length;
-              addExplanation(`⏱️ 5.0s pause complete at [${currentCheckpointName}]. Smoothly continuing to [${PATROL_CHECKPOINTS[nextIdx]}].`);
+              addExplanation('⏱️ 5.0s pause complete. Smoothly continuing autonomous patrol along route.');
               dispatchPatrolCheckpoint(nextIdx);
             }
           }
