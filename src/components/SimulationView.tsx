@@ -2131,12 +2131,11 @@ const Robot = ({
       const getDrivableOffsetAt = (evalS: number): number => {
         let diversionDelta = 0;
         const sigma = 2.8; // Wide, natural Gaussian envelope starting ~7.0m ahead and merging back ~7.0m after
-        for (const div of plannedDiversions) {
+        if (activeDiversionRef.current) {
+          const div = activeDiversionRef.current;
           const distFromObs = evalS - div.sObstacle;
           const bell = div.peakAmplitude * Math.exp(-(distFromObs * distFromObs) / (2 * sigma * sigma));
-          if (Math.abs(bell) > Math.abs(diversionDelta)) {
-            diversionDelta = bell;
-          }
+          diversionDelta = bell;
         }
 
         // Smooth dampening near destination endpoint (< 2.0m from end)
@@ -2201,17 +2200,17 @@ const Robot = ({
       }
 
       // --- Update Navigation Route Lines ---
-      // (1) Continuous Blue Route Line: Always displays the normal patrol route ahead on the robot's assigned side of the road (+0.35m)
+      // (1) Continuous Blue Route Line: Always displays the full normal patrol route ahead on the robot's assigned side of the road (+0.35m)
       if (drivableRouteRef) {
         const bluePts: number[] = [];
-        const sampleStep = 0.25;
+        const sampleStep = 0.20;
         for (let testS = s; testS <= totalLength; testS += sampleStep) {
           const u = testS / totalLength;
           const basePt = curve.getPointAt(u);
           const tangent = curve.getTangentAt(u).normalize();
           const normal = new THREE.Vector3(tangent.z, 0, -tangent.x);
           const bluePt = basePt.clone().add(normal.clone().multiplyScalar(ASSIGNED_LANE_OFFSET));
-          bluePts.push(bluePt.x, 0.08, bluePt.z);
+          bluePts.push(bluePt.x, 0.18, bluePt.z);
         }
         if (upcomingLoopPoints3D && upcomingLoopPoints3D.length > 0) {
           for (let i = 0; i < upcomingLoopPoints3D.length; i++) {
@@ -2221,7 +2220,7 @@ const Robot = ({
               const lastZ = bluePts[bluePts.length - 1];
               if (Math.hypot(pt3d.x - lastX, pt3d.z - lastZ) < 0.25) continue;
             }
-            bluePts.push(pt3d.x, 0.08, pt3d.z);
+            bluePts.push(pt3d.x, 0.18, pt3d.z);
           }
         }
         if (bluePts.length >= 6) {
@@ -2229,24 +2228,32 @@ const Robot = ({
         }
       }
 
-      // (2) Temporary Yellow Diversion Line: Appears ONLY for the active safe diversion around the obstacle
+      // (2) Temporary Yellow Diversion Line:
+      // "When an obstacle blocks the robot’s path and a safe diversion is selected, immediately show a clearly visible yellow line from the robot’s current position, around the obstacle, and back to the blue route. Keep this yellow line visible for the entire diversion. Remove it only after the robot has fully rejoined the blue route."
       if (diversionRouteRef) {
-        if (isOvertakingActive && plannedDiversions.length > 0) {
-          const activeDiv = plannedDiversions[0];
+        if (activeDiversionRef.current) {
+          const activeDiv = activeDiversionRef.current;
           const yellowPts: number[] = [];
-          const divEndS = Math.min(totalLength, activeDiv.sObstacle + 2.5 * 2.8);
-          // Starts at robot's current 3D position
-          yellowPts.push(currentPos.x, 0.09, currentPos.z);
+          // Starts at robot's current 3D position (elevated to 0.20m above road surface)
+          yellowPts.push(currentPos.x, 0.20, currentPos.z);
           const step = 0.15;
-          for (let testS = s + step; testS <= divEndS; testS += step) {
+          for (let testS = s + step; testS <= activeDiv.diversionEndS; testS += step) {
             const u = testS / totalLength;
             const basePt = curve.getPointAt(u);
             const tangent = curve.getTangentAt(u).normalize();
             const normal = new THREE.Vector3(tangent.z, 0, -tangent.x);
             const off = getDrivableOffsetAt(testS);
             const divPt = basePt.clone().add(normal.clone().multiplyScalar(off));
-            yellowPts.push(divPt.x, 0.09, divPt.z);
+            yellowPts.push(divPt.x, 0.20, divPt.z);
           }
+          // Seamlessly reconnects back onto the blue route at the assigned lane center
+          const endU = activeDiv.diversionEndS / totalLength;
+          const endBase = curve.getPointAt(endU);
+          const endTangent = curve.getTangentAt(endU).normalize();
+          const endNormal = new THREE.Vector3(endTangent.z, 0, -endTangent.x);
+          const endPt = endBase.clone().add(endNormal.clone().multiplyScalar(ASSIGNED_LANE_OFFSET));
+          yellowPts.push(endPt.x, 0.20, endPt.z);
+
           if (yellowPts.length >= 6) {
             diversionRouteRef.current = yellowPts;
           } else {
@@ -2379,46 +2386,51 @@ const Robot = ({
 
         // Build continuous blue line along assigned lane
         const bluePts: number[] = [];
-        const sampleStep = 0.25;
+        const sampleStep = 0.20;
         for (let testS = s; testS <= totalLength; testS += sampleStep) {
           const u = testS / totalLength;
           const basePt = curve.getPointAt(u);
           const tangent = curve.getTangentAt(u).normalize();
           const normal = new THREE.Vector3(tangent.z, 0, -tangent.x);
           const bluePt = basePt.clone().add(normal.clone().multiplyScalar(ASSIGNED_LANE_OFFSET));
-          bluePts.push(bluePt.x, 0.08, bluePt.z);
+          bluePts.push(bluePt.x, 0.18, bluePt.z);
         }
         if (upcomingLoopPoints3D && upcomingLoopPoints3D.length > 0) {
           for (let i = 0; i < upcomingLoopPoints3D.length; i++) {
-            bluePts.push(upcomingLoopPoints3D[i].x, 0.08, upcomingLoopPoints3D[i].z);
+            bluePts.push(upcomingLoopPoints3D[i].x, 0.18, upcomingLoopPoints3D[i].z);
           }
         }
         if (bluePts.length >= 6) {
           drivableRouteRef.current = bluePts;
         }
 
-        // Build temporary yellow diversion line if idleDiversion exists
+        // Build temporary yellow diversion line if active or idle diversion exists
         if (diversionRouteRef) {
-          if (idleDiversions.length > 0) {
-            const div = idleDiversions[0];
+          if (activeDiversionRef.current || idleDiversions.length > 0) {
+            const div = activeDiversionRef.current || idleDiversions[0];
             const yellowPts: number[] = [];
             const divEndS = Math.min(totalLength, div.sObstacle + 2.5 * 2.8);
-            yellowPts.push(currentPos.x, 0.09, currentPos.z);
+            yellowPts.push(currentPos.x, 0.20, currentPos.z);
             for (let testS = s + 0.15; testS <= divEndS; testS += 0.15) {
               const u = testS / totalLength;
               const basePt = curve.getPointAt(u);
               const tangent = curve.getTangentAt(u).normalize();
               const normal = new THREE.Vector3(tangent.z, 0, -tangent.x);
               let deltaOff = 0;
-              for (const idiv of idleDiversions) {
-                const distFromObs = testS - idiv.sObstacle;
-                const bell = idiv.peakAmplitude * Math.exp(-(distFromObs * distFromObs) / (2 * 2.8 * 2.8));
-                if (Math.abs(bell) > Math.abs(deltaOff)) deltaOff = bell;
-              }
+              const distFromObs = testS - div.sObstacle;
+              deltaOff = div.peakAmplitude * Math.exp(-(distFromObs * distFromObs) / (2 * 2.8 * 2.8));
               const off = Math.max(-1.15, Math.min(1.15, ASSIGNED_LANE_OFFSET + deltaOff));
               const divPt = basePt.clone().add(normal.clone().multiplyScalar(off));
-              yellowPts.push(divPt.x, 0.09, divPt.z);
+              yellowPts.push(divPt.x, 0.20, divPt.z);
             }
+            // Seamlessly reconnects back onto the blue route at the assigned lane center
+            const endU = divEndS / totalLength;
+            const endBase = curve.getPointAt(endU);
+            const endTangent = curve.getTangentAt(endU).normalize();
+            const endNormal = new THREE.Vector3(endTangent.z, 0, -endTangent.x);
+            const endPt = endBase.clone().add(endNormal.clone().multiplyScalar(ASSIGNED_LANE_OFFSET));
+            yellowPts.push(endPt.x, 0.20, endPt.z);
+
             diversionRouteRef.current = yellowPts;
           } else {
             diversionRouteRef.current = [];
@@ -2457,9 +2469,9 @@ const DrivablePathLine = ({
   path,
   gridSize,
   isMapView,
-  color = "#38bdf8", 
-  lineWidth = 4.8, 
-  opacity = 0.95 
+  color = "#00d2ff", 
+  lineWidth = 8.0, 
+  opacity = 1.0 
 }: { 
   drivableRouteRef: React.MutableRefObject<number[]>;
   diversionRouteRef?: React.MutableRefObject<number[]>;
@@ -2474,61 +2486,79 @@ const DrivablePathLine = ({
   const { size } = useThree();
 
   // (1) Blue Normal Patrol Route Line (Continuous along assigned side of the road)
+  // Drawn above road surface, thick, high-contrast, never occluded by robot, obstacles, shadows, or camera angle
   const blueLineGeom = useMemo(() => new LineGeometry(), []);
   const blueLineMat = useMemo(() => new LineMaterial({
     color: new THREE.Color(color).getHex(),
     linewidth: lineWidth,
     resolution: new THREE.Vector2(size.width, size.height),
     transparent: true,
-    opacity: opacity,
-    depthTest: true,
-    depthWrite: false,
-  }), [lineWidth, opacity, size.width, size.height, color]);
-
-  const blueGlowMat = useMemo(() => new LineMaterial({
-    color: new THREE.Color(color).getHex(),
-    linewidth: lineWidth * 2.2,
-    resolution: new THREE.Vector2(size.width, size.height),
-    transparent: true,
-    opacity: 0.32,
-    depthTest: true,
+    opacity: 1.0,
+    depthTest: false,
     depthWrite: false,
   }), [lineWidth, size.width, size.height, color]);
 
-  const blueLineObj = useMemo(() => new Line2(blueLineGeom, blueLineMat), [blueLineGeom, blueLineMat]);
-  const blueGlowObj = useMemo(() => new Line2(blueLineGeom, blueGlowMat), [blueLineGeom, blueGlowMat]);
-
-  // (2) Radiant Yellow Temporary Diversion Line (Appears ONLY for active safe diversion)
-  const yellowLineGeom = useMemo(() => new LineGeometry(), []);
-  const yellowLineMat = useMemo(() => new LineMaterial({
-    color: new THREE.Color('#ffd600').getHex(),
-    linewidth: lineWidth * 1.15,
+  const blueGlowMat = useMemo(() => new LineMaterial({
+    color: new THREE.Color('#0284c7').getHex(),
+    linewidth: lineWidth * 2.2,
     resolution: new THREE.Vector2(size.width, size.height),
     transparent: true,
-    opacity: 0.98,
-    depthTest: true,
+    opacity: 0.55,
+    depthTest: false,
+    depthWrite: false,
+  }), [lineWidth, size.width, size.height]);
+
+  const blueLineObj = useMemo(() => {
+    const obj = new Line2(blueLineGeom, blueLineMat);
+    obj.renderOrder = 101;
+    return obj;
+  }, [blueLineGeom, blueLineMat]);
+  const blueGlowObj = useMemo(() => {
+    const obj = new Line2(blueLineGeom, blueGlowMat);
+    obj.renderOrder = 100;
+    return obj;
+  }, [blueLineGeom, blueGlowMat]);
+
+  // (2) Radiant Yellow Temporary Diversion Line (Appears ONLY for active safe diversion)
+  // Drawn above blue route line, thick, high-contrast, and never hidden
+  const yellowLineGeom = useMemo(() => new LineGeometry(), []);
+  const yellowLineMat = useMemo(() => new LineMaterial({
+    color: new THREE.Color('#ffe600').getHex(),
+    linewidth: lineWidth * 1.25,
+    resolution: new THREE.Vector2(size.width, size.height),
+    transparent: true,
+    opacity: 1.0,
+    depthTest: false,
     depthWrite: false,
   }), [lineWidth, size.width, size.height]);
 
   const yellowGlowMat = useMemo(() => new LineMaterial({
-    color: new THREE.Color('#ffd600').getHex(),
+    color: new THREE.Color('#ea580c').getHex(),
     linewidth: lineWidth * 2.6,
     resolution: new THREE.Vector2(size.width, size.height),
     transparent: true,
-    opacity: 0.45,
-    depthTest: true,
+    opacity: 0.65,
+    depthTest: false,
     depthWrite: false,
   }), [lineWidth, size.width, size.height]);
 
-  const yellowLineObj = useMemo(() => new Line2(yellowLineGeom, yellowLineMat), [yellowLineGeom, yellowLineMat]);
-  const yellowGlowObj = useMemo(() => new Line2(yellowLineGeom, yellowGlowMat), [yellowLineGeom, yellowGlowMat]);
+  const yellowLineObj = useMemo(() => {
+    const obj = new Line2(yellowLineGeom, yellowLineMat);
+    obj.renderOrder = 103;
+    return obj;
+  }, [yellowLineGeom, yellowLineMat]);
+  const yellowGlowObj = useMemo(() => {
+    const obj = new Line2(yellowLineGeom, yellowGlowMat);
+    obj.renderOrder = 102;
+    return obj;
+  }, [yellowLineGeom, yellowGlowMat]);
 
   // Initial fallback points along assigned lane from path before dynamic simulation frames begin
   const fallbackPoints = useMemo(() => {
     if (path.length < 2) return [];
     const pts: number[] = [];
     for (let i = 0; i < path.length; i++) {
-      const [x, , z] = getGridPosition(path[i], gridSize, 0.08, isMapView);
+      const [x, , z] = getGridPosition(path[i], gridSize, 0.18, isMapView);
       let nx = 0;
       let nz = 0;
       if (i > 0) {
@@ -2540,7 +2570,7 @@ const DrivablePathLine = ({
           nz = -dx / len;
         }
       }
-      pts.push(x + nx * 0.35, 0.08, z + nz * 0.35);
+      pts.push(x + nx * 0.35, 0.18, z + nz * 0.35);
     }
     return pts;
   }, [path, gridSize, isMapView]);
@@ -2583,10 +2613,10 @@ const DrivablePathLine = ({
 
   return (
     <group>
-      <primitive object={blueGlowObj} renderOrder={1} />
-      <primitive object={blueLineObj} renderOrder={2} />
-      <primitive object={yellowGlowObj} renderOrder={3} />
-      <primitive object={yellowLineObj} renderOrder={4} />
+      <primitive object={blueGlowObj} />
+      <primitive object={blueLineObj} />
+      <primitive object={yellowGlowObj} />
+      <primitive object={yellowLineObj} />
     </group>
   );
 };
@@ -2892,7 +2922,7 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
       // Convert grid waypoints along the road to smooth 3D points on assigned lane (+0.35m)
       const startIndex = flat3DPts.length > 0 ? 1 : 0;
       for (let i = startIndex; i < leg.length; i++) {
-        const [x, , z] = getGridPosition(leg[i], mapData.gridSize, 0.08, isMapView);
+        const [x, , z] = getGridPosition(leg[i], mapData.gridSize, 0.18, isMapView);
         let nx = 0;
         let nz = 0;
         if (i > 0) {
@@ -2904,7 +2934,7 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
             nz = -dx / len;
           }
         }
-        flat3DPts.push(new THREE.Vector3(x + nx * 0.35, 0.08, z + nz * 0.35));
+        flat3DPts.push(new THREE.Vector3(x + nx * 0.35, 0.18, z + nz * 0.35));
       }
     }
 
