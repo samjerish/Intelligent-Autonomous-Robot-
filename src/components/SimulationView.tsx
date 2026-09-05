@@ -2223,24 +2223,29 @@ const Robot = ({
       // ── Step 2: Active Free Space Assessment & Pre-Turn Safe Path Calculation ──
       // ASSIGNED_LANE_OFFSET is defined above (+0.35m)
 
-      // Detect static road barricades blocking the robot's driving corridor ahead (up to 14.0m)
+      // Safe real-world barricade detection horizon: 8.5m ahead in the road corridor
+      // Beyond 8.5m, the robot approaches naturally at normal cruise speed
+      const BARRICADE_DETECT_HORIZON = 8.5;
+      const BARRICADE_SAFE_STOP_GAP = 2.8;
+
+      // Detect static road barricades blocking the robot's driving corridor ahead (up to 8.5m)
       const staticBarricadesAhead = scannedObstacles.filter(
-        o => o.type === 'static' && o.longitudinalDelta >= 0.15 && o.longitudinalDelta <= 14.0 && o.lateralDist <= 1.45
+        o => o.type === 'static' && o.longitudinalDelta >= 0.20 && o.longitudinalDelta <= BARRICADE_DETECT_HORIZON && o.lateralDist <= 1.35
       );
       staticBarricadesAhead.sort((a, b) => a.longitudinalDelta - b.longitudinalDelta);
       const primaryBarricade = staticBarricadesAhead[0] || null;
 
-      // Detect obstacles directly in front of the robot in its assigned lane (ahead up to 14.0m)
+      // Detect dynamic obstacles directly in front of the robot in its assigned lane (ahead up to 14.0m)
       // Assigned lane is centered around +0.35m; an obstacle directly blocks it if |o.sideDot - ASSIGNED_LANE_OFFSET| <= 0.85m
       const obstructingAhead = scannedObstacles.filter(
-        o => o.longitudinalDelta >= 0.1 && o.longitudinalDelta <= 14.0 && Math.abs(o.sideDot - ASSIGNED_LANE_OFFSET) <= 0.85
+        o => o.type !== 'static' && o.longitudinalDelta >= 0.1 && o.longitudinalDelta <= 14.0 && Math.abs(o.sideDot - ASSIGNED_LANE_OFFSET) <= 0.85
       );
       obstructingAhead.sort((a, b) => a.longitudinalDelta - b.longitudinalDelta);
       const primaryDirectObstacle = obstructingAhead[0] || null;
 
-      // Wider detection for general awareness and safe distance tracking
+      // Wider detection for general awareness and safe distance tracking (dynamic obstacles)
       const corridorObstacles = scannedObstacles.filter(
-        o => o.longitudinalDelta >= 0.2 && o.longitudinalDelta <= 14.0 && (o.lateralDist < 1.45 || o.minCpaDist < 2.0)
+        o => o.type !== 'static' && o.longitudinalDelta >= 0.2 && o.longitudinalDelta <= 14.0 && (o.lateralDist < 1.45 || o.minCpaDist < 2.0)
       );
       corridorObstacles.sort((a, b) => a.longitudinalDelta - b.longitudinalDelta);
       const primaryAheadObs = primaryBarricade || primaryDirectObstacle || corridorObstacles[0] || null;
@@ -2265,7 +2270,12 @@ const Robot = ({
       const calculateSafeDiversionPlan = (
         obs: ScannedObs
       ): CandidateDiversionPlan | null => {
-        const obsRadius = obs.type === 'car' ? 0.42 : (obs.type === 'static' ? 0.45 : 0.28);
+        // Static road barricades block the entire roadway: never attempt to drive around or overtake a barricade
+        if (obs.type === 'static') {
+          return null;
+        }
+
+        const obsRadius = obs.type === 'car' ? 0.42 : 0.28;
         const robotRadius = 0.38;
         const wideAirBuffer = 0.45; // Generous wide clearance between hulls (45cm open air)
         const requiredSeparation = obsRadius + robotRadius + wideAirBuffer; // ~1.25m to 1.28m
@@ -2392,86 +2402,88 @@ const Robot = ({
 
       if (primaryBarricade) {
         const barricade = primaryBarricade;
-        const isAlreadyDiverting = activeDiversionRef.current && activeDiversionRef.current.obstacleId === barricade.id;
 
-        if (isAlreadyDiverting) {
-          isOvertakeFeasible = true;
-          shouldCourteousStandOff = false;
-          targetSpeed = cruiseSpeed * 0.95;
+        // Static road barricades block the entire roadway: never allow driving around or overtaking
+        shouldCourteousStandOff = true;
+        isOvertakeFeasible = false;
+        setIsOvertaking(false);
+
+        if (barricade.longitudinalDelta > BARRICADE_SAFE_STOP_GAP && barricade.distToRobot > (BARRICADE_SAFE_STOP_GAP + 0.05)) {
+          // Approach naturally and decelerate smoothly between 8.5m detection horizon and 2.8m safe gap
+          const normDist = THREE.MathUtils.clamp(
+            (barricade.longitudinalDelta - BARRICADE_SAFE_STOP_GAP) / (BARRICADE_DETECT_HORIZON - BARRICADE_SAFE_STOP_GAP),
+            0.0,
+            1.0
+          );
+          // Progressive sine-squared deceleration curve: smooth, natural braking
+          const approachSpeed = Math.max(0.18, cruiseSpeed * Math.sin((Math.PI / 2) * normDist) ** 2);
+          targetSpeed = Math.min(targetSpeed, approachSpeed);
+
+          currentStandoffLabel = `ROAD BARRICADE AHEAD (${barricade.longitudinalDelta.toFixed(1)}m) • SLOWING DOWN`;
+          setBarricadeStatusLabel(`ROAD BARRICADE AHEAD (${barricade.longitudinalDelta.toFixed(1)}m) • SLOWING DOWN`);
+          setIsBarricadeBlocked(true);
+
+          if (!barricadeInspectionRef.current || barricadeInspectionRef.current.blockerId !== barricade.id) {
+            barricadeInspectionRef.current = {
+              blockerId: barricade.id,
+              inspectionTimer: 0,
+              stage: 'approaching',
+              loggedApproach: false,
+              loggedViewing: false,
+              loggedReroute: false,
+            };
+          }
+          if (barricadeInspectionRef.current && !barricadeInspectionRef.current.loggedApproach) {
+            barricadeInspectionRef.current.loggedApproach = true;
+            if (addExplanation) {
+              addExplanation(`🚧 Road barricade detected blocking route ahead (${barricade.longitudinalDelta.toFixed(1)}m). Decelerating smoothly to safe standoff distance...`);
+            }
+          }
         } else {
-          // Approach slowly and stop at safe viewing distance (~2.7m - 2.8m)
-          shouldCourteousStandOff = true;
+          // Stopped at safe viewing distance (2.8m)! Zero speed, safe buffer maintained, no collision or close pass
+          targetSpeed = 0;
+          setIsBarricadeBlocked(true);
 
-          if (barricade.longitudinalDelta > 2.75 && barricade.distToRobot > 2.80) {
-            // Approach slowly: smooth deceleration between 6.5m and 2.75m
-            const approachSpeed = THREE.MathUtils.clamp((barricade.longitudinalDelta - 2.75) * 0.35, 0.15, cruiseSpeed * 0.40);
-            targetSpeed = Math.min(targetSpeed, approachSpeed);
-            currentStandoffLabel = 'ROAD BARRICADE AHEAD • APPROACHING SLOWLY';
-            setBarricadeStatusLabel('ROAD BARRICADE AHEAD • APPROACHING SLOWLY');
-            setIsBarricadeBlocked(true);
+          if (!barricadeInspectionRef.current || barricadeInspectionRef.current.blockerId !== barricade.id) {
+            barricadeInspectionRef.current = {
+              blockerId: barricade.id,
+              inspectionTimer: 0,
+              stage: 'viewing',
+              loggedApproach: true,
+              loggedViewing: false,
+              loggedReroute: false,
+            };
+          }
 
-            if (!barricadeInspectionRef.current || barricadeInspectionRef.current.blockerId !== barricade.id) {
-              barricadeInspectionRef.current = {
-                blockerId: barricade.id,
-                inspectionTimer: 0,
-                stage: 'approaching',
-                loggedApproach: false,
-                loggedViewing: false,
-                loggedReroute: false,
-              };
-            }
-            if (barricadeInspectionRef.current && !barricadeInspectionRef.current.loggedApproach) {
-              barricadeInspectionRef.current.loggedApproach = true;
+          if (barricadeInspectionRef.current) {
+            barricadeInspectionRef.current.stage = 'viewing';
+            if (!barricadeInspectionRef.current.loggedViewing) {
+              barricadeInspectionRef.current.loggedViewing = true;
               if (addExplanation) {
-                addExplanation(`🚧 Road barricade detected blocking route ahead (${barricade.longitudinalDelta.toFixed(1)}m). Approaching slowly to safe viewing distance...`);
+                addExplanation('🛑 Stopped at safe viewing distance (2.8m). Road barricade confirmed: Route unavailable.');
               }
             }
-          } else {
-            // Stopped at safe viewing distance (~2.7m)! Zero speed, safe buffer maintained, no collision or close pass
-            targetSpeed = 0;
-            setIsBarricadeBlocked(true);
 
-            if (!barricadeInspectionRef.current || barricadeInspectionRef.current.blockerId !== barricade.id) {
-              barricadeInspectionRef.current = {
-                blockerId: barricade.id,
-                inspectionTimer: 0,
-                stage: 'viewing',
-                loggedApproach: true,
-                loggedViewing: false,
-                loggedReroute: false,
-              };
-            }
+            barricadeInspectionRef.current.inspectionTimer += safeDelta;
+            const inspectTime = barricadeInspectionRef.current.inspectionTimer;
 
-            if (barricadeInspectionRef.current) {
-              barricadeInspectionRef.current.stage = 'viewing';
-              if (!barricadeInspectionRef.current.loggedViewing) {
-                barricadeInspectionRef.current.loggedViewing = true;
+            if (inspectTime < 0.65) {
+              currentStandoffLabel = 'ROAD BARRICADE DETECTED • SAFE VIEWING GAP (2.8m)';
+              setBarricadeStatusLabel('ROAD BARRICADE DETECTED • SAFE VIEWING GAP (2.8m)');
+            } else if (inspectTime < 1.45) {
+              currentStandoffLabel = 'ROUTE UNAVAILABLE • EVALUATING ROAD NETWORK';
+              setBarricadeStatusLabel('ROUTE UNAVAILABLE • EVALUATING ROAD NETWORK');
+            } else {
+              currentStandoffLabel = 'RE-ROUTING TO DESTINATION VIA OPEN ROADS';
+              setBarricadeStatusLabel('RE-ROUTING TO DESTINATION VIA OPEN ROADS');
+              if (!barricadeInspectionRef.current.loggedReroute) {
+                barricadeInspectionRef.current.loggedReroute = true;
+                barricadeInspectionRef.current.stage = 'rerouting';
                 if (addExplanation) {
-                  addExplanation('🛑 Stopped at safe viewing distance (2.8m). Recognizing road barricade: Blue route cannot continue.');
+                  addExplanation('🧠 Route unavailable: Calculating new valid road-only route to destination...');
                 }
-              }
-
-              barricadeInspectionRef.current.inspectionTimer += safeDelta;
-              const inspectTime = barricadeInspectionRef.current.inspectionTimer;
-
-              if (inspectTime < 0.8) {
-                currentStandoffLabel = 'ROAD BARRICADE DETECTED • SAFE VIEWING DISTANCE (2.8m)';
-                setBarricadeStatusLabel('ROAD BARRICADE DETECTED • SAFE VIEWING DISTANCE (2.8m)');
-              } else if (inspectTime < 1.6) {
-                currentStandoffLabel = 'INSPECTING ROAD CLOSURE • EVALUATING ROAD NETWORK';
-                setBarricadeStatusLabel('INSPECTING ROAD CLOSURE • EVALUATING ROAD NETWORK');
-              } else {
-                currentStandoffLabel = 'ROAD BLOCKED • RE-ROUTING VIA OPEN ROADS';
-                setBarricadeStatusLabel('ROAD BLOCKED • RE-ROUTING VIA OPEN ROADS');
-                if (!barricadeInspectionRef.current.loggedReroute) {
-                  barricadeInspectionRef.current.loggedReroute = true;
-                  barricadeInspectionRef.current.stage = 'rerouting';
-                  if (addExplanation) {
-                    addExplanation('🧠 Road closure confirmed: Blue route cannot continue. Calculating valid alternative road route...');
-                  }
-                  if (onBarricadeBlocked) {
-                    onBarricadeBlocked(currentPos, barricade.pos3D);
-                  }
+                if (onBarricadeBlocked) {
+                  onBarricadeBlocked(currentPos, barricade.pos3D);
                 }
               }
             }
@@ -2814,6 +2826,13 @@ const Robot = ({
         const curveSeverity = Math.min(1.0, (Math.abs(yawDiff) - 0.22) / 0.80);
         const cornerDamping = THREE.MathUtils.lerp(1.0, 0.45, curveSeverity);
         targetSpeed *= cornerDamping;
+      }
+
+      // When stopped or moving very slowly with a large heading discrepancy (such as after rerouting from a barricade),
+      // hold forward speed at 0 while the vehicle smoothly rotates its heading in place to align with the new road direction.
+      // This prevents sliding backwards, jumping, or making abrupt turns.
+      if (Math.abs(yawDiff) > 0.45 && actualSpeedRef.current < 0.25) {
+        targetSpeed = 0;
       }
 
       // ── Physical Longitudinal Dynamics (Gentle Acceleration & Controlled Braking) ──
@@ -4557,9 +4576,11 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
     const rawLoc = getGridPointFromVector3(robotWorldPos, mapData.gridSize);
     const currentLoc = getNearestRoadPoint(rawLoc, mapData);
 
-    // 2. Identify active target destination
+    // 2. Identify active target destination (MUST remain the exact same destination)
     let targetLoc: GridPoint;
-    if (robotState === 'patrol') {
+    if (path.length > 0) {
+      targetLoc = getNearestRoadPoint(path[path.length - 1], mapData);
+    } else if (robotState === 'patrol') {
       const lower = currentPatrolTarget.toLowerCase();
       const targetRoom = 
         mapData.rooms?.find(r => r.name.toLowerCase() === lower) ||
@@ -4569,8 +4590,6 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
       targetLoc = getNearestRoadPoint(rawTarget, mapData);
     } else if (emergencyLocationRef.current) {
       targetLoc = getNearestRoadPoint(emergencyLocationRef.current, mapData);
-    } else if (path.length > 0) {
-      targetLoc = getNearestRoadPoint(path[path.length - 1], mapData);
     } else {
       targetLoc = mapData.start;
     }
@@ -4578,39 +4597,20 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
     // 3. Obstacle set including all user road barricades
     const allObstacles = [...(mapData.obstacles || []), ...userBlockers];
 
-    // 4. Calculate valid alternative road route using 3D A* with requireRoads: true
+    // 4. Calculate valid alternative road-only route to the SAME destination using 3D A* with requireRoads: true
     let altPath = calculatePath(currentLoc, targetLoc, allObstacles, mapData, true);
 
-    // 5. If immediate destination is blocked/inaccessible inside closure, try subsequent checkpoints
-    if (altPath.length < 2 && robotState === 'patrol') {
-      for (let offset = 1; offset < PATROL_CHECKPOINTS.length; offset++) {
-        const nextIdx = (patrolIndexRef.current + offset) % PATROL_CHECKPOINTS.length;
-        const nextTargetName = PATROL_CHECKPOINTS[nextIdx];
-        const nextRoom = 
-          mapData.rooms?.find(r => r.name.toLowerCase() === nextTargetName.toLowerCase()) ||
-          mapData.rooms?.find(r => r.name.toLowerCase().includes(nextTargetName.toLowerCase()));
-        if (nextRoom) {
-          const nextTargetLoc = getNearestRoadPoint(nextRoom.door || nextRoom.start, mapData);
-          altPath = calculatePath(currentLoc, nextTargetLoc, allObstacles, mapData, true);
-          if (altPath.length >= 2) {
-            patrolIndexRef.current = nextIdx;
-            setCurrentPatrolTarget(nextTargetName);
-            addExplanation('🔄 Sector closed by road barricade. Calculating alternative path via open drivable roads.');
-            break;
-          }
-        }
-      }
-    }
-
-    // Fallback: Return to base / generator room via open drivable roads
+    // 5. If targetLoc itself was directly blocked by a barricade clicked on it, test adjacent road cells to the same destination
     if (altPath.length < 2) {
-      const homeRoom = mapData.rooms?.find(r => r.name.toLowerCase().includes('generator')) || mapData.rooms?.[0];
-      if (homeRoom) {
-        const homeTarget = getNearestRoadPoint(homeRoom.door || homeRoom.start, mapData);
-        altPath = calculatePath(currentLoc, homeTarget, allObstacles, mapData, true);
-        if (altPath.length >= 2) {
-          addExplanation('🏠 Road route closed by barricade. Calmly navigating to base via open roads.');
-        }
+      const candidateTargets = [
+        { x: targetLoc.x + 1, y: targetLoc.y, f: targetLoc.f },
+        { x: targetLoc.x - 1, y: targetLoc.y, f: targetLoc.f },
+        { x: targetLoc.x, y: targetLoc.y + 1, f: targetLoc.f },
+        { x: targetLoc.x, y: targetLoc.y - 1, f: targetLoc.f },
+      ].filter(p => isPointOnDrivableRoad(p.x, p.y, mapData, 0.1) && !allObstacles.some(o => o.x === p.x && o.y === p.y && o.f === p.f));
+      for (const cand of candidateTargets) {
+        altPath = calculatePath(currentLoc, cand, allObstacles, mapData, true);
+        if (altPath.length >= 2) break;
       }
     }
 
@@ -4622,7 +4622,7 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
       setPath(altPath);
       setCurrentPosIndex(0);
       setIsPlaying(true);
-      addExplanation(`✨ New safe route active (${altPath.length} nodes). Resuming navigation strictly via open roads.`);
+      addExplanation(`✨ Alternate road route active (${altPath.length} nodes). Navigating to destination via open roads.`);
     } else {
       addExplanation(`⚠️ Road closed in all directions by barricades. Robot holding safe viewing standoff.`);
     }
