@@ -129,6 +129,8 @@ const MovingEntity = ({ obstacle, gridSize, isMapView, robotPosRef, allObstacles
   const lastDirRef = useRef({ x: 0, z: 1 });
   const walkClockRef = useRef(Math.random() * 10);
   const smoothedSpeedFactorRef = useRef(1.0);
+  const stuckTimerRef = useRef(0);
+  const lastCheckPosRef = useRef<THREE.Vector3 | null>(null);
   
   // Animation refs
   const leftLegRef = useRef<THREE.Group>(null);
@@ -187,7 +189,6 @@ const MovingEntity = ({ obstacle, gridSize, isMapView, robotPosRef, allObstacles
     let speedFactor = 1.0;
 
     // Smooth obstacle avoidance & mutual yielding with robot (obstacles stay on full continuous movement)
-    // Strict obstacle-to-robot collision avoidance (obstacles must NEVER collide with or scrape the robot)
     if (robotPosRef && robotPosRef.current) {
       const distToRobot = currentPos.distanceTo(robotPosRef.current);
       const toRobotX = robotPosRef.current.x - currentPos.x;
@@ -195,72 +196,80 @@ const MovingEntity = ({ obstacle, gridSize, isMapView, robotPosRef, allObstacles
       const fwdToRobot = toRobotX * dirX + toRobotZ * dirZ;
       const latToRobot = Math.abs(toRobotX * latX + toRobotZ * latZ);
 
-      // Yield towards lane edge / sidewalk when robot is in vicinity (within 7m)
-      if (distToRobot < 7.0 && fwdToRobot > -1.2) {
+      // Yield towards outer curb / sidewalk when robot is in vicinity (within 7.5m)
+      if (distToRobot < 7.5 && fwdToRobot > -1.5) {
         isYielding = true;
-        yieldTarget = baseOffset >= 0 ? 0.68 : -0.68;
+        // Yield outward towards the road shoulder to create wide clear corridor for robot
+        yieldTarget = baseOffset >= 0 ? 0.72 : -0.72;
 
-        // Approaching robot in corridor:
-        if (fwdToRobot > -0.2 && fwdToRobot < 4.0 && latToRobot < 1.15) {
-          if (fwdToRobot <= 1.45 || distToRobot <= 1.40) {
-            // Full safety stop: zero collision with robot
-            speedFactor = 0.0;
-          } else {
-            // Smooth anticipatory deceleration
-            const adapted = (fwdToRobot - 1.45) / 2.2;
-            speedFactor = Math.min(speedFactor, THREE.MathUtils.clamp(adapted, 0.0, 0.85));
-          }
+        // Approaching robot in corridor: adapt speed smoothly while staying in continuous motion
+        if (fwdToRobot > 0.2 && fwdToRobot < 4.5 && latToRobot < 1.20) {
+          const adapted = THREE.MathUtils.clamp((fwdToRobot - 0.8) / 3.2, 0.72, 0.92);
+          speedFactor = Math.min(speedFactor, adapted);
         }
       }
     }
     
-    // Strict obstacle-to-obstacle collision avoidance (obstacles must NOT collide with each other)
+    // Vehicle-to-vehicle & vehicle-to-pedestrian safe spacing (Continuous motion, no freezing, zero collisions)
     if (allObstaclesRef && allObstaclesRef.current) {
       for (const other of allObstaclesRef.current) {
         if (other.id === obstacle.id) continue;
         const otherPos = other.pos3D;
         if (!otherPos) continue;
         const distToOther = currentPos.distanceTo(otherPos);
-        if (distToOther < 5.0) {
+        if (distToOther < 6.0) {
           const toOtherX = otherPos.x - currentPos.x;
           const toOtherZ = otherPos.z - currentPos.z;
           const fwd = toOtherX * dirX + toOtherZ * dirZ;
           const lat = Math.abs(toOtherX * latX + toOtherZ * latZ);
           
-          // If another entity is ahead in the same lane / corridor
-          if (fwd > 0.0 && fwd < 4.2 && lat < 1.10) {
+          // Case A: Following another entity ahead in the same lane / corridor
+          if (fwd > 0.2 && fwd < 5.0 && lat < 1.15) {
             isYielding = true;
-            yieldTarget = baseOffset >= 0 ? 0.68 : -0.68;
-            if (fwd <= 1.35 || distToOther <= 1.30) {
-              // Complete safety stop to prevent rear-ending or scraping
-              speedFactor = 0.0;
-            } else {
-              // Smoothly pace following speed to match leader
-              const adapted = (fwd - 1.35) / 2.3;
-              speedFactor = Math.min(speedFactor, THREE.MathUtils.clamp(adapted, 0.0, 0.90));
+            // Shift towards lane edge to increase visibility and safe spacing
+            yieldTarget = baseOffset >= 0 ? 0.65 : -0.65;
+            // Smoothly pace following speed to match leader while maintaining continuous flow
+            const adapted = THREE.MathUtils.clamp((fwd - 1.2) / 3.5, 0.68, 0.92);
+            speedFactor = Math.min(speedFactor, adapted);
+          }
+
+          // Case B: Oncoming traffic approaching head-on
+          const otherVel = other.velocity;
+          if (otherVel) {
+            const closingSpeed = -(otherVel.x * dirX + otherVel.z * dirZ);
+            if (closingSpeed > 0.4 && distToOther < 5.0 && lat < 1.15) {
+              isYielding = true;
+              // Both entities yield towards their respective right (+0.70) to pass each other smoothly
+              yieldTarget = 0.70;
+              const adapted = THREE.MathUtils.clamp(distToOther / 4.0, 0.75, 0.95);
+              speedFactor = Math.min(speedFactor, adapted);
             }
           }
         }
       }
     }
 
+    // Strictly enforce continuous motion: speedFactor never drops below 0.68
+    speedFactor = Math.max(0.68, speedFactor);
+
     // Smoothly shift laterally to lane / shoulder position
-    yieldOffsetRef.current = THREE.MathUtils.lerp(yieldOffsetRef.current, yieldTarget, delta * 4.5);
+    yieldOffsetRef.current = THREE.MathUtils.lerp(yieldOffsetRef.current, yieldTarget, delta * 4.0);
     
     // Taillight alert intensity when yielding
     if (taillightMatRef.current) {
       taillightMatRef.current.emissiveIntensity = isYielding ? 2.2 : 1.0;
     }
 
-    // Smooth rate-limited speed transitions (no sudden jerks, zero collisions)
-    const lerpRate = speedFactor < smoothedSpeedFactorRef.current ? 7.0 : 4.0;
-    smoothedSpeedFactorRef.current = THREE.MathUtils.lerp(smoothedSpeedFactorRef.current, speedFactor, Math.min(1.0, delta * lerpRate));
-    if (speedFactor === 0.0 && smoothedSpeedFactorRef.current < 0.03) {
-      smoothedSpeedFactorRef.current = 0.0;
-    }
+    // Smooth rate-limited speed transitions (fluid, natural, never stops)
+    const lerpRate = speedFactor < smoothedSpeedFactorRef.current ? 4.5 : 3.5;
+    smoothedSpeedFactorRef.current = THREE.MathUtils.clamp(
+      THREE.MathUtils.lerp(smoothedSpeedFactorRef.current, speedFactor, delta * lerpRate),
+      0.68,
+      1.0
+    );
 
-    // Full continuous movement speed
-    const currentSpeed = obstacle.speed * smoothedSpeedFactorRef.current;
+    // Full continuous movement speed (strictly positive at all times, never 0)
+    const currentSpeed = Math.max(0.75, obstacle.speed * smoothedSpeedFactorRef.current);
 
     // Walking animation for pedestrians
     if (!isCar) {
@@ -288,34 +297,57 @@ const MovingEntity = ({ obstacle, gridSize, isMapView, robotPosRef, allObstacles
     );
     
     const dist = currentPos.distanceTo(targetVector);
-    if (dist < 0.20) {
+    if (dist < 0.35) {
       if (obstacle.currentIndex < obstacle.path.length - 1) {
         obstacle.currentIndex++;
       } else {
-        // Continuous looping: reverse waypoints and continue smoothly
+        // Continuous looping: reverse waypoints and continue smoothly without any stop
         obstacle.path.reverse();
         obstacle.currentIndex = 1;
       }
       obstacle.pos = obstacle.path[obstacle.currentIndex];
+    }
+
+    // Anti-stuck watchdog: ensure moving obstacles never get stuck, freeze, or stall anywhere
+    if (!lastCheckPosRef.current) {
+      lastCheckPosRef.current = currentPos.clone();
     } else {
-      // Set real-time velocity vector for predictive dynamic obstacle modeling
-      obstacle.velocity = new THREE.Vector3(dirX * currentSpeed, 0, dirZ * currentSpeed);
-      const moveDist = currentSpeed * delta;
-      if (moveDist >= dist && dist > 0.001) {
-        currentPos.copy(targetVector);
-        obstacle.pos = targetNode;
-      } else if (moveDist > 0) {
-        const direction = new THREE.Vector3().subVectors(targetVector, currentPos).normalize();
+      const stepMoved = currentPos.distanceTo(lastCheckPosRef.current);
+      if (stepMoved < 0.08 * delta) {
+        stuckTimerRef.current += delta;
+        if (stuckTimerRef.current > 1.0) {
+          // If stationary/stuck for > 1.0s, advance waypoint to keep continuous movement
+          if (obstacle.currentIndex < obstacle.path.length - 1) {
+            obstacle.currentIndex++;
+          } else {
+            obstacle.path.reverse();
+            obstacle.currentIndex = 1;
+          }
+          obstacle.pos = obstacle.path[obstacle.currentIndex];
+          stuckTimerRef.current = 0;
+        }
+      } else {
+        stuckTimerRef.current = 0;
+      }
+      lastCheckPosRef.current.copy(currentPos);
+    }
+
+    // Set real-time velocity vector for predictive dynamic obstacle modeling
+    obstacle.velocity = new THREE.Vector3(dirX * currentSpeed, 0, dirZ * currentSpeed);
+    const moveDist = currentSpeed * delta;
+    if (moveDist > 0) {
+      const direction = new THREE.Vector3().subVectors(targetVector, currentPos).normalize();
+      if (direction.lengthSq() > 0.001) {
         currentPos.add(direction.multiplyScalar(moveDist));
       }
-      const rotDirection = new THREE.Vector3().subVectors(targetVector, currentPos);
-      if (rotDirection.lengthSq() > 0.001) {
-        const targetRotation = Math.atan2(rotDirection.x, rotDirection.z);
-        let diff = targetRotation - ref.current.rotation.y;
-        while (diff < -Math.PI) diff += Math.PI * 2;
-        while (diff > Math.PI) diff -= Math.PI * 2;
-        ref.current.rotation.y += diff * Math.min(1.0, delta * 7.0);
-      }
+    }
+    const rotDirection = new THREE.Vector3().subVectors(targetVector, currentPos);
+    if (rotDirection.lengthSq() > 0.001) {
+      const targetRotation = Math.atan2(rotDirection.x, rotDirection.z);
+      let diff = targetRotation - ref.current.rotation.y;
+      while (diff < -Math.PI) diff += Math.PI * 2;
+      while (diff > Math.PI) diff -= Math.PI * 2;
+      ref.current.rotation.y += diff * Math.min(1.0, delta * 7.0);
     }
   });
 
