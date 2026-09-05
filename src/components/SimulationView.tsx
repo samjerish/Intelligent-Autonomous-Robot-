@@ -3225,51 +3225,107 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
     return () => clearTimeout(timeout);
   }, [robotState, isPlaying, path, isOn, isIdleMode, patrolCountdown, mapData]);
 
-  const initializeDynamicObstacles = (_robotPath?: GridPoint[]) => {
+  const initializeDynamicObstacles = (routePath?: GridPoint[]) => {
     if (!mapData || !mapData.roads || mapData.roads.length < 5) return;
     const roads = mapData.roads;
     const obs: DynamicObstacle[] = [];
-    
-    // Spawn 16 well-spaced dynamic traffic entities: 8 vehicles and 8 pedestrians
+    const allObstacles = [...(mapData.obstacles || []), ...userBlockers];
+
+    // Determine the active road path for the robot
+    let activeRoadPath: GridPoint[] = [];
+    if (routePath && routePath.length >= 6) {
+      activeRoadPath = routePath;
+    } else if (path && path.length >= 6) {
+      activeRoadPath = path;
+    } else if (mapData.rooms && mapData.rooms.length > 0) {
+      const rawLoc = robotPosRef.current ? getGridPointFromVector3(robotPosRef.current, mapData.gridSize) : mapData.start;
+      const startLoc = getNearestRoadPoint(rawLoc, mapData);
+      const targetRoom = mapData.rooms[0];
+      const targetLoc = getNearestRoadPoint(targetRoom.door || targetRoom.start, mapData);
+      activeRoadPath = calculatePath(startLoc, targetLoc, allObstacles, mapData, true);
+    }
+
+    // "Place moving obstacles directly on the road, within the robot’s driving path."
+    if (activeRoadPath.length >= 6) {
+      const M = activeRoadPath.length;
+      // 1. Moving vehicle / car directly in driving path ahead
+      const i1 = Math.max(2, Math.floor(M * 0.30));
+      const j1 = Math.min(M - 1, i1 + 7);
+      const path1 = activeRoadPath.slice(i1, j1 + 1);
+      if (path1.length >= 2) {
+        obs.push({
+          id: 'obs_road_0',
+          type: 'car',
+          pos: path1[0],
+          targetPos: path1[path1.length - 1],
+          path: path1,
+          currentIndex: 0,
+          speed: 1.1,
+          isMoving: true,
+          isRoadWalker: true,
+        });
+      }
+
+      // 2. Moving pedestrian walking directly on the road in the driving path
+      const i2 = Math.max(i1 + 4, Math.floor(M * 0.65));
+      const j2 = Math.min(M - 1, i2 + 6);
+      const path2 = activeRoadPath.slice(i2, j2 + 1);
+      if (path2.length >= 2) {
+        obs.push({
+          id: 'obs_road_1',
+          type: 'person',
+          pos: path2[0],
+          targetPos: path2[path2.length - 1],
+          path: path2,
+          currentIndex: 0,
+          speed: 0.9,
+          isMoving: true,
+          isRoadWalker: true,
+        });
+      }
+    }
+
+    // Populate remaining campus traffic entities for lively, realistic campus environment
     const TOTAL_TRAFFIC = 16;
+    const startIndex = obs.length;
     const CAR_COUNT = 8;
-    
-    for (let i = 0; i < TOTAL_TRAFFIC; i++) {
+
+    for (let i = startIndex; i < TOTAL_TRAFFIC; i++) {
       const isCar = i < CAR_COUNT;
-      let path: GridPoint[] = [];
+      let p: GridPoint[] = [];
       for (let attempt = 0; attempt < 25; attempt++) {
         const start = roads[Math.floor(Math.random() * roads.length)];
         const end = roads[Math.floor(Math.random() * roads.length)];
         if (start.x === end.x && start.y === end.y) continue;
 
-        // Ensure new spawn point is spaced at least 4.0m away from existing entities
+        // Ensure new spawn point is spaced at least 3.5m away from existing entities
         const [sx, , sz] = getGridPosition(start, mapData.gridSize, 0.05, isMapView);
         const tooClose = obs.some(o => {
           if (!o.path || o.path.length === 0) return false;
           const [ox, , oz] = getGridPosition(o.path[0], mapData.gridSize, 0.05, isMapView);
-          return Math.hypot(sx - ox, sz - oz) < 4.0;
+          return Math.hypot(sx - ox, sz - oz) < 3.5;
         });
         if (tooClose) continue;
 
-        path = calculatePath(start, end, [...(mapData.obstacles || []), ...userBlockers], mapData, true);
-        if (path.length >= 3) break;
+        p = calculatePath(start, end, allObstacles, mapData, true);
+        if (p.length >= 3) break;
       }
-      
-      if (path.length >= 2) {
+
+      if (p.length >= 2) {
         obs.push({
           id: `obs_${i}`,
           type: isCar ? 'car' : 'person',
-          pos: path[0],
-          targetPos: path[path.length - 1],
-          path,
+          pos: p[0],
+          targetPos: p[p.length - 1],
+          path: p,
           currentIndex: 0,
-          speed: isCar ? (3.2 + Math.random() * 1.2) : (1.6 + Math.random() * 0.8),
+          speed: isCar ? (2.8 + Math.random() * 1.0) : (1.5 + Math.random() * 0.6),
           isMoving: true,
-          isRoadWalker: !isCar && (i % 3 !== 0)
+          isRoadWalker: !isCar && (i % 3 !== 0),
         });
       }
     }
-    
+
     setDynamicObstacles(obs);
     dynamicObstaclesRef.current = obs;
   };
