@@ -2500,21 +2500,36 @@ const Robot = ({
         }
         if (primaryDirectObstacle) {
           const obs = primaryDirectObstacle;
-          const isObstructingLane = !obs.isMoving || obs.relForwardVel < cruiseSpeed * 0.85 || obs.longitudinalDelta < 7.5;
 
-          if (isObstructingLane) {
+          // "The diversion must not look like casual overtaking. Use the yellow path only when the normal blue route is genuinely blocked."
+          const isGenuinelyBlocked =
+            obs.type === 'static' ||
+            !obs.isMoving ||
+            obs.speed < 0.35 ||
+            (obs.relForwardVel < 0.20 && obs.longitudinalDelta < 13.0);
+
+          if (!isGenuinelyBlocked) {
+            // Normal vehicle or pedestrian traveling in the driving lane ahead:
+            // Follow smoothly at safe cruising distance on the normal blue route without overtaking
+            if (obs.longitudinalDelta < 5.0 && obs.relForwardVel >= 0.20) {
+              const followPace = THREE.MathUtils.clamp((obs.longitudinalDelta - 2.8) / 2.2, 0.25, 0.95);
+              targetSpeed = Math.min(targetSpeed, cruiseSpeed * followPace);
+            }
+          } else {
+            // Blue route is genuinely blocked by a stopped/stalled obstacle or roadblock
             const isAlreadyDivertingForThisObs = activeDiversionRef.current && activeDiversionRef.current.obstacleId === obs.id;
 
             if (isAlreadyDivertingForThisObs) {
               isOvertakeFeasible = true;
               shouldCourteousStandOff = false;
-              targetSpeed = cruiseSpeed * 0.95;
+              targetSpeed = cruiseSpeed * 0.92;
             } else {
-              // 1. Immediately evaluate available space on both sides of the road:
+              // "When an obstacle is detected ahead, start planning and showing the yellow diversion route well before the robot reaches it."
+              // "The robot must begin its gradual turn early, with enough distance to safely move around the obstacle—never make a last-second dodge."
               const safePlan = calculateSafeDiversionPlan(obs);
 
               if (safePlan) {
-                // Safe gap exists on the road: immediately generate yellow diversion path and execute bypass!
+                // Safe gap exists on the road: immediately generate yellow diversion path and execute early gradual bypass!
                 activeDiversionRef.current = {
                   obstacleId: obs.id,
                   sStart: safePlan.sStart,
@@ -2531,61 +2546,31 @@ const Robot = ({
                 }
                 isOvertakeFeasible = true;
                 shouldCourteousStandOff = false;
-                targetSpeed = cruiseSpeed * 0.95;
+                targetSpeed = cruiseSpeed * 0.92;
                 if (addExplanation) {
-                  addExplanation('⚡ Available road space verified on road corridor: Executing smooth yellow diversion bypass around obstacle.');
+                  addExplanation(`⚡ Obstacle genuinely blocking route ahead (${obs.longitudinalDelta.toFixed(1)}m). Early yellow diversion planned: Gradual bypass engaged with wide clearance.`);
                 }
               } else {
-                // 2. Forward passing is temporarily unsafe or constrained.
-                // Check if there is clear space behind to reverse slowly and safely to create enough turning room:
-                const canReverseSpline = s >= 0.8;
-                let isRearRoadClear = canReverseSpline;
-                if (canReverseSpline) {
-                  const rearCheckStep = 0.25;
-                  const rearEndS = Math.max(0.1, s - 1.8);
-                  for (let rS = s - rearCheckStep; rS >= rearEndS; rS -= rearCheckStep) {
-                    const u = rS / totalLength;
-                    const rPt = curve.getPointAt(u);
-                    if (!isPointOnDrivableRoad(rPt.x, rPt.z, mapData, 0.10)) {
-                      isRearRoadClear = false;
-                      break;
-                    }
-                  }
-                }
+                // "If there is not enough safe space for this full diversion, the robot must slow down and wait at a safe distance until a suitable route becomes available."
+                shouldCourteousStandOff = true;
+                const safeStandoffDist = 3.0; // 3.0m safe buffer from obstacle
 
-                // Check no obstacles behind in reverse path
-                const hasRearObstacle = scannedObstacles.some(
-                  o => o.longitudinalDelta < -0.15 && o.longitudinalDelta > -2.8 && Math.abs(o.sideDot - ASSIGNED_LANE_OFFSET) < 0.90
-                );
-                const isSafeToReverse = isRearRoadClear && !hasRearObstacle;
-
-                if (isSafeToReverse && (obs.longitudinalDelta < 2.3 || !activeDiversionRef.current)) {
-                  // Initiate / maintain safe reverse to create turning room
-                  if (!isReversingRef.current) {
-                    isReversingRef.current = true;
-                    setIsReversing(true);
-                    reverseTargetSRef.current = Math.max(0.2, s - 1.8);
-                    if (addExplanation) {
-                      addExplanation('⏪ Forward turning room constrained: Reversing slowly to create safe turning clearance for diversion.');
-                    }
-                  }
-                  targetSpeed = -0.55;
-                  shouldCourteousStandOff = true;
-                  currentStandoffLabel = 'REVERSING • CREATING SAFE TURNING ROOM';
+                if (obs.longitudinalDelta > safeStandoffDist + 0.2) {
+                  // Smoothly slow down as the robot approaches the blocked obstacle
+                  const approachSpeed = THREE.MathUtils.clamp(
+                    (obs.longitudinalDelta - safeStandoffDist) * 0.38,
+                    0.15,
+                    cruiseSpeed * 0.45
+                  );
+                  targetSpeed = Math.min(targetSpeed, approachSpeed);
+                  currentStandoffLabel = 'OBSTACLE AHEAD • SLOWING TO SAFE STANDOFF';
                 } else {
-                  // 3. Only hold position when no safe forward, side, or reverse maneuver exists.
-                  // Recalculate continuously; do not freeze or wait indefinitely.
-                  shouldCourteousStandOff = true;
-                  currentStandoffLabel = isSafeToReverse
-                    ? 'EVALUATING ROAD CORRIDORS • RECALCULATING'
-                    : 'ALL PATHS BLOCKED • HOLDING STANDOFF';
+                  // Safely holding position at 3.0m standoff distance waiting for safe passing corridor to clear
                   targetSpeed = 0;
+                  currentStandoffLabel = 'WAITING FOR SAFE PASSING CORRIDOR • STANDOFF (3.0m)';
                 }
               }
             }
-          } else {
-            shouldCourteousStandOff = false;
-            targetSpeed = cruiseSpeed;
           }
         }
       }
@@ -2934,7 +2919,8 @@ const Robot = ({
       }
 
       // 5. Stable orientation: lookahead point with rate-limited yaw damping aligned with the path
-      const lookaheadDist = 0.8;
+      // Uses extended lookahead (1.25m) during active diversion so robot initiates turn early and smoothly
+      const lookaheadDist = activeDiversionRef.current ? 1.25 : 0.8;
       const lookaheadS = Math.min(totalLength, Math.max(0, distanceTraveledRef.current + lookaheadDist));
       const lookaheadU = lookaheadS / totalLength;
       const lookaheadBasePos = curve.getPointAt(lookaheadU);
