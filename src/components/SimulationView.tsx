@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState, useMemo, useCallback } from 'react';
 import type { MapData, GridPoint, Room } from '../types';
 import { calculatePath, calculateLongPath } from '../utils/simulationEngine';
+import { trackEnvironmentObjects, TrackedObject, PerceptionScanResult } from '../utils/perceptionSystem';
 import { Play, RotateCcw, Activity, ShieldAlert, Crosshair, Maximize, Minimize, Bot, Power, Send, Construction, Pause, Users, Utensils, Cross } from 'lucide-react';
 import { DeliveryModal } from './DeliveryModal';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
@@ -1405,6 +1406,89 @@ const SciFiGate = ({ position, scale = 1, rotation = [0, 0, 0] }: { position: [n
        <Box args={[3.2, 0.1, 0.1]} position={[0, 2.9, 0]}>
          <meshStandardMaterial color="#0ea5e9" emissive="#0ea5e9" emissiveIntensity={2} />
        </Box>
+    </group>
+  );
+};
+
+export const PerceptionWorldVisualizer = ({
+  robotPosRef,
+  trackedObjects = [],
+}: {
+  robotPosRef: React.MutableRefObject<THREE.Vector3 | null>;
+  trackedObjects: TrackedObject[];
+}) => {
+  const sweepRef = useRef<THREE.Mesh>(null);
+  const ringRef = useRef<THREE.Group>(null);
+
+  useFrame((_state, delta) => {
+    if (ringRef.current && robotPosRef.current) {
+      ringRef.current.position.set(robotPosRef.current.x, 0.04, robotPosRef.current.z);
+    }
+    if (sweepRef.current) {
+      sweepRef.current.rotation.y += delta * 2.0;
+    }
+  });
+
+  const validTracked = trackedObjects.filter(
+    o => o.distance < 14.0 && o.classification !== 'Road boundary or non-drivable area'
+  );
+
+  return (
+    <group>
+      {/* 360° LiDAR Sensor Pulse Field around Robot */}
+      <group ref={ringRef} position={[0, 0.04, 0]}>
+        <mesh rotation={[-Math.PI / 2, 0, 0]}>
+          <ringGeometry args={[9.9, 10.0, 48]} />
+          <meshBasicMaterial color="#06b6d4" transparent opacity={0.35} side={THREE.DoubleSide} />
+        </mesh>
+        <mesh rotation={[-Math.PI / 2, 0, 0]}>
+          <ringGeometry args={[4.95, 5.05, 36]} />
+          <meshBasicMaterial color="#0891b2" transparent opacity={0.25} side={THREE.DoubleSide} />
+        </mesh>
+        <mesh ref={sweepRef} rotation={[-Math.PI / 2, 0, 0]}>
+          <ringGeometry args={[0.2, 9.9, 32, 1, 0, Math.PI / 4]} />
+          <meshBasicMaterial color="#22d3ee" transparent opacity={0.12} side={THREE.DoubleSide} />
+        </mesh>
+      </group>
+
+      {/* 3D Detection Overlays for Tracked Objects */}
+      {validTracked.map(obj => {
+        const isCar = obj.classification === 'Moving obstacle / vehicle';
+        const isPed = obj.classification === 'Pedestrian';
+        const isBarricade = obj.classification === 'Road barricade';
+        const icon = isBarricade ? '🚧' : isCar ? '🚗' : isPed ? '🚶' : '📦';
+        const badgeLabel = `${icon} [${obj.classification.toUpperCase()}] ${obj.speed > 0.1 ? `${obj.speed.toFixed(1)}m/s • ` : ''}${obj.distance.toFixed(1)}m`;
+
+        return (
+          <group key={obj.id} position={[obj.position.x, obj.position.y, obj.position.z]}>
+            {/* Ground Clearance Buffer Ring */}
+            <mesh position={[0, 0.03, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+              <ringGeometry args={[Math.max(0.1, obj.safetyBuffer - 0.05), obj.safetyBuffer + 0.03, 24]} />
+              <meshBasicMaterial 
+                color={obj.collisionRisk === 'CRITICAL' || obj.collisionRisk === 'HIGH' ? '#ef4444' : isBarricade ? '#f59e0b' : '#06b6d4'} 
+                transparent 
+                opacity={0.55} 
+                side={THREE.DoubleSide} 
+              />
+            </mesh>
+
+            {/* 3D Tracking Label */}
+            <Html position={[0, (obj.size.height || 0.8) + 0.35, 0]} center style={{ pointerEvents: 'none' }}>
+              <div className={`px-2.5 py-0.5 rounded-full text-[9px] font-mono font-black tracking-wider uppercase backdrop-blur-md whitespace-nowrap shadow-lg border transition-all duration-200 ${
+                isBarricade
+                  ? 'bg-amber-950/90 text-amber-200 border-amber-500/60 shadow-[0_0_12px_rgba(245,158,11,0.5)]'
+                  : isCar
+                  ? 'bg-cyan-950/90 text-cyan-200 border-cyan-400/60 shadow-[0_0_12px_rgba(6,182,212,0.5)]'
+                  : isPed
+                  ? 'bg-emerald-950/90 text-emerald-200 border-emerald-400/60 shadow-[0_0_12px_rgba(16,185,129,0.5)]'
+                  : 'bg-slate-900/90 text-slate-200 border-slate-400/50 shadow-[0_0_10px_rgba(148,163,184,0.4)]'
+              }`}>
+                <span>{badgeLabel}</span>
+              </div>
+            </Html>
+          </group>
+        );
+      })}
     </group>
   );
 };
