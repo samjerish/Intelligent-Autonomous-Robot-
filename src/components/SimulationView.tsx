@@ -1410,8 +1410,6 @@ const SciFiGate = ({ position, scale = 1, rotation = [0, 0, 0] }: { position: [n
   );
 };
 
-export const PerceptionWorldVisualizer = () => null;
-
 export type RobotLiveStatus = 'IDLE' | 'MOVING' | 'DIVERSION' | 'ROAD BARRICADE DETECTED';
 
 export const DetailedRobot = ({ 
@@ -3496,13 +3494,6 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
   const [userBlockers, setUserBlockers] = useState<GridPoint[]>([]);
   const [crowds, setCrowds] = useState<GridPoint[]>([]);
   const [isFollowingAlternateRoute, setIsFollowingAlternateRoute] = useState(false);
-  const [perceptionScanResult, setPerceptionScanResult] = useState<PerceptionScanResult | null>(null);
-  const [trackedObjects, setTrackedObjects] = useState<TrackedObject[]>([]);
-
-  const handlePerceptionUpdate = useCallback((res: PerceptionScanResult) => {
-    setPerceptionScanResult(res);
-    setTrackedObjects(res.trackedObjects);
-  }, []);
 
   const allStaticObstacles = useMemo(() => {
     return [...(mapData?.obstacles || []), ...userBlockers];
@@ -5170,15 +5161,8 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
               isPausedAtDestination={isPausedAtDestination}
               isFollowingAlternateRoute={isFollowingAlternateRoute}
               userBlockers={userBlockers}
-              onPerceptionUpdate={handlePerceptionUpdate}
             />
           )}
-
-          {/* 3D LiDAR Scanner Sweep & Object Tracking Visualizer */}
-          <PerceptionWorldVisualizer 
-            robotPosRef={robotPosRef} 
-            trackedObjects={trackedObjects} 
-          />
         </Canvas>
       </div>
 
