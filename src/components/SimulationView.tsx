@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState, useMemo, useCallback } from 'react'
 import type { MapData, GridPoint, Room } from '../types';
 import { calculatePath, calculateLongPath } from '../utils/simulationEngine';
 import { trackEnvironmentObjects, assessPreMovementEnvironment, type PerceptionScanResult } from '../utils/perceptionSystem';
-import { Play, RotateCcw, Activity, ShieldAlert, Crosshair, Maximize, Minimize, Bot, Power, Send, Construction, Pause, Users, Utensils, Cross } from 'lucide-react';
+import { Play, RotateCcw, Activity, ShieldAlert, Crosshair, Maximize, Minimize, Bot, Power, Send, Construction, Users, Utensils, Cross } from 'lucide-react';
 import { DeliveryModal } from './DeliveryModal';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import {
@@ -4005,20 +4005,17 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
     return () => clearInterval(interval);
   }, [isPlaying, mapData]);
 
-  const prevIsIdleMode = useRef(isIdleMode);
-
   // Autonomous Repeating Patrol Loop Heartbeat
   useEffect(() => {
     let timeout: any;
-    if (!isIdleMode && (robotState === 'idle' || robotState === 'patrol') && !isPlaying && isOn && patrolCountdown === null) {
+    if ((robotState === 'idle' || robotState === 'patrol') && !isPlaying && isOn && patrolCountdown === null) {
       timeout = setTimeout(() => {
         if (!mapData || !mapData.rooms) return;
         dispatchPatrolCheckpoint(patrolIndexRef.current);
       }, 300);
     }
-    prevIsIdleMode.current = isIdleMode;
     return () => clearTimeout(timeout);
-  }, [robotState, isPlaying, isOn, isIdleMode, patrolCountdown, mapData]);
+  }, [robotState, isPlaying, isOn, patrolCountdown, mapData]);
 
   const initializeDynamicObstacles = (routePath?: GridPoint[]) => {
     if (!mapData || !mapData.roads || mapData.roads.length < 5) return;
@@ -4690,21 +4687,11 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
 
   const startSimulation = () => { 
     if (mapData && path.length > 0) {
-      setRobotState(prev => {
-         if (prev === 'emergency_response') return prev;
-         return (prev === 'idle') ? 'patrol' : prev; // default to patrol instead of mission
-      });
-      
-      // Hide the popup if we are starting a movement during an emergency
-      setRobotState(prev => {
-         if (prev === 'emergency_response') {
-           window.dispatchEvent(new CustomEvent('local_emergency_request', { detail: null }));
-         }
-         return prev;
-      });
-      
+      setRobotState('patrol');
       setIsPlaying(true);
-      addExplanation('Executing mission. Moving along planned road route.');
+      addExplanation('Executing autonomous patrol. Moving along planned road route.');
+    } else if (mapData) {
+      dispatchPatrolCheckpoint(patrolIndexRef.current);
     }
   };
 
@@ -4814,8 +4801,8 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
               setIsPlaying(true);
               addExplanation('🚀 Resuming navigation along designated route.');
             } else {
-              addExplanation('Route calculation failed: path obstructed.');
-              setRobotState('idle');
+              addExplanation('Route calculation obstructed. Proceeding to next open patrol checkpoint.');
+              dispatchPatrolCheckpoint((patrolIndexRef.current + 1) % PATROL_CHECKPOINTS.length);
             }
           }
         }, 100);
@@ -4844,15 +4831,10 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
             patrolTimerRef.current = null;
             setPatrolCountdown(null);
 
-            if (isIdleMode) {
-              setRobotState('idle');
-              addExplanation('Idle mode active. Holding position.');
-            } else {
-              // Advance smoothly to next checkpoint in repeating loop
-              const nextIdx = (patrolIndexRef.current + 1) % PATROL_CHECKPOINTS.length;
-              addExplanation('⏱️ Inspection pause complete. Returning to MOVING state and continuing autonomous patrol.');
-              dispatchPatrolCheckpoint(nextIdx);
-            }
+            // Advance smoothly to next checkpoint in continuous repeating loop
+            const nextIdx = (patrolIndexRef.current + 1) % PATROL_CHECKPOINTS.length;
+            addExplanation('⏱️ Inspection pause complete. Returning to MOVING state and continuing autonomous patrol.');
+            dispatchPatrolCheckpoint(nextIdx);
           }
         }, 100);
       }
@@ -5294,43 +5276,13 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
                 <div className="flex items-center justify-between">
                   <h4 className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Mission Telemetry</h4>
                   <div className="flex gap-2">
-                    <button
-                      onClick={() => {
-                        const nextIdle = !isIdleMode;
-                        setIsIdleMode(nextIdle);
-                        if (nextIdle) {
-                          if (mapData && mapData.rooms && mapData.rooms.length > 0) {
-                            let nearestRoom = mapData.rooms[0];
-                            let minDist = Infinity;
-                            const currentLoc = path.length > 0 && currentPosIndex < path.length ? path[currentPosIndex] : mapData.start;
-                            mapData.rooms.forEach(r => {
-                                const dist = Math.abs(r.door.x - currentLoc.x) + Math.abs(r.door.y - currentLoc.y);
-                                if (dist < minDist) { minDist = dist; nearestRoom = r; }
-                            });
-                            const allObstacles = [...(mapData.obstacles || []), ...userBlockers];
-                            const parkPath = calculatePath(currentLoc, nearestRoom.door || nearestRoom.start, allObstacles, mapData);
-                            if (parkPath.length > 0) {
-                               setPath(parkPath);
-                               setCurrentPosIndex(0);
-                               setIsPlaying(true);
-                               setRobotState('idle'); 
-                               addExplanation(`Idle mode activated. Parking safely at ${nearestRoom.name}.`);
-                            } else {
-                               setIsPlaying(false);
-                               setRobotState('idle');
-                               addExplanation("Idle mode activated. Halting immediately.");
-                            }
-                          }
-                        } else {
-                          setRobotState('patrol');
-                          addExplanation("Idle mode deactivated. Resuming patrol.");
-                        }
-                      }}
-                      className={`px-3 py-1.5 rounded-lg text-[10px] font-bold flex items-center gap-1.5 transition-colors border ${isIdleMode ? 'bg-gray-500/20 text-white border-gray-500/50' : 'bg-transparent text-gray-500 border-white/10 hover:bg-white/5'}`}
-                      title="Toggle Idle Mode"
+                    <div 
+                      className="px-3 py-1.5 rounded-lg text-[10px] font-mono font-bold flex items-center gap-1.5 border border-cyan-500/40 bg-cyan-500/10 text-cyan-300 shadow-[0_0_12px_rgba(6,182,212,0.25)] select-none"
+                      title="Autonomous Patrol Mode Active"
                     >
-                      <Pause className="w-3.5 h-3.5" /> IDLE
-                    </button>
+                      <span className="w-2 h-2 rounded-full bg-cyan-400 animate-pulse"></span>
+                      AUTONOMOUS PATROL
+                    </div>
                     <button 
                       onClick={togglePower}
                       className={`px-3 py-1.5 rounded-lg text-[10px] font-bold transition-colors border ${isOn ? 'bg-red-500/10 text-red-400 border-red-500/30 hover:bg-red-500/20' : 'bg-green-500/10 text-green-400 border-green-500/30 hover:bg-green-500/20'}`}
@@ -5355,12 +5307,9 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
                     <span className={`text-sm font-black uppercase tracking-wider truncate ${
                       patrolCountdown !== null ? 'text-emerald-400 animate-pulse' :
                       robotState === 'charging' ? 'text-yellow-400' : 
-                      robotState === 'patrol' ? 'text-blue-400' : 
-                      robotState === 'mission' ? 'text-green-400' : 
-                      robotState === 'emergency_response' ? 'text-red-500 animate-pulse' : 
-                      'text-gray-300'
+                      'text-cyan-400'
                     }`}>
-                      {patrolCountdown !== null ? `IDLE (${patrolCountdown.toFixed(1)}s)` : robotState.replace('_', ' ')}
+                      {patrolCountdown !== null ? `IDLE (${patrolCountdown.toFixed(1)}s)` : 'AUTONOMOUS PATROL'}
                     </span>
                   </div>
                   <div className="bg-white/5 border border-white/10 rounded-xl p-3 shadow-inner">
