@@ -178,14 +178,14 @@ const MovingEntity = ({ obstacle, gridSize, isMapView, robotPosRef, allObstacles
     
     // Lane offset:
     // Cars drive on the right side of the lane (+0.35)
-    // Road-walking people walk down the roadway (-0.22 or +0.22)
+    // Road-walking people walk down the roadway (-0.25 or +0.25)
     // Shoulder-walking people walk on the sidewalk (+0.55)
-    const baseOffset = isCar ? 0.35 : (isRoadWalker ? (carIndex % 2 === 0 ? -0.22 : 0.22) : 0.55);
+    const baseOffset = isCar ? 0.35 : (isRoadWalker ? (carIndex % 2 === 0 ? -0.25 : 0.25) : 0.55);
     let yieldTarget = baseOffset;
     let isYielding = false;
-    let isTooCloseToRobot = false;
+    let speedFactor = 1.0;
 
-    // Smooth obstacle avoidance & mutual collision safety bubble with robot
+    // Smooth obstacle avoidance & mutual yielding with robot (obstacles stay on full continuous movement)
     if (robotPosRef && robotPosRef.current) {
       const distToRobot = currentPos.distanceTo(robotPosRef.current);
       const toRobotX = robotPosRef.current.x - currentPos.x;
@@ -193,51 +193,59 @@ const MovingEntity = ({ obstacle, gridSize, isMapView, robotPosRef, allObstacles
       const fwdToRobot = toRobotX * dirX + toRobotZ * dirZ;
       const latToRobot = Math.abs(toRobotX * latX + toRobotZ * latZ);
 
-      // Strict safety buffer: stop if robot is ahead within 3.2m or proximity < 2.2m
-      if ((fwdToRobot > -0.4 && fwdToRobot < 3.2 && latToRobot < 1.1) || distToRobot < 2.2) {
-        isTooCloseToRobot = true;
-      }
-      if (distToRobot < 5.2 && fwdToRobot > -0.8) {
+      // Yield towards lane edge / sidewalk when robot is in vicinity
+      if (distToRobot < 6.0 && fwdToRobot > -1.0) {
         isYielding = true;
-        yieldTarget = baseOffset >= 0 ? 0.60 : -0.60;
+        yieldTarget = baseOffset >= 0 ? 0.62 : -0.62;
+        // Maintain smooth continuous motion; gently pace speed without dead freezes
+        if (fwdToRobot > 0 && fwdToRobot < 2.5 && latToRobot < 0.9) {
+          speedFactor = Math.min(speedFactor, 0.78);
+        }
       }
     }
     
-    // Smoothly shift laterally to lane / shoulder position
-    yieldOffsetRef.current = THREE.MathUtils.lerp(yieldOffsetRef.current, yieldTarget, delta * 7);
-    
-    // Taillight alert intensity when yielding
-    if (taillightMatRef.current) {
-      taillightMatRef.current.emissiveIntensity = isYielding ? 2.5 : 1.2;
-    }
-
-    // Vehicle-to-vehicle & vehicle-to-pedestrian collision avoidance (NO PILEUPS!)
-    let isBlockedByTrafficAhead = false;
+    // Vehicle-to-vehicle & vehicle-to-pedestrian collision avoidance (Smooth traffic flow, NO dead freezes)
     if (allObstaclesRef && allObstaclesRef.current) {
       for (const other of allObstaclesRef.current) {
         if (other.id === obstacle.id) continue;
         const otherPos = other.pos3D;
         if (!otherPos) continue;
         const distToOther = currentPos.distanceTo(otherPos);
-        if (distToOther < 3.2) {
+        if (distToOther < 4.0) {
           const toOtherX = otherPos.x - currentPos.x;
           const toOtherZ = otherPos.z - currentPos.z;
           const fwd = toOtherX * dirX + toOtherZ * dirZ;
           const lat = Math.abs(toOtherX * latX + toOtherZ * latZ);
-          // If another entity is ahead in our path (within 2.6m and lateral < 0.95m)
-          if (fwd > 0.05 && fwd < 2.6 && lat < 0.95) {
-            isBlockedByTrafficAhead = true;
-            break;
+          
+          // If another entity is ahead in the same corridor
+          if (fwd > 0.1 && fwd < 3.0 && lat < 0.90) {
+            // Smoothly adapt speed to keep traffic continuously flowing
+            const adapted = THREE.MathUtils.clamp(fwd / 2.8, 0.68, 0.95);
+            speedFactor = Math.min(speedFactor, adapted);
+            // Nudge laterally towards shoulder to clear passing space
+            if (fwd < 2.0) {
+              isYielding = true;
+              yieldTarget = baseOffset >= 0 ? 0.65 : -0.65;
+            }
           }
         }
       }
     }
 
-    const isStopped = isTooCloseToRobot || isBlockedByTrafficAhead;
+    // Smoothly shift laterally to lane / shoulder position
+    yieldOffsetRef.current = THREE.MathUtils.lerp(yieldOffsetRef.current, yieldTarget, delta * 4.5);
+    
+    // Taillight alert intensity when yielding
+    if (taillightMatRef.current) {
+      taillightMatRef.current.emissiveIntensity = isYielding ? 2.2 : 1.0;
+    }
+
+    // Full continuous movement speed
+    const currentSpeed = obstacle.speed * speedFactor;
 
     // Walking animation for pedestrians
     if (!isCar) {
-      const walkSpeed = (isStopped ? 0 : obstacle.speed) * 3.2;
+      const walkSpeed = currentSpeed * 3.2;
       const legAngle = Math.sin(t * walkSpeed) * 0.45;
       const armAngle = Math.sin(t * walkSpeed) * -0.4;
       if (leftLegRef.current) leftLegRef.current.rotation.x = legAngle;
@@ -246,7 +254,7 @@ const MovingEntity = ({ obstacle, gridSize, isMapView, robotPosRef, allObstacles
       if (rightArmRef.current) rightArmRef.current.rotation.x = -armAngle;
     } else {
       // Wheel spin animation for cars
-      const wheelSpin = delta * (isStopped ? 0 : obstacle.speed) * 3.5;
+      const wheelSpin = delta * currentSpeed * 3.5;
       if (wheel1Ref.current) wheel1Ref.current.rotation.x += wheelSpin;
       if (wheel2Ref.current) wheel2Ref.current.rotation.x += wheelSpin;
       if (wheel3Ref.current) wheel3Ref.current.rotation.x += wheelSpin;
@@ -261,19 +269,16 @@ const MovingEntity = ({ obstacle, gridSize, isMapView, robotPosRef, allObstacles
     );
     
     const dist = currentPos.distanceTo(targetVector);
-    if (dist < 0.15) {
+    if (dist < 0.20) {
       if (obstacle.currentIndex < obstacle.path.length - 1) {
         obstacle.currentIndex++;
       } else {
+        // Continuous looping: reverse waypoints and continue smoothly
         obstacle.path.reverse();
-        obstacle.currentIndex = 0;
+        obstacle.currentIndex = 1;
       }
       obstacle.pos = obstacle.path[obstacle.currentIndex];
     } else {
-      let currentSpeed = isYielding ? obstacle.speed * 0.85 : obstacle.speed;
-      if (isStopped) {
-        currentSpeed = 0; // Hold position completely until road clears: never push into traffic or robot
-      }
       // Set real-time velocity vector for predictive dynamic obstacle modeling
       obstacle.velocity = new THREE.Vector3(dirX * currentSpeed, 0, dirZ * currentSpeed);
       const moveDist = currentSpeed * delta;
@@ -285,12 +290,12 @@ const MovingEntity = ({ obstacle, gridSize, isMapView, robotPosRef, allObstacles
         currentPos.add(direction.multiplyScalar(moveDist));
       }
       const rotDirection = new THREE.Vector3().subVectors(targetVector, currentPos);
-      if (rotDirection.lengthSq() > 0.001 && !isTooCloseToRobot) {
+      if (rotDirection.lengthSq() > 0.001) {
         const targetRotation = Math.atan2(rotDirection.x, rotDirection.z);
         let diff = targetRotation - ref.current.rotation.y;
         while (diff < -Math.PI) diff += Math.PI * 2;
         while (diff > Math.PI) diff -= Math.PI * 2;
-        ref.current.rotation.y += diff * delta * 10;
+        ref.current.rotation.y += diff * Math.min(1.0, delta * 7.0);
       }
     }
   });
@@ -1510,6 +1515,7 @@ const Robot = ({
   const reverseTargetSRef = useRef(0);
   const yieldWaitTimerRef = useRef(0);
   const conflictingObsIdRef = useRef<string | null>(null);
+  const lastReverseEndTimeRef = useRef(0);
 
   const isCourteousStandoffRef = useRef(false);
   const courteousClearTimerRef = useRef(0);
