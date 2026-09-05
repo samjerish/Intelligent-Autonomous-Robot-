@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState, useMemo, useCallback } from 'react'
 import type { MapData, GridPoint, Room } from '../types';
 import { calculatePath, calculateLongPath } from '../utils/simulationEngine';
 import { trackEnvironmentObjects, TrackedObject, PerceptionScanResult } from '../utils/perceptionSystem';
-import { Play, RotateCcw, Activity, ShieldAlert, Crosshair, Maximize, Minimize, Bot, Power, Send, Construction, Pause, Users, Utensils, Cross } from 'lucide-react';
+import { Play, RotateCcw, Activity, ShieldAlert, Crosshair, Maximize, Minimize, Bot, Power, Send, Construction, Pause, Users, Utensils, Cross, Radar, Scan } from 'lucide-react';
 import { DeliveryModal } from './DeliveryModal';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import {
@@ -1472,6 +1472,18 @@ export const PerceptionWorldVisualizer = ({
               />
             </mesh>
 
+            {/* 3D Predicted Future Trajectory Waypoints (t = 0.5s to 3.5s horizon) */}
+            {obj.speed > 0.08 && obj.predictedFuturePath && obj.predictedFuturePath.map((fPt, ptIdx) => (
+              <mesh key={ptIdx} position={[fPt.x - obj.position.x, 0.04, fPt.z - obj.position.z]}>
+                <sphereGeometry args={[0.07, 8, 8]} />
+                <meshBasicMaterial 
+                  color={isCar ? '#22d3ee' : '#34d399'} 
+                  transparent 
+                  opacity={Math.max(0.15, 0.75 - ptIdx * 0.1)} 
+                />
+              </mesh>
+            ))}
+
             {/* 3D Tracking Label */}
             <Html position={[0, (obj.size.height || 0.8) + 0.35, 0]} center style={{ pointerEvents: 'none' }}>
               <div className={`px-2.5 py-0.5 rounded-full text-[9px] font-mono font-black tracking-wider uppercase backdrop-blur-md whitespace-nowrap shadow-lg border transition-all duration-200 ${
@@ -1818,6 +1830,8 @@ const Robot = ({
   mapData,
   isPausedAtDestination = false,
   isFollowingAlternateRoute: _isFollowingAlternateRoute = false,
+  userBlockers = [],
+  onPerceptionUpdate,
 }: {
   path: GridPoint[];
   currentIndex: number;
@@ -1842,8 +1856,11 @@ const Robot = ({
   mapData?: MapData | null;
   isPausedAtDestination?: boolean;
   isFollowingAlternateRoute?: boolean;
+  userBlockers?: GridPoint[];
+  onPerceptionUpdate?: (res: PerceptionScanResult) => void;
 }) => {
   const ref = useRef<THREE.Group>(null);
+  const lastPerceptionEmitRef = useRef(0);
   const isMovingRef = useRef(false);
   const [isMoving, setIsMoving] = useState(false);
   const [isSlowCaution, setIsSlowCaution] = useState(false);
@@ -1965,6 +1982,41 @@ const Robot = ({
     const currentPos = ref.current.position;
     robotPosRef.current = currentPos.clone();
     robotRotRef.current = ref.current.rotation.y;
+
+    // Continuous 360° Real-Time Object Detection & Forward Corridor Tracking
+    const currentHeading = curve && totalLength > 0.01 
+      ? curve.getTangentAt(Math.min(1.0, Math.max(0.0, distanceTraveledRef.current / totalLength))).normalize()
+      : new THREE.Vector3(Math.sin(ref.current.rotation.y), 0, Math.cos(ref.current.rotation.y));
+
+    const actualStatic = staticObstacles.filter(
+      so => !userBlockers.some(ub => ub.x === so.x && ub.y === so.y)
+    );
+
+    const perceptionResult = trackEnvironmentObjects(
+      currentPos,
+      currentHeading,
+      actualSpeedRef.current,
+      curve,
+      totalLength,
+      distanceTraveledRef.current,
+      dynamicObstaclesRef.current || [],
+      actualStatic,
+      userBlockers,
+      mapData || null,
+      getGridPosition,
+      isPointOnDrivableRoad,
+      gridSize,
+      isMapView,
+      16.0
+    );
+
+    const now = performance.now();
+    if (now - lastPerceptionEmitRef.current > 120) {
+      lastPerceptionEmitRef.current = now;
+      if (onPerceptionUpdate) {
+        onPerceptionUpdate(perceptionResult);
+      }
+    }
 
     if (pauseTimeRef.current > 0) {
       pauseTimeRef.current -= delta;
