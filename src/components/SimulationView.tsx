@@ -2055,6 +2055,9 @@ const Robot = ({
         isDynamic: boolean;
         type: 'car' | 'person' | 'static';
         pos3D: THREE.Vector3;
+        radius: number; // Hull collision radius
+        vel3D: THREE.Vector3;
+        heading: THREE.Vector3;
         distToRobot: number;
         sObstacle: number;
         longitudinalDelta: number; // sObstacle - s
@@ -2072,7 +2075,7 @@ const Robot = ({
       const scannedObstacles: ScannedObs[] = [];
       let closestObsDist = 999;
 
-      // A. Dynamic Obstacles
+      // A. Dynamic Obstacles (Vehicles and Pedestrians)
       if (dynamicObstaclesRef && dynamicObstaclesRef.current && dynamicObstaclesRef.current.length > 0) {
         for (const obs of dynamicObstaclesRef.current) {
           const obsPos3D = obs.pos3D || (() => {
@@ -2081,12 +2084,13 @@ const Robot = ({
           })();
           const distToRobot = currentPos.distanceTo(obsPos3D);
 
-          if (distToRobot < 14.0) {
+          if (distToRobot < 15.0) {
             if (distToRobot < closestObsDist) closestObsDist = distToRobot;
 
             const obsVel = obs.velocity || new THREE.Vector3(0, 0, 0);
             const obsSpeed = obsVel.length();
             const isMoving = obsSpeed > 0.08 || (obs.type === 'person' && obs.isMoving);
+            const obsRadius = obs.type === 'car' ? 0.45 : 0.32;
 
             // Predictive trajectory and CPA projection across horizon (t = 0.15s to 4.5s)
             // Projects robot's actual position along active lane + diversion offset
@@ -2112,13 +2116,13 @@ const Robot = ({
 
             // Estimate projection onto spline
             const lookStart = Math.max(0, s - 1.5);
-            const lookEnd = Math.min(totalLength, s + 15.0);
+            const lookEnd = Math.min(totalLength, s + 16.0);
             let bestDistSq = 9999;
             let sObstacle = sAtCpa;
             let curvePtAtObs = nominalPos;
             let tangentAtObs = nominalTangent;
 
-            for (let testS = lookStart; testS <= lookEnd; testS += 0.3) {
+            for (let testS = lookStart; testS <= lookEnd; testS += 0.25) {
               const testU = testS / totalLength;
               const testPt = curve.getPointAt(testU);
               const dSq = testPt.distanceToSquared(obsPos3D);
@@ -2138,13 +2142,17 @@ const Robot = ({
 
             const relForwardVel = obsVel.dot(tangentAtObs);
             const relLateralVel = obsVel.dot(normAtObs);
-            const isCrossingTraffic = Math.abs(relLateralVel) > 0.12 && minCpaDist < 2.2 && timeAtCpa <= 4.0;
+            const isCrossingTraffic = Math.abs(relLateralVel) > 0.10 && minCpaDist < 2.4 && timeAtCpa <= 4.0;
+            const obsHeading = obsSpeed > 0.05 ? obsVel.clone().normalize() : tangentAtObs.clone().normalize();
 
             scannedObstacles.push({
               id: obs.id,
               isDynamic: true,
               type: obs.type,
               pos3D: obsPos3D,
+              radius: obsRadius,
+              vel3D: obsVel.clone(),
+              heading: obsHeading,
               distToRobot,
               sObstacle,
               longitudinalDelta,
@@ -2162,7 +2170,7 @@ const Robot = ({
         }
       }
 
-      // B. Static Obstacles (Blockers / Barriers)
+      // B. Static Obstacles (Blockers, Barriers, and Map Obstacles)
       if (staticObstacles && staticObstacles.length > 0) {
         for (let idx = 0; idx < staticObstacles.length; idx++) {
           const blocker = staticObstacles[idx];
@@ -2170,7 +2178,7 @@ const Robot = ({
           const bPos = new THREE.Vector3(bx, currentPos.y, bz);
           const distToRobot = currentPos.distanceTo(bPos);
 
-          if (distToRobot < 14.0) {
+          if (distToRobot < 15.0) {
             if (distToRobot < closestObsDist) closestObsDist = distToRobot;
 
             let bestDistSq = 9999;
@@ -2179,8 +2187,8 @@ const Robot = ({
             let tangentAtObs = nominalTangent;
 
             const lookStart = Math.max(0, s - 1.5);
-            const lookEnd = Math.min(totalLength, s + 15.0);
-            for (let testS = lookStart; testS <= lookEnd; testS += 0.3) {
+            const lookEnd = Math.min(totalLength, s + 16.0);
+            for (let testS = lookStart; testS <= lookEnd; testS += 0.25) {
               const testU = testS / totalLength;
               const testPt = curve.getPointAt(testU);
               const dSq = testPt.distanceToSquared(bPos);
@@ -2197,12 +2205,16 @@ const Robot = ({
             const toObs = new THREE.Vector3().subVectors(bPos, curvePtAtObs);
             const sideDot = toObs.dot(normAtObs);
             const longitudinalDelta = sObstacle - s;
+            const obsHeading = tangentAtObs.clone().normalize();
 
             scannedObstacles.push({
               id: `static-${blocker.x}-${blocker.y}-${idx}`,
               isDynamic: false,
               type: 'static',
               pos3D: bPos,
+              radius: 0.50, // Physical static obstacle radius
+              vel3D: new THREE.Vector3(0, 0, 0),
+              heading: obsHeading,
               distToRobot,
               sObstacle,
               longitudinalDelta,
