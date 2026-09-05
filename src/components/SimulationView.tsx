@@ -1410,100 +1410,7 @@ const SciFiGate = ({ position, scale = 1, rotation = [0, 0, 0] }: { position: [n
   );
 };
 
-export const PerceptionWorldVisualizer = ({
-  robotPosRef,
-  trackedObjects = [],
-}: {
-  robotPosRef: React.MutableRefObject<THREE.Vector3 | null>;
-  trackedObjects: TrackedObject[];
-}) => {
-  const sweepRef = useRef<THREE.Mesh>(null);
-  const ringRef = useRef<THREE.Group>(null);
-
-  useFrame((_state, delta) => {
-    if (ringRef.current && robotPosRef.current) {
-      ringRef.current.position.set(robotPosRef.current.x, 0.04, robotPosRef.current.z);
-    }
-    if (sweepRef.current) {
-      sweepRef.current.rotation.y += delta * 2.0;
-    }
-  });
-
-  const validTracked = trackedObjects.filter(
-    o => o.distance < 14.0 && o.classification !== 'Road boundary or non-drivable area'
-  );
-
-  return (
-    <group>
-      {/* 360° LiDAR Sensor Pulse Field around Robot */}
-      <group ref={ringRef} position={[0, 0.04, 0]}>
-        <mesh rotation={[-Math.PI / 2, 0, 0]}>
-          <ringGeometry args={[9.9, 10.0, 48]} />
-          <meshBasicMaterial color="#06b6d4" transparent opacity={0.35} side={THREE.DoubleSide} />
-        </mesh>
-        <mesh rotation={[-Math.PI / 2, 0, 0]}>
-          <ringGeometry args={[4.95, 5.05, 36]} />
-          <meshBasicMaterial color="#0891b2" transparent opacity={0.25} side={THREE.DoubleSide} />
-        </mesh>
-        <mesh ref={sweepRef} rotation={[-Math.PI / 2, 0, 0]}>
-          <ringGeometry args={[0.2, 9.9, 32, 1, 0, Math.PI / 4]} />
-          <meshBasicMaterial color="#22d3ee" transparent opacity={0.12} side={THREE.DoubleSide} />
-        </mesh>
-      </group>
-
-      {/* 3D Detection Overlays for Tracked Objects */}
-      {validTracked.map(obj => {
-        const isCar = obj.classification === 'Moving obstacle / vehicle';
-        const isPed = obj.classification === 'Pedestrian';
-        const isBarricade = obj.classification === 'Road barricade';
-        const icon = isBarricade ? '🚧' : isCar ? '🚗' : isPed ? '🚶' : '📦';
-        const badgeLabel = `${icon} [${obj.classification.toUpperCase()}] ${obj.speed > 0.1 ? `${obj.speed.toFixed(1)}m/s • ` : ''}${obj.distance.toFixed(1)}m`;
-
-        return (
-          <group key={obj.id} position={[obj.position.x, obj.position.y, obj.position.z]}>
-            {/* Ground Clearance Buffer Ring */}
-            <mesh position={[0, 0.03, 0]} rotation={[-Math.PI / 2, 0, 0]}>
-              <ringGeometry args={[Math.max(0.1, obj.safetyBuffer - 0.05), obj.safetyBuffer + 0.03, 24]} />
-              <meshBasicMaterial 
-                color={obj.collisionRisk === 'CRITICAL' || obj.collisionRisk === 'HIGH' ? '#ef4444' : isBarricade ? '#f59e0b' : '#06b6d4'} 
-                transparent 
-                opacity={0.55} 
-                side={THREE.DoubleSide} 
-              />
-            </mesh>
-
-            {/* 3D Predicted Future Trajectory Waypoints (t = 0.5s to 3.5s horizon) */}
-            {obj.speed > 0.08 && obj.predictedFuturePath && obj.predictedFuturePath.map((fPt, ptIdx) => (
-              <mesh key={ptIdx} position={[fPt.x - obj.position.x, 0.04, fPt.z - obj.position.z]}>
-                <sphereGeometry args={[0.07, 8, 8]} />
-                <meshBasicMaterial 
-                  color={isCar ? '#22d3ee' : '#34d399'} 
-                  transparent 
-                  opacity={Math.max(0.15, 0.75 - ptIdx * 0.1)} 
-                />
-              </mesh>
-            ))}
-
-            {/* 3D Tracking Label */}
-            <Html position={[0, (obj.size.height || 0.8) + 0.35, 0]} center style={{ pointerEvents: 'none' }}>
-              <div className={`px-2.5 py-0.5 rounded-full text-[9px] font-mono font-black tracking-wider uppercase backdrop-blur-md whitespace-nowrap shadow-lg border transition-all duration-200 ${
-                isBarricade
-                  ? 'bg-amber-950/90 text-amber-200 border-amber-500/60 shadow-[0_0_12px_rgba(245,158,11,0.5)]'
-                  : isCar
-                  ? 'bg-cyan-950/90 text-cyan-200 border-cyan-400/60 shadow-[0_0_12px_rgba(6,182,212,0.5)]'
-                  : isPed
-                  ? 'bg-emerald-950/90 text-emerald-200 border-emerald-400/60 shadow-[0_0_12px_rgba(16,185,129,0.5)]'
-                  : 'bg-slate-900/90 text-slate-200 border-slate-400/50 shadow-[0_0_10px_rgba(148,163,184,0.4)]'
-              }`}>
-                <span>{badgeLabel}</span>
-              </div>
-            </Html>
-          </group>
-        );
-      })}
-    </group>
-  );
-};
+export const PerceptionWorldVisualizer = () => null;
 
 export type RobotLiveStatus = 'IDLE' | 'MOVING' | 'DIVERSION' | 'ROAD BARRICADE DETECTED';
 
@@ -1807,12 +1714,22 @@ export const DetailedRobot = ({
             {liveStatus === 'IDLE' ? (
               <div className="flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-slate-900/90 border border-slate-400 text-slate-200 font-mono font-black text-[11px] tracking-wider uppercase shadow-[0_0_16px_rgba(148,163,184,0.5)] backdrop-blur-md whitespace-nowrap">
                 <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse"></span>
-                <span>⏳ IDLE</span>
+                <span>IDLE</span>
+              </div>
+            ) : liveStatus === 'DIVERSION' ? (
+              <div className="flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-orange-950/90 border border-orange-400 text-orange-200 font-mono font-black text-[11px] tracking-wider uppercase shadow-[0_0_20px_rgba(249,115,22,0.8)] backdrop-blur-md whitespace-nowrap">
+                <span className="w-2 h-2 rounded-full bg-orange-400 animate-pulse"></span>
+                <span>DIVERSION</span>
+              </div>
+            ) : liveStatus === 'ROAD BARRICADE DETECTED' ? (
+              <div className="flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-amber-950/90 border border-amber-400 text-amber-200 font-mono font-black text-[11px] tracking-wider uppercase shadow-[0_0_20px_rgba(245,158,11,0.8)] backdrop-blur-md whitespace-nowrap">
+                <span className="w-2 h-2 rounded-full bg-amber-400 animate-ping"></span>
+                <span>ROAD BARRICADE DETECTED</span>
               </div>
             ) : (
               <div className="flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-cyan-950/90 border border-cyan-400 text-cyan-200 font-mono font-black text-[11px] tracking-wider uppercase shadow-[0_0_20px_rgba(6,182,212,0.8)] backdrop-blur-md whitespace-nowrap">
                 <span className="w-2 h-2 rounded-full bg-cyan-400 animate-ping"></span>
-                <span>🔹 MOVING</span>
+                <span>MOVING</span>
               </div>
             )}
           </div>
@@ -3241,12 +3158,18 @@ const Robot = ({
     }
 
     // ── Live Autonomous Patrol Status Evaluation ──
-    // The robot must stay in the MOVING state while following its normal route,
-    // rerouting, or taking a safe diversion around obstacles.
-    // It may enter IDLE only when it has reached a designated patrol destination.
+    // Show an object-related status only when needed for the robot's current action:
+    // - IDLE: paused at patrol destination
+    // - DIVERSION: avoiding an obstacle along the diversion route
+    // - ROAD BARRICADE DETECTED: detected a barricade and rerouting
+    // - MOVING: normal driving along the patrol route
     let currentStatus: RobotLiveStatus;
     if (isPausedAtDestination) {
       currentStatus = 'IDLE';
+    } else if (isBarricadeBlocked || (barricadeInspectionRef.current && barricadeInspectionRef.current.stage === 'rerouting')) {
+      currentStatus = 'ROAD BARRICADE DETECTED';
+    } else if (isOvertaking || activeDiversionRef.current !== null) {
+      currentStatus = 'DIVERSION';
     } else {
       currentStatus = 'MOVING';
     }
