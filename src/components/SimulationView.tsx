@@ -1769,6 +1769,49 @@ const Robot = ({
       const nominalTangent = curve.getTangentAt(uCurrent).normalize();
 
       const cruiseSpeed = speed;
+      const ASSIGNED_LANE_OFFSET = 0.35; // Center of robot's assigned driving lane (right side of road)
+
+      // Analytical raised-cosine function to compute exact lateral offset relative to assigned lane (+0.35m)
+      // When no diversion is needed: returns ASSIGNED_LANE_OFFSET (+0.35m)
+      // When diverting: smooth raised-cosine arch out to targetPassingOffset, passes obstacle, and merges seamlessly back to ASSIGNED_LANE_OFFSET (+0.35m)
+      const getDrivableOffsetAt = (evalS: number): number => {
+        if (!activeDiversionRef.current) {
+          return ASSIGNED_LANE_OFFSET;
+        }
+
+        const div = activeDiversionRef.current;
+        const sStart = div.sStart;
+        const sObs = div.sObstacle;
+        const sEnd = div.diversionEndS;
+        const A = div.peakAmplitude;
+
+        let diversionDelta = 0;
+        if (evalS <= sStart) {
+          diversionDelta = 0;
+        } else if (evalS <= sObs) {
+          const span = Math.max(0.01, sObs - sStart);
+          const p = (evalS - sStart) / span;
+          diversionDelta = A * Math.sin((Math.PI / 2) * p) ** 2;
+        } else if (evalS < sEnd) {
+          const span = Math.max(0.01, sEnd - sObs);
+          const q = (evalS - sObs) / span;
+          diversionDelta = A * Math.cos((Math.PI / 2) * q) ** 2;
+        } else {
+          diversionDelta = 0;
+        }
+
+        // Smooth dampening near destination endpoint (< 2.0m from end)
+        const distFromEnd = totalLength - evalS;
+        if (distFromEnd < 2.0) {
+          diversionDelta *= Math.max(0.0, distFromEnd / 2.0);
+        }
+
+        // Offset is assigned lane center PLUS the smooth diversion delta
+        const finalOffset = ASSIGNED_LANE_OFFSET + diversionDelta;
+
+        // Strictly clamp within asphalt road boundaries (±1.15m)
+        return Math.max(-1.15, Math.min(1.15, finalOffset));
+      };
 
       // ── Step 1: Scan All Obstacles (Dynamic & Static) ──
       interface ScannedObs {
@@ -1810,13 +1853,19 @@ const Robot = ({
             const isMoving = obsSpeed > 0.08 || (obs.type === 'person' && obs.isMoving);
 
             // Predictive trajectory and CPA projection across horizon (t = 0.15s to 4.5s)
+            // Projects robot's actual position along active lane + diversion offset
             let minCpaDist = 999;
             let timeAtCpa = 1.0;
             let sAtCpa = s + 1.0;
             for (let tFuture = 0.15; tFuture <= 4.5; tFuture += 0.15) {
               const futureObsPos = obsPos3D.clone().add(obsVel.clone().multiplyScalar(tFuture));
               const projectedS = Math.min(totalLength, s + cruiseSpeed * tFuture);
-              const projectedRobotPos = curve.getPointAt(projectedS / totalLength);
+              const uProj = Math.min(1.0, Math.max(0.0, projectedS / totalLength));
+              const projBase = curve.getPointAt(uProj);
+              const projTangent = curve.getTangentAt(uProj).normalize();
+              const projNormal = new THREE.Vector3(projTangent.z, 0, -projTangent.x);
+              const projOffset = getDrivableOffsetAt(projectedS);
+              const projectedRobotPos = projBase.add(projNormal.multiplyScalar(projOffset));
               const cpaDist = projectedRobotPos.distanceTo(futureObsPos);
               if (cpaDist < minCpaDist) {
                 minCpaDist = cpaDist;
@@ -1936,7 +1985,7 @@ const Robot = ({
       }
 
       // ── Step 2: Active Free Space Assessment & Courteous Diversion Decision Engine ──
-      const ASSIGNED_LANE_OFFSET = 0.35; // Center of robot's assigned driving lane (right side of road)
+      // ASSIGNED_LANE_OFFSET is defined above (+0.35m)
 
       // Detect obstacles approaching directly in front of the robot in its assigned lane (ahead within 8.0m)
       // Assigned lane is centered around +0.35m; an obstacle directly blocks it if |o.sideDot - ASSIGNED_LANE_OFFSET| <= 0.65m
@@ -1970,10 +2019,10 @@ const Robot = ({
           // Check whether there is enough safe, clear space on the road to divert:
           const obsRadius = obs.type === 'car' ? 0.68 : (obs.type === 'static' ? 0.55 : 0.38);
           const robotRadius = 0.40;
-          const minSafetyBuffer = 0.45; // Strict clearance: at least 45cm between outer hulls (total >= 1.40m separation)
+          const minSafetyBuffer = 0.55; // Strict clearance: at least 55cm between outer hulls (total >= 1.60m separation)
           const requiredSeparation = obsRadius + robotRadius + minSafetyBuffer;
 
-          // Since obstacle is in the right lane (+0.35m), safe passing space is the left passing lane (-0.75m to -1.05m)
+          // Since obstacle is in the right lane (+0.35m), safe passing space is the left passing lane (-0.75m to -1.15m)
           const targetPassingOffset = Math.max(-1.15, Math.min(-0.75, obs.sideDot - requiredSeparation));
           const leftWithinRoad = targetPassingOffset >= -1.25;
 
@@ -2071,7 +2120,7 @@ const Robot = ({
       const now = Date.now();
       const reverseCooldownElapsed = now - lastReverseEndTimeRef.current > 3500;
 
-      // Emergency Fallback: Reverse ONLY if physical clearance is critically breached (< 0.40m)
+      // Emergency Fallback: Reverse ONLY if physical clearance is critically breached (< 0.50m)
       const robotRadius = 0.45;
       const robotHeading = new THREE.Vector3(
         Math.sin(ref.current.rotation.y),
@@ -2085,6 +2134,8 @@ const Robot = ({
       );
 
       let criticalDeadlockObs: ScannedObs | null = null;
+      let forwardCorridorSpeedCap = cruiseSpeed;
+
       for (const obs of scannedObstacles) {
         const obsRadius = obs.type === 'car' ? 0.65 : (obs.type === 'static' ? 0.55 : 0.38);
         const distCenter = currentPos.distanceTo(obs.pos3D);
@@ -2094,9 +2145,21 @@ const Robot = ({
         const fwdDist = toObs.dot(robotHeading);
         const latDist = Math.abs(toObs.dot(robotLateral));
 
-        if (fwdDist > 0.0 && fwdDist < 0.75 && latDist < 0.45 && edgeDist < 0.40) {
+        // Forward corridor speed envelope:
+        // If an obstacle is ahead in the robot's driving corridor (fwdDist > 0.05m, latDist < 0.95m):
+        if (fwdDist > 0.05 && fwdDist < 4.5 && latDist < 0.95) {
+          // If edge clearance drops below 1.60m, smoothly cap targetSpeed:
+          if (edgeDist < 1.60) {
+            const speedCap = THREE.MathUtils.clamp((edgeDist - 0.65) * 1.2, 0, cruiseSpeed);
+            if (speedCap < forwardCorridorSpeedCap) {
+              forwardCorridorSpeedCap = speedCap;
+            }
+          }
+        }
+
+        // Emergency reverse trigger: if clearance is critically breached (< 0.50m) in forward corridor
+        if (fwdDist > -0.15 && fwdDist < 1.4 && latDist < 0.90 && edgeDist < 0.50) {
           criticalDeadlockObs = obs;
-          break;
         }
       }
 
@@ -2139,65 +2202,36 @@ const Robot = ({
           conflictingObsIdRef.current = null;
           targetSpeed = cruiseSpeed;
         }
-      } else if (isOvertakingActive) {
-        // Continuous, smooth passing speed (95% cruise speed) along safe yellow diversion without stopping
-        targetSpeed = cruiseSpeed * 0.95;
-        const logTime = Date.now();
-        if (logTime - lastOvertakeLogTime.current > 4000 && addExplanation) {
-          lastOvertakeLogTime.current = logTime;
-          addExplanation('⚡ Genuinely necessary & safe: Taking yellow diversion around obstruction.');
+      } else {
+        if (isOvertakingActive) {
+          // Continuous, smooth passing speed (95% cruise speed) along safe yellow diversion without stopping
+          targetSpeed = cruiseSpeed * 0.95;
+          const logTime = Date.now();
+          if (logTime - lastOvertakeLogTime.current > 4000 && addExplanation) {
+            lastOvertakeLogTime.current = logTime;
+            addExplanation('⚡ Genuinely necessary & safe: Taking yellow diversion around obstruction.');
+          }
+        } else if (!shouldCourteousStandOff) {
+          // Normal patrol along the blue route
+          const distToEnd = totalLength - s;
+          if (distToEnd < 2.0) {
+            targetSpeed = THREE.MathUtils.lerp(0.35, cruiseSpeed, Math.max(0.1, distToEnd / 2.0));
+          } else {
+            targetSpeed = cruiseSpeed;
+          }
         }
-      } else if (!shouldCourteousStandOff) {
-        // Normal patrol along the blue route
-        const distToEnd = totalLength - s;
-        if (distToEnd < 2.0) {
-          targetSpeed = THREE.MathUtils.lerp(0.35, cruiseSpeed, Math.max(0.1, distToEnd / 2.0));
-        } else {
-          targetSpeed = cruiseSpeed;
+
+        // Apply strict forward corridor safety speed envelope
+        if (forwardCorridorSpeedCap < targetSpeed) {
+          targetSpeed = forwardCorridorSpeedCap;
+          if (forwardCorridorSpeedCap <= 0.05) {
+            shouldCourteousStandOff = true;
+            if (!currentStandoffLabel) {
+              currentStandoffLabel = 'SAFETY CLEARANCE • BUFFER MAINTAINED';
+            }
+          }
         }
       }
-
-      // Analytical raised-cosine function to compute exact lateral offset relative to assigned lane (+0.35m)
-      // When no diversion is needed: returns ASSIGNED_LANE_OFFSET (+0.35m)
-      // When diverting: smooth raised-cosine arch out to targetPassingOffset, passes obstacle, and merges seamlessly back to ASSIGNED_LANE_OFFSET (+0.35m)
-      const getDrivableOffsetAt = (evalS: number): number => {
-        if (!activeDiversionRef.current) {
-          return ASSIGNED_LANE_OFFSET;
-        }
-
-        const div = activeDiversionRef.current;
-        const sStart = div.sStart;
-        const sObs = div.sObstacle;
-        const sEnd = div.diversionEndS;
-        const A = div.peakAmplitude;
-
-        let diversionDelta = 0;
-        if (evalS <= sStart) {
-          diversionDelta = 0;
-        } else if (evalS <= sObs) {
-          const span = Math.max(0.01, sObs - sStart);
-          const p = (evalS - sStart) / span;
-          diversionDelta = A * Math.sin((Math.PI / 2) * p) ** 2;
-        } else if (evalS < sEnd) {
-          const span = Math.max(0.01, sEnd - sObs);
-          const q = (evalS - sObs) / span;
-          diversionDelta = A * Math.cos((Math.PI / 2) * q) ** 2;
-        } else {
-          diversionDelta = 0;
-        }
-
-        // Smooth dampening near destination endpoint (< 2.0m from end)
-        const distFromEnd = totalLength - evalS;
-        if (distFromEnd < 2.0) {
-          diversionDelta *= Math.max(0.0, distFromEnd / 2.0);
-        }
-
-        // Offset is assigned lane center PLUS the smooth diversion delta
-        const finalOffset = ASSIGNED_LANE_OFFSET + diversionDelta;
-
-        // Strictly clamp within asphalt road boundaries (±1.15m)
-        return Math.max(-1.15, Math.min(1.15, finalOffset));
-      };
 
       // "the robot should not change its positions rapidly"
       const safeDelta = Math.min(0.04, delta);
@@ -2231,6 +2265,18 @@ const Robot = ({
       // 4. Precision tracking: Robot travels directly on the visible route line at all times (blue for normal, yellow for diversion)
       currentPos.copy(targetWithCurvedDiversion);
       currentPos.y = 0.22;
+
+      // Hard physical exclusion boundary: Robot must NEVER touch or penetrate obstacle outer hulls
+      for (const obs of scannedObstacles) {
+        const obsRadius = obs.type === 'car' ? 0.65 : (obs.type === 'static' ? 0.55 : 0.38);
+        const minDist = robotRadius + obsRadius + 0.30; // 30cm absolute minimum physical exclusion
+        const distCenter = currentPos.distanceTo(obs.pos3D);
+        if (distCenter < minDist && distCenter > 0.001) {
+          const pushDir = new THREE.Vector3().subVectors(currentPos, obs.pos3D).normalize();
+          const overlap = minDist - distCenter;
+          currentPos.add(pushDir.multiplyScalar(overlap));
+        }
+      }
 
       // --- Update Navigation Route Lines ---
       // (1) Continuous Blue Route Line: Always displays the full normal patrol route ahead on the robot's assigned side of the road (+0.35m)
