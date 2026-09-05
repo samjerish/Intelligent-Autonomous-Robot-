@@ -1780,7 +1780,6 @@ const Robot = ({
   path, currentIndex, isPlaying, gridSize, isMapView, speed, dynamicObstaclesRef,
   staticObstacles = [], drivableRouteRef, drivableRouteColorsRef, diversionRouteRef, upcomingLoopPoints3D = [],
   onReachNode, onMissionComplete, onObstacleDetected: _onObstacleDetected, onBarricadeBlocked, robotPosRef, robotRotRef, isEmergency = false,
-  checkpointCountdown = null, checkpointName = "",
   addExplanation,
   mapData,
 }: {
@@ -1803,8 +1802,6 @@ const Robot = ({
   robotPosRef: React.MutableRefObject<THREE.Vector3 | null>;
   robotRotRef: React.MutableRefObject<number>;
   isEmergency?: boolean;
-  checkpointCountdown?: number | null;
-  checkpointName?: string;
   addExplanation?: (msg: string) => void;
   mapData?: MapData | null;
 }) => {
@@ -3164,8 +3161,6 @@ const Robot = ({
         isFollowingObstacle={isFollowingObstacle}
         isOvertaking={isOvertaking}
         followingDistanceLabel={followingDistanceLabel}
-        checkpointCountdown={checkpointCountdown}
-        checkpointName={checkpointName}
         isReversing={isReversing}
         isYieldWaiting={isYieldWaiting}
         isBarricadeBlocked={isBarricadeBlocked}
@@ -4721,7 +4716,6 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
       originalMissionRef.current = null;
     } else {
       if (mapData && mapData.tasks && currentTaskIndexRef.current < mapData.tasks.length - 1) {
-        const prevTask = mapData.tasks[currentTaskIndexRef.current];
         currentTaskIndexRef.current += 1;
         const nextTask = mapData.tasks[currentTaskIndexRef.current];
         
@@ -5138,8 +5132,6 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
               robotPosRef={robotPosRef}
               robotRotRef={robotRotRef}
               isEmergency={robotState === 'emergency_response' || robotState === 'emergency_to_ctr' || robotState === 'ctr_to_emergency'}
-              checkpointCountdown={patrolCountdown}
-              checkpointName={currentPatrolTarget}
               addExplanation={addExplanation}
               mapData={mapData}
             />
