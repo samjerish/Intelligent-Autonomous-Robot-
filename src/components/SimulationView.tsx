@@ -1708,25 +1708,12 @@ export const DetailedRobot = ({
         {/* Real-time Autonomous Patrol Live Status Label */}
         <Html position={[0, 1.80, 0]} center style={{ pointerEvents: 'none' }}>
           <div className="flex items-center justify-center select-none transition-all duration-300 ease-in-out">
-            {liveStatus === 'ROAD BARRICADE DETECTED' && (
-              <div className="flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-amber-950/90 border border-amber-400 text-amber-200 font-mono font-black text-[11px] tracking-wider uppercase shadow-[0_0_22px_rgba(245,158,11,0.85)] backdrop-blur-md whitespace-nowrap">
-                <span className="w-2 h-2 rounded-full bg-amber-400 animate-ping"></span>
-                <span>🚧 ROAD BARRICADE DETECTED</span>
-              </div>
-            )}
-            {liveStatus === 'DIVERSION' && (
-              <div className="flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-orange-950/90 border border-orange-400 text-orange-200 font-mono font-black text-[11px] tracking-wider uppercase shadow-[0_0_20px_rgba(249,115,22,0.8)] backdrop-blur-md whitespace-nowrap">
-                <span className="w-2 h-2 rounded-full bg-orange-400 animate-ping"></span>
-                <span>⚡ DIVERSION</span>
-              </div>
-            )}
-            {liveStatus === 'IDLE' && (
+            {liveStatus === 'IDLE' ? (
               <div className="flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-slate-900/90 border border-slate-400 text-slate-200 font-mono font-black text-[11px] tracking-wider uppercase shadow-[0_0_16px_rgba(148,163,184,0.5)] backdrop-blur-md whitespace-nowrap">
                 <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse"></span>
                 <span>⏳ IDLE</span>
               </div>
-            )}
-            {liveStatus === 'MOVING' && (
+            ) : (
               <div className="flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-cyan-950/90 border border-cyan-400 text-cyan-200 font-mono font-black text-[11px] tracking-wider uppercase shadow-[0_0_20px_rgba(6,182,212,0.8)] backdrop-blur-md whitespace-nowrap">
                 <span className="w-2 h-2 rounded-full bg-cyan-400 animate-ping"></span>
                 <span>🔹 MOVING</span>
@@ -3161,27 +3148,22 @@ const Robot = ({
           }
         }
       }
+    }
 
-      // ── Live Autonomous Patrol Status Evaluation ──
-      // - ROAD BARRICADE DETECTED: when a barricade blocks the route or alternate route is being calculated/followed
-      // - DIVERSION: when following the orange diversion route to safely avoid an obstacle
-      // - IDLE: shown only when paused at a patrol destination
-      // - MOVING: shown while following its normal blue patrol route
-      let currentStatus: RobotLiveStatus;
-      if (isBarricadeBlocked || isFollowingAlternateRoute) {
-        currentStatus = 'ROAD BARRICADE DETECTED';
-      } else if (isOvertaking || activeDiversionRef.current !== null) {
-        currentStatus = 'DIVERSION';
-      } else if (isPausedAtDestination) {
-        currentStatus = 'IDLE';
-      } else {
-        currentStatus = 'MOVING';
-      }
+    // ── Live Autonomous Patrol Status Evaluation ──
+    // The robot must stay in the MOVING state while following its normal route,
+    // rerouting, or taking a safe diversion around obstacles.
+    // It may enter IDLE only when it has reached a designated patrol destination.
+    let currentStatus: RobotLiveStatus;
+    if (isPausedAtDestination) {
+      currentStatus = 'IDLE';
+    } else {
+      currentStatus = 'MOVING';
+    }
 
-      if (liveStatusRef.current !== currentStatus) {
-        liveStatusRef.current = currentStatus;
-        setLiveStatus(currentStatus);
-      }
+    if (liveStatusRef.current !== currentStatus) {
+      liveStatusRef.current = currentStatus;
+      setLiveStatus(currentStatus);
     }
   });
 
