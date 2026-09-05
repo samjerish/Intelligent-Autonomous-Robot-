@@ -2729,7 +2729,14 @@ const Robot = ({
         let diff = targetYaw - ref.current.rotation.y;
         while (diff < -Math.PI) diff += Math.PI * 2;
         while (diff > Math.PI) diff -= Math.PI * 2;
-        ref.current.rotation.y += diff * Math.min(1.0, 10.0 * safeDelta);
+        const maxTurnRate = 2.0; // rad/s realistic smooth steering without snapping
+        const turnDelta = THREE.MathUtils.clamp(diff, -maxTurnRate * safeDelta, maxTurnRate * safeDelta);
+        ref.current.rotation.y += turnDelta;
+
+        // When negotiating sharp road turns or branches, smoothly cap speed so robot turns calmly without veering off-road
+        if (Math.abs(diff) > 0.35) {
+          actualSpeedRef.current = Math.min(actualSpeedRef.current, cruiseSpeed * 0.40);
+        }
       }
 
       // State updates for UI badges
@@ -2908,6 +2915,8 @@ const Robot = ({
         checkpointName={checkpointName}
         isReversing={isReversing}
         isYieldWaiting={isYieldWaiting}
+        isBarricadeBlocked={isBarricadeBlocked}
+        barricadeLabel={barricadeStatusLabel}
       />
     </group>
   );
@@ -3215,51 +3224,24 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
   const policeStateRef = useRef<PoliceState>(policeState);
   useEffect(() => { policeStateRef.current = policeState; }, [policeState]);
 
-  // Recalculate path dynamically if obstacles are added while moving
+  // Update path dynamically when idle if obstacles block initial route
   useEffect(() => {
-    if (isPlaying && path.length > 0 && currentPosIndex < path.length && mapData) {
-       const currentLoc = path[currentPosIndex];
+    if (!isPlaying && path.length > 0 && mapData) {
+       const currentLoc = path[0];
        const targetLoc = path[path.length - 1];
        const allObstacles = [...(mapData.obstacles || []), ...userBlockers];
-       // Check if current path is blocked
-       const isBlocked = path.slice(currentPosIndex).some(p => 
+       const isBlocked = path.some(p => 
           userBlockers.some(b => b.x === p.x && b.y === p.y && b.f === p.f)
        );
        if (isBlocked) {
-         const newPath = calculatePath(currentLoc, targetLoc, allObstacles, mapData);
+         const newPath = calculatePath(currentLoc, targetLoc, allObstacles, mapData, true);
          if (newPath.length > 0) {
            setPath(newPath);
            setCurrentPosIndex(0);
-           addExplanation("Road blocked! Rerouting to destination...");
-         } else {
-           const homeRoom = mapData.rooms?.find(r => r.name.toLowerCase().includes('generator')) || mapData.rooms?.[0];
-           let homePath: GridPoint[] = [];
-           if (homeRoom) {
-               homePath = calculatePath(currentLoc, homeRoom.door || homeRoom.start, allObstacles, mapData);
-           }
-           if (homePath.length > 0) {
-               setPath(homePath);
-               setCurrentPosIndex(0);
-               setRobotState('returning_home');
-               addExplanation("Road to destination is completely blocked! Returning to base.");
-           } else {
-               const evadePath = calculateEvadePath(currentLoc, allObstacles, mapData);
-               if (evadePath.length > 0) {
-                 setPath(evadePath);
-                 setCurrentPosIndex(0);
-                 setRobotState('evading_obstacle');
-                 addExplanation("Road completely blocked! Moving to give space for obstacles...");
-               } else {
-                 setIsPlaying(false);
-                 setRobotState('idle');
-                 addExplanation("Road completely blocked and cannot evade! Halting.");
-               }
-           }
          }
        }
-
     }
-  }, [userBlockers]);
+  }, [userBlockers, isPlaying]);
   
   const [dynamicObstacles, setDynamicObstacles] = useState<DynamicObstacle[]>([]);
   const dynamicObstaclesRef = useRef<DynamicObstacle[]>([]);
@@ -4289,6 +4271,84 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
       setTimeout(() => {
         isRecalculating.current = false;
       }, 1500);
+    }
+  };
+
+  const handleBarricadeBlocked = (robotWorldPos: THREE.Vector3, _barricadeWorldPos: THREE.Vector3) => {
+    if (!mapData) return;
+
+    // 1. Current physical robot location snapped onto the drivable road network
+    const rawLoc = getGridPointFromVector3(robotWorldPos, mapData.gridSize);
+    const currentLoc = getNearestRoadPoint(rawLoc, mapData);
+
+    // 2. Identify active target destination
+    let targetLoc: GridPoint;
+    if (robotState === 'patrol') {
+      const lower = currentPatrolTarget.toLowerCase();
+      const targetRoom = 
+        mapData.rooms?.find(r => r.name.toLowerCase() === lower) ||
+        mapData.rooms?.find(r => r.name.toLowerCase().includes(lower)) ||
+        mapData.rooms?.[0];
+      const rawTarget = targetRoom ? (targetRoom.door || targetRoom.start) : mapData.start;
+      targetLoc = getNearestRoadPoint(rawTarget, mapData);
+    } else if (emergencyLocationRef.current) {
+      targetLoc = getNearestRoadPoint(emergencyLocationRef.current, mapData);
+    } else if (path.length > 0) {
+      targetLoc = getNearestRoadPoint(path[path.length - 1], mapData);
+    } else {
+      targetLoc = mapData.start;
+    }
+
+    // 3. Obstacle set including all user road barricades
+    const allObstacles = [...(mapData.obstacles || []), ...userBlockers];
+
+    // 4. Calculate valid alternative road route using 3D A* with requireRoads: true
+    let altPath = calculatePath(currentLoc, targetLoc, allObstacles, mapData, true);
+
+    // 5. If immediate destination is blocked/inaccessible inside closure, try subsequent checkpoints
+    if (altPath.length < 2 && robotState === 'patrol') {
+      for (let offset = 1; offset < PATROL_CHECKPOINTS.length; offset++) {
+        const nextIdx = (patrolIndexRef.current + offset) % PATROL_CHECKPOINTS.length;
+        const nextTargetName = PATROL_CHECKPOINTS[nextIdx];
+        const nextRoom = 
+          mapData.rooms?.find(r => r.name.toLowerCase() === nextTargetName.toLowerCase()) ||
+          mapData.rooms?.find(r => r.name.toLowerCase().includes(nextTargetName.toLowerCase()));
+        if (nextRoom) {
+          const nextTargetLoc = getNearestRoadPoint(nextRoom.door || nextRoom.start, mapData);
+          altPath = calculatePath(currentLoc, nextTargetLoc, allObstacles, mapData, true);
+          if (altPath.length >= 2) {
+            patrolIndexRef.current = nextIdx;
+            setCurrentPatrolTarget(nextTargetName);
+            addExplanation(`🔄 Sector closed by road barricade. Re-routing to next accessible checkpoint: ${nextTargetName}.`);
+            break;
+          }
+        }
+      }
+    }
+
+    // Fallback: Return to base / generator room via open drivable roads
+    if (altPath.length < 2) {
+      const homeRoom = mapData.rooms?.find(r => r.name.toLowerCase().includes('generator')) || mapData.rooms?.[0];
+      if (homeRoom) {
+        const homeTarget = getNearestRoadPoint(homeRoom.door || homeRoom.start, mapData);
+        altPath = calculatePath(currentLoc, homeTarget, allObstacles, mapData, true);
+        if (altPath.length >= 2) {
+          addExplanation(`🏠 Destination inaccessible due to road barricade. Calmly navigating to base via open roads.`);
+        }
+      }
+    }
+
+    if (altPath.length >= 2) {
+      // Clear any yellow diversion line
+      if (diversionRouteRef) {
+        diversionRouteRef.current = [];
+      }
+      setPath(altPath);
+      setCurrentPosIndex(0);
+      setIsPlaying(true);
+      addExplanation(`✨ New safe route active (${altPath.length} nodes). Resuming navigation strictly via open roads.`);
+    } else {
+      addExplanation(`⚠️ Road closed in all directions by barricades. Robot holding safe viewing standoff.`);
     }
   };
 
