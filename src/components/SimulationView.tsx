@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState, useMemo, useCallback } from 'react'
 import type { MapData, GridPoint, Room } from '../types';
 import { calculatePath, calculateLongPath } from '../utils/simulationEngine';
 import { trackEnvironmentObjects, type TrackedObject, type PerceptionScanResult } from '../utils/perceptionSystem';
-import { Play, RotateCcw, Activity, ShieldAlert, Crosshair, Maximize, Minimize, Bot, Power, Send, Construction, Pause, Users, Utensils, Cross, Radar } from 'lucide-react';
+import { Play, RotateCcw, Activity, ShieldAlert, Crosshair, Maximize, Minimize, Bot, Power, Send, Construction, Pause, Users, Utensils, Cross } from 'lucide-react';
 import { DeliveryModal } from './DeliveryModal';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import {
@@ -5386,124 +5386,6 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
                         <span className="w-5 h-1.5 rounded-full bg-[#f97316] shadow-[0_0_8px_#f97316]"></span>
                         <span className="text-orange-400">Temporary Diversion</span>
                       </div>
-                    </div>
-                  </div>
-
-                  {/* LiDAR Perception & Real-Time Object Tracking Card */}
-                  <div className="col-span-2 bg-slate-900/80 border border-cyan-500/30 rounded-xl p-3 shadow-[0_0_20px_rgba(6,182,212,0.12)] flex flex-col gap-2.5">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        <span className="relative flex h-2.5 w-2.5">
-                          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-cyan-400 opacity-75"></span>
-                          <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-cyan-500"></span>
-                        </span>
-                        <span className="text-[10px] font-black text-cyan-300 uppercase tracking-widest flex items-center gap-1.5 font-mono">
-                          <Radar className="w-3.5 h-3.5 text-cyan-400" />
-                          360° LiDAR & Forward Perception
-                        </span>
-                      </div>
-                      {/* Overall Early Decision Action Badge */}
-                      {(() => {
-                        const action = perceptionScanResult?.overallAction || 'CLEAR';
-                        if (action === 'BARRICADE_REROUTE') {
-                          return (
-                            <span className="px-2 py-0.5 rounded-full text-[9px] font-mono font-black uppercase bg-amber-500/20 text-amber-300 border border-amber-500/50 shadow-[0_0_8px_rgba(245,158,11,0.3)]">
-                              🚧 BARRICADE REROUTE
-                            </span>
-                          );
-                        } else if (action === 'DIVERSION') {
-                          return (
-                            <span className="px-2 py-0.5 rounded-full text-[9px] font-mono font-black uppercase bg-orange-500/20 text-orange-300 border border-orange-500/50 shadow-[0_0_8px_rgba(249,115,22,0.3)]">
-                              ⚡ ROAD DIVERSION
-                            </span>
-                          );
-                        } else if (action === 'FOLLOW_SPACE') {
-                          return (
-                            <span className="px-2 py-0.5 rounded-full text-[9px] font-mono font-black uppercase bg-sky-500/20 text-sky-300 border border-sky-500/50 shadow-[0_0_8px_rgba(56,189,248,0.3)]">
-                              ⟳ FOLLOWING SPACE (3.2m)
-                            </span>
-                          );
-                        }
-                        return (
-                          <span className="px-2 py-0.5 rounded-full text-[9px] font-mono font-black uppercase bg-emerald-500/20 text-emerald-300 border border-emerald-500/50 shadow-[0_0_8px_rgba(16,185,129,0.3)]">
-                            ✓ ROUTE CLEAR
-                          </span>
-                        );
-                      })()}
-                    </div>
-
-                    {/* Object Classification Counters */}
-                    <div className="grid grid-cols-5 gap-1 text-[9px] font-mono text-center">
-                      <div className="bg-slate-950/60 border border-cyan-500/20 rounded p-1">
-                        <div className="text-gray-400">🚗 Car</div>
-                        <div className="font-bold text-cyan-300">{perceptionScanResult?.summary.vehicles ?? 0}</div>
-                      </div>
-                      <div className="bg-slate-950/60 border border-emerald-500/20 rounded p-1">
-                        <div className="text-gray-400">🚶 Ped</div>
-                        <div className="font-bold text-emerald-300">{perceptionScanResult?.summary.pedestrians ?? 0}</div>
-                      </div>
-                      <div className="bg-slate-950/60 border border-amber-500/20 rounded p-1">
-                        <div className="text-gray-400">🚧 Block</div>
-                        <div className="font-bold text-amber-300">{perceptionScanResult?.summary.barricades ?? 0}</div>
-                      </div>
-                      <div className="bg-slate-950/60 border border-slate-500/20 rounded p-1">
-                        <div className="text-gray-400">📦 Static</div>
-                        <div className="font-bold text-slate-300">{perceptionScanResult?.summary.staticObstacles ?? 0}</div>
-                      </div>
-                      <div className="bg-slate-950/60 border border-purple-500/20 rounded p-1">
-                        <div className="text-gray-400">🛡️ Margin</div>
-                        <div className="font-bold text-purple-300">{perceptionScanResult?.summary.boundaries ?? 0}</div>
-                      </div>
-                    </div>
-
-                    {/* Live Detected Entities Feed */}
-                    <div className="max-h-28 overflow-y-auto space-y-1 pr-1 custom-scrollbar">
-                      {trackedObjects && trackedObjects.filter(o => o.classification !== 'Road boundary or non-drivable area' && o.distance < 14.0).length > 0 ? (
-                        trackedObjects
-                          .filter(o => o.classification !== 'Road boundary or non-drivable area' && o.distance < 14.0)
-                          .map(obj => {
-                            const isBarricade = obj.classification === 'Road barricade';
-                            const isCar = obj.classification === 'Moving obstacle / vehicle';
-                            const isPed = obj.classification === 'Pedestrian';
-                            const icon = isBarricade ? '🚧' : isCar ? '🚗' : isPed ? '🚶' : '📦';
-                            const badgeColor = isBarricade 
-                              ? 'text-amber-300 border-amber-500/40 bg-amber-950/50' 
-                              : isCar 
-                              ? 'text-cyan-300 border-cyan-500/40 bg-cyan-950/50' 
-                              : isPed 
-                              ? 'text-emerald-300 border-emerald-500/40 bg-emerald-950/50' 
-                              : 'text-slate-300 border-slate-500/40 bg-slate-900/50';
-
-                            return (
-                              <div key={obj.id} className="flex items-center justify-between text-[9px] font-mono bg-slate-950/50 border border-white/5 rounded px-2 py-1">
-                                <div className="flex items-center gap-1.5">
-                                  <span className={`px-1 py-0.5 rounded border text-[8px] font-bold ${badgeColor}`}>
-                                    {icon} {obj.classification === 'Moving obstacle / vehicle' ? 'VEHICLE' : obj.classification === 'Pedestrian' ? 'PEDESTRIAN' : obj.classification === 'Road barricade' ? 'BARRICADE' : 'STATIC'}
-                                  </span>
-                                  <span className="text-gray-300">{obj.distance.toFixed(1)}m</span>
-                                </div>
-                                <div className="flex items-center gap-2">
-                                  {obj.speed > 0.05 && (
-                                    <span className="text-cyan-400">{obj.speed.toFixed(1)}m/s</span>
-                                  )}
-                                  <span className={`text-[8px] font-bold px-1 py-0.2 rounded ${
-                                    obj.collisionRisk === 'CRITICAL' ? 'bg-red-500/30 text-red-300 border border-red-500/40' :
-                                    obj.collisionRisk === 'HIGH' ? 'bg-orange-500/30 text-orange-300 border border-orange-500/40' :
-                                    obj.collisionRisk === 'MEDIUM' ? 'bg-yellow-500/30 text-yellow-300 border border-yellow-500/40' :
-                                    'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
-                                  }`}>
-                                    {obj.collisionRisk}
-                                  </span>
-                                  <span className="text-gray-400 text-[8px]">buf:{obj.safetyBuffer.toFixed(2)}m</span>
-                                </div>
-                              </div>
-                            );
-                          })
-                      ) : (
-                        <div className="text-center py-2 text-[9px] text-gray-400 font-mono italic">
-                          Corridor clear • Wide safety margins active
-                        </div>
-                      )}
                     </div>
                   </div>
                 </div>
