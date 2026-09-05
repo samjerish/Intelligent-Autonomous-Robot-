@@ -2003,6 +2003,8 @@ const Robot = ({
       return;
     }
 
+    let hasBarricadeAhead = false;
+
     if (isPlaying) {
       const s = distanceTraveledRef.current;
       const uCurrent = Math.min(1.0, Math.max(0.0, s / totalLength));
@@ -2242,6 +2244,8 @@ const Robot = ({
 
       // ── Step 2: Active Free Space Assessment & Pre-Turn Safe Path Calculation ──
       // ASSIGNED_LANE_OFFSET is defined above (+0.35m)
+      const now = Date.now();
+      const reverseCooldownElapsed = now - lastReverseEndTimeRef.current > 3500;
 
       // Safe real-world barricade detection horizon: 8.5m ahead in the road corridor
       // Beyond 8.5m, the robot approaches naturally at normal cruise speed
@@ -2253,6 +2257,7 @@ const Robot = ({
       );
       staticBarricadesAhead.sort((a, b) => a.longitudinalDelta - b.longitudinalDelta);
       const primaryBarricade = staticBarricadesAhead[0] || null;
+      hasBarricadeAhead = primaryBarricade !== null;
 
       // Detect dynamic or static obstacles directly in front of the robot in its assigned lane (ahead up to 14.0m)
       // Assigned lane is centered around +0.35m; an obstacle directly blocks it if |o.sideDot - ASSIGNED_LANE_OFFSET| <= 0.85m
@@ -3147,7 +3152,7 @@ const Robot = ({
     let currentStatus: RobotLiveStatus;
     if (isPausedAtDestination) {
       currentStatus = 'IDLE';
-    } else if (isBarricadeBlocked || (barricadeInspectionRef.current && barricadeInspectionRef.current.stage === 'rerouting')) {
+    } else if (primaryBarricade !== null && isBarricadeBlocked) {
       currentStatus = 'ROAD BARRICADE DETECTED';
     } else if (isOvertaking || activeDiversionRef.current !== null) {
       currentStatus = 'DIVERSION';
@@ -4663,7 +4668,13 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
       setIsPlaying(true);
       addExplanation(`✨ Alternate road route active (${altPath.length} nodes). Navigating to destination via open roads.`);
     } else {
-      addExplanation(`⚠️ Road closed in all directions by barricades. Robot holding safe viewing standoff.`);
+      if (robotState === 'patrol') {
+        addExplanation(`🚧 Road closed by barricade. Advancing to next open patrol destination.`);
+        const nextIdx = (patrolIndexRef.current + 1) % PATROL_CHECKPOINTS.length;
+        dispatchPatrolCheckpoint(nextIdx);
+      } else {
+        addExplanation(`⚠️ Road closed in all directions by barricades. Robot holding safe viewing standoff.`);
+      }
     }
   };
 
