@@ -1474,10 +1474,6 @@ const Robot = ({
   const [followingDistanceLabel, setFollowingDistanceLabel] = useState('');
   const isCourteousStandoffRef = useRef(false);
   const courteousClearTimerRef = useRef(0);
-  const followingWaitTimerRef = useRef(0);
-  const activeOvertakeObstacleIdRef = useRef<string | null>(null);
-  const overtakePeakAmplitudeRef = useRef(0);
-  const overtakeObstacleSRef = useRef(0);
   const lastFollowingLogTime = useRef(0);
   const lastOvertakeLogTime = useRef(0);
   const hasCompletedRef = useRef(false);
@@ -1521,11 +1517,53 @@ const Robot = ({
   useEffect(() => {
     hasCompletedRef.current = false;
     distanceTraveledRef.current = 0;
-    followingWaitTimerRef.current = 0;
-    activeOvertakeObstacleIdRef.current = null;
-    overtakePeakAmplitudeRef.current = 0;
-    overtakeObstacleSRef.current = 0;
+    courteousClearTimerRef.current = 0;
   }, [path]);
+
+  // Helper function to build the complete, continuous 3D planned navigation line
+  const buildFullRouteLine = (
+    evalCurve: THREE.CatmullRomCurve3,
+    currentS: number,
+    posVec: THREE.Vector3,
+    offsetFn: (sVal: number) => number
+  ): number[] => {
+    const flatRoute: number[] = [];
+    // Point 0: Robot's exact current 3D position (elevated slightly to y=0.08 above asphalt)
+    flatRoute.push(posVec.x, 0.08, posVec.z);
+
+    const sampleStep = 0.30; // High-density 30cm sampling for ultra-smooth curved trajectory
+    const startS = Math.min(totalLength, currentS + sampleStep);
+    for (let testS = startS; testS < totalLength; testS += sampleStep) {
+      const u = testS / totalLength;
+      const basePt = evalCurve.getPointAt(u);
+      const tangent = evalCurve.getTangentAt(u).normalize();
+      const normal = new THREE.Vector3(tangent.z, 0, -tangent.x);
+      const off = offsetFn(testS);
+      const drivablePt = basePt.clone().add(normal.clone().multiplyScalar(off));
+      flatRoute.push(drivablePt.x, 0.08, drivablePt.z);
+    }
+
+    // Destination endpoint of active leg
+    const endPt = evalCurve.getPointAt(1.0);
+    const endTangent = evalCurve.getTangentAt(1.0).normalize();
+    const endNormal = new THREE.Vector3(endTangent.z, 0, -endTangent.x);
+    const endOff = offsetFn(totalLength);
+    const endDrivablePt = endPt.clone().add(endNormal.clone().multiplyScalar(endOff));
+    flatRoute.push(endDrivablePt.x, 0.08, endDrivablePt.z);
+
+    // Seamlessly append all subsequent patrol destinations along the road network
+    if (upcomingLoopPoints3D && upcomingLoopPoints3D.length > 0) {
+      for (let i = 0; i < upcomingLoopPoints3D.length; i++) {
+        const pt3d = upcomingLoopPoints3D[i];
+        if (i === 0 && Math.hypot(pt3d.x - endDrivablePt.x, pt3d.z - endDrivablePt.z) < 0.25) {
+          continue;
+        }
+        flatRoute.push(pt3d.x, 0.08, pt3d.z);
+      }
+    }
+
+    return flatRoute;
+  };
 
   useFrame((_state, delta) => {
     if (!ref.current) return;
@@ -1625,7 +1663,7 @@ const Robot = ({
 
             // Estimate projection onto spline
             const lookStart = Math.max(0, s - 1.2);
-            const lookEnd = Math.min(totalLength, s + 7.5);
+            const lookEnd = Math.min(totalLength, s + 8.0);
             let bestDistSq = 9999;
             let sObstacle = sAtCpa;
             let curvePtAtObs = nominalPos;
@@ -1692,7 +1730,7 @@ const Robot = ({
             let tangentAtObs = nominalTangent;
 
             const lookStart = Math.max(0, s - 1.0);
-            const lookEnd = Math.min(totalLength, s + 7.5);
+            const lookEnd = Math.min(totalLength, s + 8.0);
             for (let testS = lookStart; testS <= lookEnd; testS += 0.3) {
               const testU = testS / totalLength;
               const testPt = curve.getPointAt(testU);
@@ -1734,9 +1772,9 @@ const Robot = ({
       }
 
       // ── Step 2: Obstacle Classification & Corridor Evaluation ──
-      // Obstacles directly ahead in the travel corridor (within lane width ~1.35m or CPA < 1.5m)
+      // Obstacles in or adjacent to the travel corridor ahead
       const inCorridorAhead = scannedObstacles.filter(
-        o => o.longitudinalDelta > 0.25 && o.longitudinalDelta < 7.0 && (o.lateralDist < 1.35 || o.minCpaDist < 1.5)
+        o => o.longitudinalDelta > -1.2 && o.longitudinalDelta < 7.5 && (o.lateralDist < 1.35 || o.minCpaDist < 1.5)
       );
       inCorridorAhead.sort((a, b) => a.longitudinalDelta - b.longitudinalDelta);
       const primaryObs = inCorridorAhead[0] || null;
@@ -1744,69 +1782,57 @@ const Robot = ({
       // Safe following distance threshold (meters)
       const SAFE_FOLLOW_DIST = 2.8;
 
+      interface PlannedDiversion {
+        id: string;
+        sObstacle: number;
+        peakAmplitude: number;
+        clearanceMeters: number;
+      }
+      const plannedDiversions: PlannedDiversion[] = [];
+
       let shouldCourteousStandOff = false;
       let currentStandoffLabel = '';
       let targetSpeed = cruiseSpeed;
-      let isOvertakeActive = false;
+      let isOvertakeFeasible = false;
 
-      // ── Step 3: Check Mid-Overtake State ──
-      if (activeOvertakeObstacleIdRef.current) {
-        // We are currently executing an approved overtake around this obstacle
-        const sDiff = s - overtakeObstacleSRef.current;
-        if (sDiff > 1.8) {
-          // Overtake complete! Safely cleared by 1.8m
-          activeOvertakeObstacleIdRef.current = null;
-          overtakePeakAmplitudeRef.current = 0;
-          overtakeObstacleSRef.current = 0;
-          followingWaitTimerRef.current = 0;
-          const now = Date.now();
-          if (now - lastOvertakeLogTime.current > 3500 && addExplanation) {
-            lastOvertakeLogTime.current = now;
-            addExplanation('✓ Overtake completed safely with wide clearance. Re-aligning smoothly to lane centerline.');
-          }
-        } else {
-          // Continue careful overtake
-          isOvertakeActive = true;
-          targetSpeed = cruiseSpeed * 0.55; // 55% cautious speed
-        }
-      }
-
-      // ── Step 4: Primary Obstacle Encounter Logic ──
-      if (!isOvertakeActive && primaryObs) {
+      if (primaryObs) {
         const distAhead = primaryObs.longitudinalDelta;
 
-        // Condition A: Deceleration & Safe Following Distance
-        if (distAhead > SAFE_FOLLOW_DIST) {
-          // Approaching: smooth deceleration towards safe following distance
-          const gap = distAhead - SAFE_FOLLOW_DIST;
-          const ramp = Math.min(1.0, Math.max(0.1, gap / 2.5));
-          targetSpeed = cruiseSpeed * ramp * 0.5;
-          // Hold centerline while approaching
-          followingWaitTimerRef.current = 0;
-        } else {
-          // Within safe following distance: come to a smooth halt & wait patiently
-          targetSpeed = 0;
-          followingWaitTimerRef.current += delta;
-        }
-
-        const waitDuration = followingWaitTimerRef.current;
-
-        // Condition B: Moving Obstacle / Pedestrian Protection
-        // "and no risk of disturbing pedestrians, traffic, or moving obstacles. Otherwise, wait until the path is fully clear"
+        // Condition A: Protection of Pedestrians & Moving Traffic
+        // "confirm that the road is clear, maintain wide clearance from the obstacle, and avoid disturbing pedestrians or other traffic."
         const isPedestrian = primaryObs.type === 'person';
         const isMovingObstacle = primaryObs.isMoving || primaryObs.speed > 0.08 || Math.abs(primaryObs.relForwardVel) > 0.08;
         const isOncoming = primaryObs.relForwardVel < -0.08;
         const isCrossing = primaryObs.isCrossingTraffic;
 
-        if (isPedestrian || isMovingObstacle || isOncoming || isCrossing) {
-          // STRICT RULE: Never overtake moving pedestrians or vehicles!
+        // Check if ANY pedestrian or oncoming traffic is in the passing zone or vicinity
+        const hasConflictingTraffic = scannedObstacles.some(o => {
+          if (o.id === primaryObs.id) return false;
+          if (o.type === 'person' && o.distToRobot < 5.5) return true;
+          if (o.relForwardVel < -0.05 && o.distToRobot < 7.5) return true;
+          if (o.isCrossingTraffic && o.distToRobot < 5.0) return true;
+          return false;
+        });
+
+        if (isPedestrian || isMovingObstacle || isOncoming || isCrossing || hasConflictingTraffic) {
+          // Pedestrian or moving traffic must NOT be disturbed -> Wait patiently at safe following distance
           shouldCourteousStandOff = true;
           if (isPedestrian) {
             currentStandoffLabel = isOncoming ? 'YIELDING TO ONCOMING PEDESTRIAN' : 'PATIENTLY FOLLOWING PEDESTRIAN';
           } else if (isCrossing) {
             currentStandoffLabel = 'YIELDING TO CROSSING TRAFFIC';
+          } else if (hasConflictingTraffic) {
+            currentStandoffLabel = 'WAITING FOR TRAFFIC TO PASS';
           } else {
-            currentStandoffLabel = 'WAITING BEHIND MOVING TRAFFIC';
+            currentStandoffLabel = 'FOLLOWING TRAFFIC AT SAFE DISTANCE';
+          }
+
+          // Smoothly decelerate to halt at safe distance
+          if (distAhead <= SAFE_FOLLOW_DIST) {
+            targetSpeed = 0;
+          } else {
+            const gap = distAhead - SAFE_FOLLOW_DIST;
+            targetSpeed = cruiseSpeed * Math.min(1.0, Math.max(0.1, gap / 2.5)) * 0.45;
           }
 
           const now = Date.now();
@@ -1815,124 +1841,103 @@ const Robot = ({
             addExplanation(`🛡️ Safe Following: ${currentStandoffLabel}. Maintaining 2.8m safe distance. Waiting patiently.`);
           }
         } else {
-          // Stationary Obstacle (e.g. stopped car, blocker, barrier)
-          if (waitDuration < 2.5) {
-            // Must first wait patiently behind the obstacle for at least 2.5s
+          // Obstacle is stationary (parked car, blocker, barrier)
+          // Condition B: Confirm Road is Clear with Wide Safe Clearance
+          const preferredSide = primaryObs.sideDot >= 0 ? -1 : 1; // if obs is on right, pass left (-); if on left, pass right (+)
+          const bypassAmp = preferredSide * 0.82; // ±0.82m lateral diversion
+
+          const roadBoundaryDist = preferredSide < 0 ? (2.0 + primaryObs.sideDot) : (2.0 - primaryObs.sideDot);
+          const hasWideClearance = roadBoundaryDist >= 1.35;
+
+          // Check if passing zone has any other blockers
+          const passingZoneBlocked = scannedObstacles.some(o => {
+            if (o.id === primaryObs.id) return false;
+            const inZoneS = o.sObstacle > (primaryObs.sObstacle - 2.5) && o.sObstacle < (primaryObs.sObstacle + 2.5);
+            const onBypassSide = (preferredSide < 0 && o.sideDot < -0.2) || (preferredSide > 0 && o.sideDot > 0.2);
+            return inZoneS && onBypassSide;
+          });
+
+          if (hasWideClearance && !passingZoneBlocked) {
+            // SAFE OVERTAKE PERMITTED: Gradual diversion, pass safely with wide clearance, smooth return
+            isOvertakeFeasible = true;
+            plannedDiversions.push({
+              id: primaryObs.id,
+              sObstacle: primaryObs.sObstacle,
+              peakAmplitude: bypassAmp,
+              clearanceMeters: roadBoundaryDist,
+            });
+
+            // Gentle caution speed while overtaking (65% cruise speed)
+            targetSpeed = cruiseSpeed * 0.65;
+
+            const now = Date.now();
+            if (now - lastOvertakeLogTime.current > 4000 && addExplanation) {
+              lastOvertakeLogTime.current = now;
+              addExplanation(`⚡ Safe clearance verified (${roadBoundaryDist.toFixed(1)}m). Updating blue navigation line with gradual diversion and passing with wide clearance.`);
+            }
+          } else {
+            // Road pinched / not enough safe clearance -> Wait patiently
             shouldCourteousStandOff = true;
-            currentStandoffLabel = `WAITING PATIENTLY BEHIND OBSTACLE (${(2.5 - waitDuration).toFixed(1)}s)`;
+            currentStandoffLabel = 'NARROW ROAD • WAITING FOR CLEAR PASSING SPACE';
+            if (distAhead <= SAFE_FOLLOW_DIST) {
+              targetSpeed = 0;
+            } else {
+              const gap = distAhead - SAFE_FOLLOW_DIST;
+              targetSpeed = cruiseSpeed * Math.min(1.0, Math.max(0.1, gap / 2.5)) * 0.45;
+            }
+
             const now = Date.now();
             if (now - lastFollowingLogTime.current > 4000 && addExplanation) {
               lastFollowingLogTime.current = now;
-              addExplanation(`⏳ Safe Following: Holding 2.8m safe distance behind stationary obstacle. Observing road clearance...`);
-            }
-          } else {
-            // Robot has waited patiently (>= 2.5s). Now perform strict safety checks:
-            // 1. Check surrounding traffic in vicinity
-            const hasSurroundingTraffic = scannedObstacles.some(o => {
-              if (o.id === primaryObs.id) return false;
-              // Any pedestrian within 6m
-              if (o.type === 'person' && o.distToRobot < 6.0) return true;
-              // Any oncoming traffic within 8m
-              if (o.relForwardVel < -0.05 && o.distToRobot < 8.0) return true;
-              // Any crossing traffic
-              if (o.isCrossingTraffic && o.distToRobot < 6.0) return true;
-              return false;
-            });
-
-            // 2. Check wide road clearance on bypass side
-            // Road corridor is ~4m wide (±2.0m from centerline)
-            const preferredSide = primaryObs.sideDot >= 0 ? -1 : 1; // if obs is right, pass left (-); if left, pass right (+)
-            const bypassAmp = preferredSide * 0.80; // ±0.80m lateral diversion
-
-            // Check if bypass side has at least 1.4m clearance to road edge
-            const roadBoundaryDist = preferredSide < 0 ? (2.0 + primaryObs.sideDot) : (2.0 - primaryObs.sideDot);
-            const hasWideClearance = roadBoundaryDist >= 1.40;
-
-            // Check if any other blocker is on the bypass side along the passing zone
-            const passingZoneBlocked = scannedObstacles.some(o => {
-              if (o.id === primaryObs.id) return false;
-              const inZoneS = o.sObstacle > (s - 0.5) && o.sObstacle < (primaryObs.sObstacle + 2.5);
-              const onBypassSide = (preferredSide < 0 && o.sideDot < -0.2) || (preferredSide > 0 && o.sideDot > 0.2);
-              return inZoneS && onBypassSide;
-            });
-
-            if (!hasSurroundingTraffic && hasWideClearance && !passingZoneBlocked) {
-              // ALL SAFETY CRITERIA MET -> PERMIT OVERTAKE
-              activeOvertakeObstacleIdRef.current = primaryObs.id;
-              overtakePeakAmplitudeRef.current = bypassAmp;
-              overtakeObstacleSRef.current = primaryObs.sObstacle;
-              isOvertakeActive = true;
-              targetSpeed = cruiseSpeed * 0.55;
-
-              const now = Date.now();
-              if (now - lastOvertakeLogTime.current > 3500 && addExplanation) {
-                lastOvertakeLogTime.current = now;
-                addExplanation(`👀 Wide road clearance verified (${roadBoundaryDist.toFixed(1)}m) & traffic clear. Initiating cautious overtake around stationary obstacle.`);
-              }
-            } else {
-              // Insufficient clearance or traffic in passing zone -> KEEP WAITING PATIENTLY
-              shouldCourteousStandOff = true;
-              currentStandoffLabel = hasSurroundingTraffic
-                ? 'WAITING PATIENTLY • TRAFFIC IN PASSING ZONE'
-                : 'WAITING PATIENTLY • INSUFFICIENT SAFE CLEARANCE';
-
-              const now = Date.now();
-              if (now - lastFollowingLogTime.current > 4000 && addExplanation) {
-                lastFollowingLogTime.current = now;
-                addExplanation(`⏳ Cannot safely overtake (${currentStandoffLabel}). Holding safe distance until path is fully clear.`);
-              }
+              addExplanation(`⏳ Cannot safely overtake (${currentStandoffLabel}). Holding safe distance until path is fully clear.`);
             }
           }
         }
-      } else if (!isOvertakeActive && !primaryObs) {
-        // Path is completely clear!
-        if (followingWaitTimerRef.current > 0 || isCourteousStandoffRef.current) {
+      } else {
+        // Path is completely clear
+        if (isCourteousStandoffRef.current) {
           courteousClearTimerRef.current += delta;
           if (courteousClearTimerRef.current > 0.3) {
-            followingWaitTimerRef.current = 0;
             isCourteousStandoffRef.current = false;
             setIsCourteousStandoff(false);
             const now = Date.now();
             if (now - lastFollowingLogTime.current > 4000 && addExplanation) {
               lastFollowingLogTime.current = now;
-              addExplanation('✓ Path ahead is fully clear. Continuing smooth forward patrol.');
+              addExplanation('✓ Corridor is clear. Continuing smooth forward patrol.');
             }
-          } else {
-            targetSpeed = cruiseSpeed * 0.4;
           }
+        }
+
+        // Destination deceleration near end
+        const distToEnd = totalLength - s;
+        if (distToEnd < 2.2) {
+          targetSpeed = THREE.MathUtils.lerp(0.35, cruiseSpeed, Math.max(0.1, distToEnd / 2.2));
         } else {
-          // Normal cruise
-          // Destination deceleration near end
-          const distToEnd = totalLength - s;
-          if (distToEnd < 2.2) {
-            targetSpeed = THREE.MathUtils.lerp(0.35, cruiseSpeed, Math.max(0.1, distToEnd / 2.2));
-          } else {
-            targetSpeed = cruiseSpeed;
-          }
+          targetSpeed = cruiseSpeed;
         }
       }
 
       // Mathematical function to compute exact lateral diversion at any point along the spline
+      // Defines: (1) gradual diversion path, (2) passing route with wide clearance, (3) smooth return to original road route
       const getDrivableOffsetAt = (evalS: number): number => {
-        // If not actively overtaking, stay strictly on road centerline (0)
-        if (!activeOvertakeObstacleIdRef.current) {
-          return 0;
+        let maxOff = 0;
+        const sigma = 1.9; // Wide, natural Gaussian envelope starting ~3.5m ahead
+        for (const div of plannedDiversions) {
+          const distFromObs = evalS - div.sObstacle;
+          const bell = div.peakAmplitude * Math.exp(-(distFromObs * distFromObs) / (2 * sigma * sigma));
+          if (Math.abs(bell) > Math.abs(maxOff)) {
+            maxOff = bell;
+          }
         }
 
-        const obsS = overtakeObstacleSRef.current;
-        const peakAmp = overtakePeakAmplitudeRef.current;
-        const sigma = 1.8; // Smooth natural Gaussian profile
-        const distFromObs = evalS - obsS;
-        let bell = peakAmp * Math.exp(-(distFromObs * distFromObs) / (2 * sigma * sigma));
-
-        // Smoothly taper back to centerline after passing the obstacle (+1.8m)
-        if (evalS > obsS + 1.8) {
-          const taper = Math.max(0, 1.0 - (evalS - (obsS + 1.8)) / 1.5);
-          bell *= taper;
+        // Smooth dampening near destination endpoint (< 2.0m from end)
+        const distFromEnd = totalLength - evalS;
+        if (distFromEnd < 2.0) {
+          maxOff *= Math.max(0.0, distFromEnd / 2.0);
         }
 
-        // Clamp to road boundary (±0.80m)
-        return Math.max(-0.80, Math.min(0.80, bell));
+        // Strictly clamp within valid asphalt boundaries (±0.85m)
+        return Math.max(-0.85, Math.min(0.85, maxOff));
       };
 
       // Robot's current lateral offset
@@ -1969,39 +1974,13 @@ const Robot = ({
       // Position update: track smoothly
       currentPos.copy(targetWithCurvedDiversion);
 
-      // --- Generate the exact Drivable Blue Route Line from current robot position through next destinations ---
+      // --- Always update the clear blue navigation line showing the robot's full planned route ahead ---
+      // When overtaking, the blue line shows the safe diversion path, passing route, and smooth return
       if (drivableRouteRef) {
-        const flatRoute: number[] = [];
-        // Point 0: Robot's exact current 3D position (elevated slightly to y=0.08 above asphalt)
-        flatRoute.push(currentPos.x, 0.08, currentPos.z);
-
-        const sampleStep = 0.35; // Fine-grained 35cm resolution for ultra-smooth curved line
-        for (let testS = s + sampleStep; testS < totalLength; testS += sampleStep) {
-          const u = testS / totalLength;
-          const basePt = curve.getPointAt(u);
-          const tangent = curve.getTangentAt(u).normalize();
-          const normal = new THREE.Vector3(tangent.z, 0, -tangent.x);
-          const off = getDrivableOffsetAt(testS);
-          const drivablePt = basePt.clone().add(normal.clone().multiplyScalar(off));
-          flatRoute.push(drivablePt.x, 0.08, drivablePt.z);
+        const flatRoute = buildFullRouteLine(curve, s, currentPos, getDrivableOffsetAt);
+        if (flatRoute.length >= 6) {
+          drivableRouteRef.current = flatRoute;
         }
-
-        // Final point of active leg: destination endpoint
-        const endPt = curve.getPointAt(1.0);
-        flatRoute.push(endPt.x, 0.08, endPt.z);
-
-        // Seamlessly append subsequent patrol destinations along the road network
-        if (upcomingLoopPoints3D && upcomingLoopPoints3D.length > 0) {
-          for (let i = 0; i < upcomingLoopPoints3D.length; i++) {
-            const pt3d = upcomingLoopPoints3D[i];
-            if (i === 0 && Math.hypot(pt3d.x - endPt.x, pt3d.z - endPt.z) < 0.2) {
-              continue;
-            }
-            flatRoute.push(pt3d.x, 0.08, pt3d.z);
-          }
-        }
-
-        drivableRouteRef.current = flatRoute;
       }
 
       // Stable orientation facing direction of travel: lookahead along the dynamic blue route line
@@ -2036,14 +2015,14 @@ const Robot = ({
       setStandoffReason(currentStandoffLabel);
       isCourteousStandoffRef.current = shouldCourteousStandOff;
 
-      const isFollowing = !shouldCourteousStandOff && !isOvertakeActive && primaryObs !== null && primaryObs.longitudinalDelta <= (SAFE_FOLLOW_DIST + 0.8);
+      const isFollowing = shouldCourteousStandOff && primaryObs !== null && primaryObs.longitudinalDelta <= (SAFE_FOLLOW_DIST + 0.8);
       setIsFollowingObstacle(isFollowing);
       if (primaryObs) {
-        setFollowingDistanceLabel(`${primaryObs.longitudinalDelta.toFixed(1)}m`);
+        setFollowingDistanceLabel(`${Math.max(0.1, primaryObs.longitudinalDelta).toFixed(1)}m`);
       }
 
-      setIsOvertaking(isOvertakeActive);
-      setIsSlowCaution(isOvertakeActive || targetSpeed < cruiseSpeed * 0.75);
+      setIsOvertaking(isOvertakeFeasible);
+      setIsSlowCaution(isOvertakeFeasible || targetSpeed < cruiseSpeed * 0.75);
       setIsWaiting(shouldCourteousStandOff || (targetSpeed === 0 && actualSpeedRef.current < 0.1));
 
       // Waypoint & Mission Completion Tracking
@@ -2069,14 +2048,9 @@ const Robot = ({
         const [sx, sy, sz] = getGridPosition(targetPt, gridSize, 0.22, isMapView);
         currentPos.lerp(new THREE.Vector3(sx, sy, sz), 0.1);
       }
-      // Keep blue route line visible ahead at all times, including during destination pause
-      if (drivableRouteRef) {
-        const flatRoute: number[] = [currentPos.x, 0.08, currentPos.z];
-        if (upcomingLoopPoints3D && upcomingLoopPoints3D.length > 0) {
-          for (let i = 0; i < upcomingLoopPoints3D.length; i++) {
-            flatRoute.push(upcomingLoopPoints3D[i].x, 0.08, upcomingLoopPoints3D[i].z);
-          }
-        }
+      // Always display clear blue navigation line showing full planned route ahead even when paused or idle
+      if (drivableRouteRef && curve) {
+        const flatRoute = buildFullRouteLine(curve, distanceTraveledRef.current, currentPos, () => 0);
         if (flatRoute.length >= 6) {
           drivableRouteRef.current = flatRoute;
         }
