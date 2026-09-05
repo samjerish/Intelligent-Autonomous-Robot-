@@ -1091,7 +1091,7 @@ const SciFiGate = ({ position, scale = 1, rotation = [0, 0, 0] }: { position: [n
        {/* Title Text */}
        <Html position={[0, 4, 0]} center style={{ pointerEvents: 'none' }}>
           <div className="text-[12px] font-black text-cyan-400 bg-black/80 px-3 py-1 rounded shadow-lg whitespace-nowrap border border-cyan-500/50 uppercase tracking-[0.3em]">
-             ASPIRE GATEWAY
+             CAMPUS GATEWAY
           </div>
        </Html>
     </group>
@@ -1103,12 +1103,13 @@ export const DetailedRobot = ({
   isMoving, showFeatures = false, activeFeature = "", isEmergency = false, 
   isSlowCaution = false, isWaiting = false, isCourteousStandoff = false, standoffLabel = "",
   isFollowingObstacle = false, isOvertaking = false, followingDistanceLabel = "",
-  checkpointCountdown = null, checkpointName = "" 
+  checkpointCountdown = null, checkpointName = "", isReversing = false, isYieldWaiting = false
 }: { 
   isMoving: boolean; showFeatures?: boolean; activeFeature?: string; isEmergency?: boolean; 
   isSlowCaution?: boolean; isWaiting?: boolean; isCourteousStandoff?: boolean; standoffLabel?: string;
   isFollowingObstacle?: boolean; isOvertaking?: boolean; followingDistanceLabel?: string;
   checkpointCountdown?: number | null; checkpointName?: string; 
+  isReversing?: boolean; isYieldWaiting?: boolean;
 }) => {
   const bodyRef = useRef<THREE.Group>(null);
   const headRef = useRef<THREE.Group>(null);
@@ -1131,7 +1132,7 @@ export const DetailedRobot = ({
     if (leftArmRef.current) leftArmRef.current.rotation.x = 0;
     if (rightArmRef.current) rightArmRef.current.rotation.x = 0;
 
-    const ws = isMoving ? (isSlowCaution ? 2.5 : 8) : 0;
+    const ws = isReversing ? -4.5 : (isMoving ? (isSlowCaution ? 2.5 : 8) : 0);
     if (leftWheelRef.current) leftWheelRef.current.rotation.x += delta * ws;
     if (rightWheelRef.current) rightWheelRef.current.rotation.x += delta * ws;
     if (frontWheelRef.current) frontWheelRef.current.rotation.x += delta * ws;
@@ -1399,8 +1400,28 @@ export const DetailedRobot = ({
           </Html>
         )}
 
+        {/* Real-time Reversing & Making Way Badge */}
+        {isReversing && checkpointCountdown === null && (
+          <Html position={[0, 1.55, 0]} center style={{ pointerEvents: 'none' }}>
+            <div className="flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-orange-500/95 border border-orange-200 text-slate-950 font-mono font-black text-[10.5px] tracking-wider uppercase shadow-[0_0_22px_rgba(249,115,22,0.95)] whitespace-nowrap">
+              <span className="w-2.5 h-2.5 rounded-full bg-slate-950 animate-ping"></span>
+              <span>⏪ REVERSING • MAKING WAY FOR OBSTACLE</span>
+            </div>
+          </Html>
+        )}
+
+        {/* Real-time Yield Waiting Badge */}
+        {isYieldWaiting && !isReversing && checkpointCountdown === null && (
+          <Html position={[0, 1.50, 0]} center style={{ pointerEvents: 'none' }}>
+            <div className="flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-amber-500/95 border border-amber-200 text-slate-950 font-mono font-black text-[10.5px] tracking-wider uppercase shadow-[0_0_18px_rgba(245,158,11,0.9)] whitespace-nowrap">
+              <span className="w-2 h-2 rounded-full bg-slate-950 animate-pulse"></span>
+              <span>⏳ YIELDING TO OBSTACLE • MAKING WAY</span>
+            </div>
+          </Html>
+        )}
+
         {/* Real-time Courteous Standoff Badge */}
-        {isCourteousStandoff && checkpointCountdown === null && (
+        {isCourteousStandoff && !isReversing && !isYieldWaiting && checkpointCountdown === null && (
           <Html position={[0, 1.50, 0]} center style={{ pointerEvents: 'none' }}>
             <div className="flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-amber-500/95 border border-amber-200 text-slate-950 font-mono font-black text-[10.5px] tracking-wider uppercase shadow-[0_0_18px_rgba(245,158,11,0.9)] whitespace-nowrap">
               <span className="w-2 h-2 rounded-full bg-slate-950 animate-pulse"></span>
@@ -2209,6 +2230,7 @@ const Robot = ({
 
 const DrivablePathLine = ({ 
   drivableRouteRef,
+  drivableRouteColorsRef,
   path,
   gridSize,
   isMapView,
@@ -2217,6 +2239,7 @@ const DrivablePathLine = ({
   opacity = 0.95 
 }: { 
   drivableRouteRef: React.MutableRefObject<number[]>;
+  drivableRouteColorsRef?: React.MutableRefObject<number[]>;
   path: GridPoint[];
   gridSize: GridPoint;
   isMapView: boolean;
@@ -2228,38 +2251,41 @@ const DrivablePathLine = ({
   const lineGeom = useMemo(() => new LineGeometry(), []);
   
   const lineMat = useMemo(() => new LineMaterial({
-    color: new THREE.Color(color).getHex(),
+    vertexColors: true,
     linewidth: lineWidth,
     resolution: new THREE.Vector2(size.width, size.height),
     transparent: true,
     opacity: opacity,
     depthTest: true,
     depthWrite: false,
-  }), [color, lineWidth, opacity, size.width, size.height]);
+  }), [lineWidth, opacity, size.width, size.height]);
 
   const glowMat = useMemo(() => new LineMaterial({
-    color: new THREE.Color(color).getHex(),
+    vertexColors: true,
     linewidth: lineWidth * 2.2,
     resolution: new THREE.Vector2(size.width, size.height),
     transparent: true,
-    opacity: 0.28,
+    opacity: 0.32,
     depthTest: true,
     depthWrite: false,
-  }), [color, lineWidth, size.width, size.height]);
+  }), [lineWidth, size.width, size.height]);
 
   const lineObj = useMemo(() => new Line2(lineGeom, lineMat), [lineGeom, lineMat]);
   const glowObj = useMemo(() => new Line2(lineGeom, glowMat), [lineGeom, glowMat]);
 
-  // Initial fallback points from path before dynamic simulation frames begin
-  const fallbackPoints = useMemo(() => {
-    if (path.length < 2) return [];
+  // Initial fallback points and default blue colors from path before dynamic simulation frames begin
+  const { fallbackPoints, fallbackColors } = useMemo(() => {
+    if (path.length < 2) return { fallbackPoints: [], fallbackColors: [] };
     const pts: number[] = [];
+    const cls: number[] = [];
+    const normalColor = new THREE.Color(color);
     for (let i = 0; i < path.length; i++) {
       const [x, , z] = getGridPosition(path[i], gridSize, 0.08, isMapView);
       pts.push(x, 0.08, z);
+      cls.push(normalColor.r, normalColor.g, normalColor.b);
     }
-    return pts;
-  }, [path, gridSize, isMapView]);
+    return { fallbackPoints: pts, fallbackColors: cls };
+  }, [path, gridSize, isMapView, color]);
 
   useFrame(() => {
     lineMat.resolution.set(size.width, size.height);
@@ -2269,8 +2295,15 @@ const DrivablePathLine = ({
       ? drivableRouteRef.current 
       : fallbackPoints;
 
+    const colors = (drivableRouteColorsRef && drivableRouteColorsRef.current && drivableRouteColorsRef.current.length === pts.length)
+      ? drivableRouteColorsRef.current
+      : fallbackColors;
+
     if (pts && pts.length >= 6) {
       lineGeom.setPositions(pts);
+      if (colors && colors.length === pts.length) {
+        lineGeom.setColors(colors);
+      }
       lineObj.computeLineDistances();
       glowObj.computeLineDistances();
       lineObj.visible = true;
