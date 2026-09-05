@@ -2149,10 +2149,10 @@ const Robot = ({
             const sideDot = toObs.dot(normAtObs);
             const preferredSide = sideDot >= 0 ? -1 : 1;
             const clearance = preferredSide < 0 ? (2.2 + sideDot) : (2.2 - sideDot);
-            if (clearance >= 1.15) {
+            if (clearance >= 1.40) {
               idleDiversions.push({
                 sObstacle,
-                peakAmplitude: preferredSide * Math.min(1.15, Math.max(0.95, 0.75 + Math.abs(sideDot)))
+                peakAmplitude: preferredSide * Math.min(1.20, Math.max(1.05, 0.85 + Math.abs(sideDot)))
               });
             }
           }
@@ -2160,7 +2160,7 @@ const Robot = ({
 
         const idleOffsetFn = (evalS: number): number => {
           let maxOff = 0;
-          const sigma = 2.5;
+          const sigma = 2.6;
           for (const div of idleDiversions) {
             const distFromObs = evalS - div.sObstacle;
             const bell = div.peakAmplitude * Math.exp(-(distFromObs * distFromObs) / (2 * sigma * sigma));
@@ -2168,7 +2168,7 @@ const Robot = ({
           }
           const distFromEnd = totalLength - evalS;
           if (distFromEnd < 2.0) maxOff *= Math.max(0.0, distFromEnd / 2.0);
-          return Math.max(-1.15, Math.min(1.15, maxOff));
+          return Math.max(-1.20, Math.min(1.20, maxOff));
         };
 
         const flatRoute = buildFullRouteLine(curve, distanceTraveledRef.current, currentPos, idleOffsetFn);
