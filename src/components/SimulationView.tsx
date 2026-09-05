@@ -2125,9 +2125,11 @@ const Robot = ({
       };
 
       // "the robot should not change its positions rapidly"
-      // 1. Strictly rate-limit lateral offset changes (maximum 1.2 m/s lateral transition)
+      const safeDelta = Math.min(0.04, delta);
+
+      // 1. Strictly rate-limit lateral offset changes (maximum 0.85 m/s lateral transition)
       const targetOffset = getDrivableOffsetAt(s);
-      const maxOffsetDelta = 1.2 * delta;
+      const maxOffsetDelta = 0.85 * safeDelta;
       smoothedLateralOffsetRef.current = THREE.MathUtils.clamp(
         targetOffset,
         smoothedLateralOffsetRef.current - maxOffsetDelta,
@@ -2136,13 +2138,13 @@ const Robot = ({
 
       // 2. Smooth rate-limited acceleration and deceleration (no sudden braking or jerky stops)
       const isBraking = targetSpeed < actualSpeedRef.current;
-      const speedRate = isBraking ? 2.0 : 1.2;
-      actualSpeedRef.current = THREE.MathUtils.lerp(actualSpeedRef.current, targetSpeed, delta * speedRate);
+      const speedRate = isBraking ? 1.8 : 1.0;
+      actualSpeedRef.current = THREE.MathUtils.lerp(actualSpeedRef.current, targetSpeed, safeDelta * speedRate);
 
-      // 3. Advance distance along the spline continuously
+      // 3. Advance distance along the road spline continuously
       if (Math.abs(actualSpeedRef.current) > 0.01) {
         if (!isMovingRef.current) { isMovingRef.current = true; setIsMoving(true); }
-        distanceTraveledRef.current = Math.max(0, Math.min(totalLength, distanceTraveledRef.current + actualSpeedRef.current * delta));
+        distanceTraveledRef.current = Math.max(0, Math.min(totalLength, distanceTraveledRef.current + actualSpeedRef.current * safeDelta));
       } else {
         if (isMovingRef.current) { isMovingRef.current = false; setIsMoving(false); }
       }
@@ -2157,8 +2159,18 @@ const Robot = ({
         baseSplineNormal.clone().multiplyScalar(smoothedLateralOffsetRef.current)
       );
 
-      // 4. Position update: smooth tracking without rapid jumping
-      currentPos.copy(targetWithCurvedDiversion);
+      // 4. Position update: strictly smooth movement along the road network without rapid jumping or snapping
+      const distToTarget = currentPos.distanceTo(targetWithCurvedDiversion);
+      if (distToTarget > 0.0001) {
+        const safeSpeed = Math.abs(actualSpeedRef.current);
+        const maxPhysicalStep = Math.max(0.04, (safeSpeed + 0.6) * safeDelta * 1.5);
+        if (distToTarget <= maxPhysicalStep) {
+          currentPos.copy(targetWithCurvedDiversion);
+        } else {
+          // Smoothly glide to target without any instantaneous teleportation
+          currentPos.lerp(targetWithCurvedDiversion, Math.min(1.0, 8.0 * safeDelta));
+        }
+      }
 
       // --- Update Navigation Route Line: Yellow for diversion alone, Blue for normal patrol route ---
       if (drivableRouteRef) {
@@ -2185,14 +2197,14 @@ const Robot = ({
       );
 
       const forwardVector = new THREE.Vector3().subVectors(lookaheadTarget, currentPos);
-      if (forwardVector.lengthSq() > 0.001) {
+      if (forwardVector.lengthSq() > 0.04 && (Math.abs(actualSpeedRef.current) > 0.04 || !isCourteousStandoff)) {
         const targetYaw = Math.atan2(forwardVector.x, forwardVector.z);
         let diff = targetYaw - ref.current.rotation.y;
         while (diff < -Math.PI) diff += Math.PI * 2;
         while (diff > Math.PI) diff -= Math.PI * 2;
 
-        if (Math.abs(diff) > 0.005) {
-          const maxYawRate = 2.4 * delta;
+        if (Math.abs(diff) > 0.008) {
+          const maxYawRate = 2.0 * safeDelta;
           ref.current.rotation.y += THREE.MathUtils.clamp(diff, -maxYawRate, maxYawRate);
         }
       }
@@ -2229,11 +2241,8 @@ const Robot = ({
       }
     } else {
       if (isMovingRef.current) { isMovingRef.current = false; setIsMoving(false); }
-      if (path.length > 0) {
-        const targetPt = hasCompletedRef.current ? path[path.length - 1] : path[0];
-        const [sx, sy, sz] = getGridPosition(targetPt, gridSize, 0.22, isMapView);
-        currentPos.lerp(new THREE.Vector3(sx, sy, sz), 0.1);
-      }
+      actualSpeedRef.current = 0;
+      // Stably hold physical position without moving, lerping, or snapping
       // Always display clear navigation line showing full planned route ahead even when paused or idle
       if (drivableRouteRef && curve) {
         const s = distanceTraveledRef.current;
@@ -2668,16 +2677,20 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
 
     if (!targetRoom) return;
 
-    // Use current destination node or exact robot position so new leg begins exactly where robot is standing
-    const currentLoc = (path.length > 0) 
-      ? path[path.length - 1] 
-      : (robotPosRef.current ? getGridPointFromVector3(robotPosRef.current, mapData.gridSize) : mapData.start);
-    const targetLoc = targetRoom.door || targetRoom.start;
+    // Use current physical robot location (or start) snapped to the nearest road network
+    const rawLoc = (robotPosRef.current && mapData) 
+      ? getGridPointFromVector3(robotPosRef.current, mapData.gridSize) 
+      : (path.length > 0 ? path[path.length - 1] : mapData.start);
+    const currentLoc = getNearestRoadPoint(rawLoc, mapData);
+
+    const rawTarget = targetRoom.door || targetRoom.start;
+    const targetLoc = getNearestRoadPoint(rawTarget, mapData);
 
     const allObstacles = [...(mapData.obstacles || []), ...userBlockers];
     let patrolPath = calculatePath(currentLoc, targetLoc, allObstacles, mapData, true);
     if (patrolPath.length < 2) {
-      patrolPath = calculatePath(currentLoc, targetLoc, allObstacles, mapData, false);
+      // If user blocker blocked route, calculate road path around static obstacles
+      patrolPath = calculatePath(currentLoc, targetLoc, mapData.obstacles || [], mapData, true);
     }
 
     if (patrolPath.length > 0) {
@@ -2685,7 +2698,7 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
       setCurrentPosIndex(0);
       setRobotState('patrol');
       setIsPlaying(true);
-      addExplanation(`🚀 Checkpoint [${safeIdx + 1}/${PATROL_CHECKPOINTS.length}]: Smooth patrol route to ${targetName} engaged.`);
+      addExplanation(`🚀 Checkpoint [${safeIdx + 1}/${PATROL_CHECKPOINTS.length}]: Continuous road patrol to ${targetName} engaged.`);
     }
   };
 
@@ -2713,12 +2726,12 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
       const r2 = getRoom(PATROL_CHECKPOINTS[toIdx]);
       if (!r1 || !r2) continue;
 
-      const d1 = r1.door || r1.start;
-      const d2 = r2.door || r2.start;
+      const d1 = getNearestRoadPoint(r1.door || r1.start, mapData);
+      const d2 = getNearestRoadPoint(r2.door || r2.start, mapData);
 
       let leg = calculatePath(d1, d2, allObstacles, mapData, true);
       if (leg.length < 2) {
-        leg = calculatePath(d1, d2, allObstacles, mapData, false);
+        leg = calculatePath(d1, d2, mapData.obstacles || [], mapData, true);
       }
 
       // Convert grid waypoints along the road to smooth 3D points
@@ -3646,8 +3659,12 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
             patrolTimerRef.current = null;
             setPatrolCountdown(null);
 
-            const currentLoc = path.length > 0 ? path[path.length - 1] : mapData.start;
-            const nextPath = calculatePath(currentLoc, nextTask.location, [...(mapData.obstacles || []), ...userBlockers], mapData);
+            const rawLoc = (robotPosRef.current && mapData)
+              ? getGridPointFromVector3(robotPosRef.current, mapData.gridSize)
+              : (path.length > 0 ? path[path.length - 1] : mapData.start);
+            const currentLoc = getNearestRoadPoint(rawLoc, mapData);
+            const targetLoc = getNearestRoadPoint(nextTask.location, mapData);
+            const nextPath = calculatePath(currentLoc, targetLoc, [...(mapData.obstacles || []), ...userBlockers], mapData, true);
             if (nextPath.length > 0) {
               setPath(nextPath);
               setCurrentPosIndex(0);
