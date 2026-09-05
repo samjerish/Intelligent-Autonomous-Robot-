@@ -123,7 +123,23 @@ const SHIRT_COLORS = ['#3b82f6', '#ef4444', '#10b981', '#f59e0b', '#8b5cf6', '#0
 const PANTS_COLORS = ['#1e293b', '#334155', '#475569', '#1e1b4b', '#0f172a', '#374151'];
 const SKIN_TONES = ['#fcd34d', '#fed7aa', '#fbcfe8', '#e2e8f0', '#d97706'];
 
-const MovingEntity = ({ obstacle, gridSize, isMapView, robotPosRef, allObstaclesRef }: { obstacle: DynamicObstacle, gridSize: GridPoint, isMapView: boolean, robotPosRef?: React.MutableRefObject<THREE.Vector3 | null>, allObstaclesRef?: React.MutableRefObject<DynamicObstacle[]> }) => {
+const MovingEntity = ({ 
+  obstacle, 
+  gridSize, 
+  isMapView, 
+  robotPosRef, 
+  allObstaclesRef,
+  mapData,
+  userBlockers = []
+}: { 
+  obstacle: DynamicObstacle; 
+  gridSize: GridPoint; 
+  isMapView: boolean; 
+  robotPosRef?: React.MutableRefObject<THREE.Vector3 | null>; 
+  allObstaclesRef?: React.MutableRefObject<DynamicObstacle[]>;
+  mapData?: MapData | null;
+  userBlockers?: GridPoint[];
+}) => {
   const ref = useRef<THREE.Group>(null);
   const carIndex = parseInt(obstacle.id.replace(/\D/g, '') || '0', 10);
   const carColor = CAR_COLORS[carIndex % CAR_COLORS.length];
@@ -133,16 +149,15 @@ const MovingEntity = ({ obstacle, gridSize, isMapView, robotPosRef, allObstacles
   const pantsColor = PANTS_COLORS[carIndex % PANTS_COLORS.length];
   const skinColor = SKIN_TONES[carIndex % SKIN_TONES.length];
   
-  // Lane offset:
-  // Road obstacles placed directly in the robot's driving path travel in the assigned right lane (+0.35m)
-  const isInDrivingPath = obstacle.id.startsWith('obs_road') || isRoadWalker;
-  const baseOffset = isInDrivingPath ? 0.35 : (isCar ? 0.35 : 0.55);
+  // Lane offset: Assigned right lane (+0.35m from road centerline)
+  const baseOffset = 0.35;
   const yieldOffsetRef = useRef(baseOffset);
   const lastDirRef = useRef({ x: 0, z: 1 });
   const walkClockRef = useRef(Math.random() * 10);
   const smoothedSpeedFactorRef = useRef(1.0);
   const stuckTimerRef = useRef(0);
   const lastCheckPosRef = useRef<THREE.Vector3 | null>(null);
+  const isExtendingPathRef = useRef(false);
   
   // Animation refs
   const leftLegRef = useRef<THREE.Group>(null);
@@ -166,150 +181,234 @@ const MovingEntity = ({ obstacle, gridSize, isMapView, robotPosRef, allObstacles
     obstacle.pos = getGridPointFromVector3(currentPos, gridSize);
     obstacle.pos3D = currentPos.clone();
 
-    const targetNode = obstacle.path[Math.min(obstacle.currentIndex, obstacle.path.length - 1)];
-    const prevNode = obstacle.path[Math.max(0, obstacle.currentIndex - 1)] || targetNode;
-    
-    // Direction vector of movement
-    const dx = targetNode.x - prevNode.x;
-    const dy = targetNode.y - prevNode.y;
-    const moveLen = Math.hypot(dx, dy);
-    if (moveLen > 0.01) {
-      lastDirRef.current = { x: dx / moveLen, z: dy / moveLen };
+    // ── 1. Seamless Continuous Route Extension (No 180° flips, No stopping) ──
+    const remainingNodes = obstacle.path.length - obstacle.currentIndex;
+    if (remainingNodes <= 4 && mapData && mapData.roads && mapData.roads.length > 5 && !isExtendingPathRef.current) {
+      isExtendingPathRef.current = true;
+      const endNode = obstacle.path[obstacle.path.length - 1];
+      let candidateTarget: GridPoint | null = null;
+      for (let attempt = 0; attempt < 10; attempt++) {
+        const r = mapData.roads[Math.floor(Math.random() * mapData.roads.length)];
+        if (Math.hypot(r.x - endNode.x, r.y - endNode.y) >= 6) {
+          candidateTarget = r;
+          break;
+        }
+      }
+      if (!candidateTarget) {
+        candidateTarget = mapData.roads[Math.floor(Math.random() * mapData.roads.length)];
+      }
+
+      if (candidateTarget && (candidateTarget.x !== endNode.x || candidateTarget.y !== endNode.y)) {
+        const allObs = [...(mapData.obstacles || []), ...(userBlockers || [])];
+        const extension = calculatePath(endNode, candidateTarget, allObs, mapData, true);
+        if (extension && extension.length > 1) {
+          obstacle.path.push(...extension.slice(1));
+          obstacle.targetPos = obstacle.path[obstacle.path.length - 1];
+        }
+      }
+      isExtendingPathRef.current = false;
+    }
+
+    if (obstacle.currentIndex >= obstacle.path.length - 1) {
+      obstacle.currentIndex = Math.max(0, obstacle.path.length - 2);
+    }
+
+    // ── 2. Lookahead Path Sampling (Smooth continuous trajectory & curvature) ──
+    const lookaheadDist = isCar ? 1.4 : 0.9;
+    let accumulatedDist = 0;
+    const clampedIdx = Math.min(obstacle.currentIndex, obstacle.path.length - 1);
+    const [currNodeX, currNodeY, currNodeZ] = getGridPosition(obstacle.path[clampedIdx], gridSize, 0.05, isMapView);
+    let prevPt = new THREE.Vector3(currNodeX, currNodeY, currNodeZ);
+    let headingVec = new THREE.Vector3(lastDirRef.current.x, 0, lastDirRef.current.z);
+    let lookaheadPt = prevPt.clone();
+    let pathCurvature = 0;
+
+    for (let i = clampedIdx; i < obstacle.path.length - 1; i++) {
+      const [nx, ny, nz] = getGridPosition(obstacle.path[i + 1], gridSize, 0.05, isMapView);
+      const nextPt = new THREE.Vector3(nx, ny, nz);
+      const segLen = prevPt.distanceTo(nextPt);
+      if (accumulatedDist + segLen >= lookaheadDist) {
+        const tSeg = Math.max(0, Math.min(1, (lookaheadDist - accumulatedDist) / Math.max(0.01, segLen)));
+        lookaheadPt = prevPt.clone().lerp(nextPt, tSeg);
+        headingVec = nextPt.clone().sub(prevPt).normalize();
+
+        if (i + 2 < obstacle.path.length) {
+          const [nnx, , nnz] = getGridPosition(obstacle.path[i + 2], gridSize, 0.05, isMapView);
+          const futureHeading = new THREE.Vector3(nnx - nx, 0, nnz - nz).normalize();
+          pathCurvature = Math.abs(headingVec.angleTo(futureHeading));
+        }
+        break;
+      }
+      accumulatedDist += segLen;
+      prevPt = nextPt;
+      lookaheadPt = nextPt.clone();
+    }
+
+    if (headingVec.lengthSq() > 0.01) {
+      lastDirRef.current = { x: headingVec.x, z: headingVec.z };
     }
     const dirX = lastDirRef.current.x;
     const dirZ = lastDirRef.current.z;
-    
-    // Lateral vector (perpendicular to travel direction, pointing to right side of lane)
     const latX = dirZ;
     const latZ = -dirX;
-    
+
     let yieldTarget = baseOffset;
     let isYielding = false;
     let speedFactor = 1.0;
+    const myRadius = isCar ? 0.42 : 0.28;
 
-    // ── 1. Obstacle-to-Robot Collision Avoidance & Safe Following ──
+    // ── 3. Predictive Mutual Collision Avoidance with Robot ──
     if (robotPosRef && robotPosRef.current) {
       const distToRobot = currentPos.distanceTo(robotPosRef.current);
-      const toRobotX = robotPosRef.current.x - currentPos.x;
-      const toRobotZ = robotPosRef.current.z - currentPos.z;
-      const fwdToRobot = toRobotX * dirX + toRobotZ * dirZ;
-      const latToRobot = Math.abs(toRobotX * latX + toRobotZ * latZ);
+      const toRobot = new THREE.Vector3().subVectors(robotPosRef.current, currentPos);
+      const fwdToRobot = toRobot.x * dirX + toRobot.z * dirZ;
+      const latToRobot = Math.abs(toRobot.x * latX + toRobot.z * latZ);
 
-      // Moving obstacles stay on the road in the driving lane (+0.35m)
-      yieldTarget = baseOffset;
-
-      // Case 1: Obstacle is following the robot (robot is in front of obstacle)
-      // "Obstacles must also avoid one another: they should never collide, overlap, freeze into each other, or cross through the robot."
-      if (fwdToRobot > 0.1 && fwdToRobot < 6.0 && latToRobot < 1.30) {
+      // Following behind robot
+      if (fwdToRobot > 0.1 && fwdToRobot < 6.5 && latToRobot < 1.30) {
         isYielding = true;
-        // Maintain strict safe following distance behind robot (min 2.2m)
-        if (fwdToRobot <= 2.2) {
-          // Smoothly hold safe standoff distance behind robot
-          speedFactor = Math.min(speedFactor, 0.0);
-        } else {
-          // Smoothly pace following speed behind robot
-          const followFactor = THREE.MathUtils.clamp((fwdToRobot - 2.2) / 2.8, 0.15, 0.95);
-          speedFactor = Math.min(speedFactor, followFactor);
+        if (fwdToRobot < 3.2) {
+          // Check if passing lane on the left (-0.75m) is clear to pass the robot smoothly
+          let passingLaneClear = true;
+          if (allObstaclesRef && allObstaclesRef.current) {
+            for (const other of allObstaclesRef.current) {
+              if (other.id === obstacle.id || !other.pos3D) continue;
+              const d = currentPos.distanceTo(other.pos3D);
+              if (d < 3.5 && (other.pos3D.x - currentPos.x) * latX + (other.pos3D.z - currentPos.z) * latZ < 0) {
+                passingLaneClear = false;
+                break;
+              }
+            }
+          }
+
+          if (passingLaneClear && fwdToRobot < 2.8) {
+            // Smoothly steer into passing corridor and pass smoothly!
+            yieldTarget = -0.75;
+            speedFactor = Math.min(speedFactor, 0.85);
+          } else {
+            // Pace speed smoothly behind robot without stopping (minimum crawl 0.25)
+            const followFactor = THREE.MathUtils.clamp((fwdToRobot - 1.8) / 2.2, 0.25, 0.95);
+            speedFactor = Math.min(speedFactor, followFactor);
+            yieldTarget = 0.45;
+          }
         }
       } 
-      // Case 2: Robot is passing alongside or oncoming
-      else if (fwdToRobot <= 0.1 && distToRobot < 4.0) {
-        if (latToRobot < 1.35) {
-          // Nudge slightly right (+0.50) to give the robot a wide, generous passing gap
-          yieldTarget = Math.max(yieldTarget, 0.50);
-          speedFactor = Math.min(speedFactor, 0.85);
+      // Oncoming or passing alongside robot
+      else if (distToRobot < 4.5 && fwdToRobot <= 0.1) {
+        if (latToRobot < 1.30) {
+          yieldTarget = Math.max(yieldTarget, 0.55);
+          speedFactor = Math.min(speedFactor, 0.88);
         }
       }
 
       // Hard physical exclusion: obstacle must NEVER touch or penetrate robot hull
-      if (distToRobot < 1.35 && distToRobot > 0.001) {
-        const pushX = (currentPos.x - robotPosRef.current.x) / distToRobot;
-        const pushZ = (currentPos.z - robotPosRef.current.z) / distToRobot;
-        const overlap = 1.35 - distToRobot;
-        currentPos.x += pushX * overlap * delta * 2.5;
-        currentPos.z += pushZ * overlap * delta * 2.5;
+      const minRobotSep = myRadius + 0.38 + 0.20;
+      if (distToRobot < minRobotSep && distToRobot > 0.001) {
+        const pushDir = toRobot.clone().negate().normalize();
+        const overlap = minRobotSep - distToRobot;
+        currentPos.add(pushDir.multiplyScalar(overlap * delta * 2.0));
       }
     }
 
-    // ── 2. Obstacle-to-Obstacle Mutual Collision Avoidance & Safe Spacing ──
-    const myRadius = isCar ? 0.65 : 0.38;
+    // ── 4. Predictive Mutual Collision Avoidance with Other Obstacles ──
     if (allObstaclesRef && allObstaclesRef.current) {
       for (const other of allObstaclesRef.current) {
-        if (other.id === obstacle.id) continue;
+        if (other.id === obstacle.id || !other.pos3D) continue;
         const otherPos = other.pos3D;
-        if (!otherPos) continue;
         const otherIsCar = other.type === 'car';
-        const otherRadius = otherIsCar ? 0.65 : 0.38;
-        const minCenterSep = myRadius + otherRadius + 0.65; // Minimum safe buffer: at least 65cm between hulls
+        const otherRadius = otherIsCar ? 0.42 : 0.28;
+        const minCenterSep = myRadius + otherRadius + 0.45;
 
         const distToOther = currentPos.distanceTo(otherPos);
         if (distToOther < 7.0) {
-          const toOtherX = otherPos.x - currentPos.x;
-          const toOtherZ = otherPos.z - currentPos.z;
-          const fwd = toOtherX * dirX + toOtherZ * dirZ;
-          const lat = Math.abs(toOtherX * latX + toOtherZ * latZ);
+          const toOther = new THREE.Vector3().subVectors(otherPos, currentPos);
+          const fwd = toOther.x * dirX + toOther.z * dirZ;
+          const lat = Math.abs(toOther.x * latX + toOther.z * latZ);
 
-          // Case A: Following another entity ahead in the same path / lane
-          if (fwd > 0.1 && fwd < 6.0 && lat < 1.20) {
+          // Following another obstacle in the same lane
+          if (fwd > 0.1 && fwd < 6.0 && lat < 1.25) {
             isYielding = true;
-            // Shift towards lane edge to maximize visibility & safe gap
-            yieldTarget = baseOffset >= 0 ? 0.60 : -0.60;
-
-            // Safe following distance: if too close, smoothly decelerate to maintain minCenterSep
-            if (fwd <= minCenterSep) {
-              speedFactor = Math.min(speedFactor, 0.0);
-            } else {
-              const paceFactor = THREE.MathUtils.clamp((fwd - minCenterSep) / 3.0, 0.15, 0.95);
-              speedFactor = Math.min(speedFactor, paceFactor);
+            if (fwd < 3.2) {
+              const isOtherSlower = (other.speed || 1.5) < obstacle.speed;
+              if (isOtherSlower && fwd < 2.6) {
+                yieldTarget = -0.75; // Overtake via left passing corridor!
+                speedFactor = Math.min(speedFactor, 0.90);
+              } else {
+                const pace = THREE.MathUtils.clamp((fwd - minCenterSep) / 2.5, 0.25, 0.95);
+                speedFactor = Math.min(speedFactor, pace);
+                yieldTarget = 0.50;
+              }
             }
           }
 
-          // Case B: Oncoming traffic approaching
+          // Oncoming traffic approaching
           const otherVel = other.velocity;
           if (otherVel) {
             const closingSpeed = -(otherVel.x * dirX + otherVel.z * dirZ);
-            if (closingSpeed > 0.3 && distToOther < 6.0 && lat < 1.30) {
+            if (closingSpeed > 0.25 && distToOther < 6.0 && lat < 1.35) {
               isYielding = true;
-              // Both entities yield towards their respective right (+0.70) to pass each other with wide clearance
-              yieldTarget = 0.70;
-              const adapted = THREE.MathUtils.clamp((distToOther - minCenterSep) / 3.5, 0.50, 0.95);
+              yieldTarget = 0.60;
+              const adapted = THREE.MathUtils.clamp((distToOther - minCenterSep) / 3.5, 0.55, 0.95);
               speedFactor = Math.min(speedFactor, adapted);
             }
           }
 
-          // Case C: Critical overlap prevention / repulsion
+          // Intersection / Crossing traffic (Predictive CPA)
+          if (otherVel && Math.abs(fwd) < 3.5 && lat > 0.8 && lat < 4.0) {
+            const vSelf = new THREE.Vector3(dirX * obstacle.speed, 0, dirZ * obstacle.speed);
+            const vRel = new THREE.Vector3().subVectors(otherVel, vSelf);
+            const rRel = toOther.clone();
+            const relSpeedSq = vRel.lengthSq();
+            if (relSpeedSq > 0.1) {
+              const tCpa = -rRel.dot(vRel) / relSpeedSq;
+              if (tCpa > 0.2 && tCpa < 2.5) {
+                const posSelfAtCpa = currentPos.clone().add(vSelf.clone().multiplyScalar(tCpa));
+                const posOtherAtCpa = otherPos.clone().add(otherVel.clone().multiplyScalar(tCpa));
+                const distAtCpa = posSelfAtCpa.distanceTo(posOtherAtCpa);
+                if (distAtCpa < minCenterSep + 0.40) {
+                  if (carIndex > parseInt(other.id.replace(/\D/g, '') || '0', 10)) {
+                    isYielding = true;
+                    const yieldDecel = THREE.MathUtils.clamp(tCpa / 2.5, 0.35, 0.85);
+                    speedFactor = Math.min(speedFactor, yieldDecel);
+                  }
+                }
+              }
+            }
+          }
+
+          // Zero-overlap repulsive separation
           if (distToOther < minCenterSep && distToOther > 0.001) {
-            // Smoothly push apart to guarantee zero mesh overlap
-            const pushDirX = (currentPos.x - otherPos.x) / distToOther;
-            const pushDirZ = (currentPos.z - otherPos.z) / distToOther;
-            const overlapAmount = minCenterSep - distToOther;
-            currentPos.x += pushDirX * overlapAmount * delta * 2.0;
-            currentPos.z += pushDirZ * overlapAmount * delta * 2.0;
+            const pushDir = toOther.clone().negate().normalize();
+            const overlap = minCenterSep - distToOther;
+            currentPos.add(pushDir.multiplyScalar(overlap * delta * 2.0));
           }
         }
       }
     }
 
-    // Smoothly shift laterally to lane / shoulder position
-    yieldOffsetRef.current = THREE.MathUtils.lerp(yieldOffsetRef.current, yieldTarget, delta * 4.0);
-    
-    // Taillight alert intensity when yielding
+    // ── 5. Smooth Speed Regulation & Dynamic Cornering ──
+    yieldOffsetRef.current = THREE.MathUtils.lerp(yieldOffsetRef.current, yieldTarget, delta * 3.5);
+
     if (taillightMatRef.current) {
       taillightMatRef.current.emissiveIntensity = isYielding ? 2.2 : 1.0;
     }
 
-    // Smooth rate-limited speed transitions (fluid, natural, gradual acceleration and braking)
-    const lerpRate = speedFactor < smoothedSpeedFactorRef.current ? 4.5 : 2.5;
-    smoothedSpeedFactorRef.current = THREE.MathUtils.clamp(
-      THREE.MathUtils.lerp(smoothedSpeedFactorRef.current, speedFactor, delta * lerpRate),
-      0.0,
-      1.0
-    );
+    // Natural cornering deceleration
+    if (pathCurvature > 0.25) {
+      const cornerDamp = THREE.MathUtils.lerp(1.0, 0.60, Math.min(1.0, pathCurvature / 1.2));
+      speedFactor *= cornerDamp;
+    }
 
-    // Realistic continuous movement speed with gradual adjustments
-    const currentSpeed = obstacle.speed * smoothedSpeedFactorRef.current;
+    // Guaranteed continuous motion: never drop to 0! Minimum crawling speed 0.22
+    const clampedFactor = Math.max(0.22, Math.min(1.0, speedFactor));
+    const lerpRate = clampedFactor < smoothedSpeedFactorRef.current ? 3.5 : 2.0;
+    smoothedSpeedFactorRef.current = THREE.MathUtils.lerp(smoothedSpeedFactorRef.current, clampedFactor, delta * lerpRate);
 
-    // Walking animation for pedestrians
+    // Organic speed variation
+    const organicSpeed = obstacle.speed * (1.0 + 0.08 * Math.sin(t * 0.7 + carIndex * 1.618));
+    const currentSpeed = organicSpeed * smoothedSpeedFactorRef.current;
+
+    // ── 6. Visual Animations (Wheels & Legs) ──
     if (!isCar) {
       const walkSpeed = currentSpeed * 3.2;
       const legAngle = Math.sin(t * walkSpeed) * 0.45;
@@ -319,7 +418,6 @@ const MovingEntity = ({ obstacle, gridSize, isMapView, robotPosRef, allObstacles
       if (leftArmRef.current) leftArmRef.current.rotation.x = armAngle;
       if (rightArmRef.current) rightArmRef.current.rotation.x = -armAngle;
     } else {
-      // Wheel spin animation for cars
       const wheelSpin = delta * currentSpeed * 3.5;
       if (wheel1Ref.current) wheel1Ref.current.rotation.x += wheelSpin;
       if (wheel2Ref.current) wheel2Ref.current.rotation.x += wheelSpin;
@@ -327,41 +425,70 @@ const MovingEntity = ({ obstacle, gridSize, isMapView, robotPosRef, allObstacles
       if (wheel4Ref.current) wheel4Ref.current.rotation.x += wheelSpin;
     }
 
-    const [baseTx, ty, baseTz] = getGridPosition(targetNode, gridSize, 0.05, isMapView);
+    // ── 7. Lookahead Target Vector & Smooth Motion Update ──
     const targetVector = new THREE.Vector3(
-      baseTx + latX * yieldOffsetRef.current,
-      ty,
-      baseTz + latZ * yieldOffsetRef.current
+      lookaheadPt.x + latX * yieldOffsetRef.current,
+      lookaheadPt.y,
+      lookaheadPt.z + latZ * yieldOffsetRef.current
     );
-    
-    const dist = currentPos.distanceTo(targetVector);
-    if (dist < 0.35) {
-      if (obstacle.currentIndex < obstacle.path.length - 1) {
+
+    // Advance waypoint progression along path
+    if (obstacle.currentIndex < obstacle.path.length - 1) {
+      const currNode = obstacle.path[obstacle.currentIndex];
+      const [cnx, , cnz] = getGridPosition(currNode, gridSize, 0.05, isMapView);
+      const toNode = new THREE.Vector3(cnx - currentPos.x, 0, cnz - currentPos.z);
+      if (toNode.dot(headingVec) <= 0.25 || currentPos.distanceTo(new THREE.Vector3(cnx, currentPos.y, cnz)) < 0.65) {
         obstacle.currentIndex++;
-      } else {
-        // Continuous looping: reverse waypoints and continue smoothly without any stop
-        obstacle.path.reverse();
-        obstacle.currentIndex = 1;
+        obstacle.pos = obstacle.path[obstacle.currentIndex];
       }
-      obstacle.pos = obstacle.path[obstacle.currentIndex];
     }
 
-    // Anti-stuck watchdog: only trigger if NOT intentionally yielding/waiting
+    // Set real-time velocity vector for predictive dynamic obstacle modeling
+    obstacle.velocity = new THREE.Vector3(dirX * currentSpeed, 0, dirZ * currentSpeed);
+    const moveDist = currentSpeed * delta;
+    if (moveDist > 0) {
+      const moveDir = new THREE.Vector3().subVectors(targetVector, currentPos).normalize();
+      if (moveDir.lengthSq() > 0.001) {
+        currentPos.add(moveDir.multiplyScalar(moveDist));
+      }
+    }
+
+    // ── 8. Rate-Limited Steering & Front Wheel Angle ──
+    const toTarget = new THREE.Vector3().subVectors(targetVector, currentPos);
+    if (toTarget.lengthSq() > 0.001) {
+      const targetRotation = Math.atan2(toTarget.x, toTarget.z);
+      let diff = targetRotation - ref.current.rotation.y;
+      while (diff < -Math.PI) diff += Math.PI * 2;
+      while (diff > Math.PI) diff -= Math.PI * 2;
+      const maxTurnRate = isCar ? 2.0 : 3.2; // Realistic smooth steering without snapping
+      const turnDelta = THREE.MathUtils.clamp(diff, -maxTurnRate * delta, maxTurnRate * delta);
+      ref.current.rotation.y += turnDelta;
+
+      // Physically turn front wheels on cars into the steering curve
+      if (isCar) {
+        const steerAngle = THREE.MathUtils.clamp(diff * 0.45, -0.42, 0.42);
+        if (wheel1Ref.current) wheel1Ref.current.rotation.y = steerAngle;
+        if (wheel2Ref.current) wheel2Ref.current.rotation.y = steerAngle;
+      }
+    }
+
+    // ── 9. Anti-Stuck Dynamic Detour Watchdog ──
     if (!lastCheckPosRef.current) {
       lastCheckPosRef.current = currentPos.clone();
     } else {
       const stepMoved = currentPos.distanceTo(lastCheckPosRef.current);
-      if (!isYielding && stepMoved < 0.08 * delta) {
+      if (stepMoved < 0.10 * delta) {
         stuckTimerRef.current += delta;
-        if (stuckTimerRef.current > 2.0) {
-          // If stationary/stuck for > 2.0s without yielding, advance waypoint to restore flow
-          if (obstacle.currentIndex < obstacle.path.length - 1) {
-            obstacle.currentIndex++;
-          } else {
-            obstacle.path.reverse();
-            obstacle.currentIndex = 1;
+        if (stuckTimerRef.current > 2.0 && mapData && mapData.roads && mapData.roads.length > 5) {
+          const myGrid = getGridPointFromVector3(currentPos, gridSize);
+          const detourTarget = mapData.roads[Math.floor(Math.random() * mapData.roads.length)];
+          const allObs = [...(mapData.obstacles || []), ...(userBlockers || [])];
+          const detourPath = calculatePath(myGrid, detourTarget, allObs, mapData, true);
+          if (detourPath && detourPath.length >= 2) {
+            obstacle.path = detourPath;
+            obstacle.currentIndex = 0;
+            obstacle.targetPos = detourPath[detourPath.length - 1];
           }
-          obstacle.pos = obstacle.path[obstacle.currentIndex];
           stuckTimerRef.current = 0;
         }
       } else {
@@ -369,30 +496,22 @@ const MovingEntity = ({ obstacle, gridSize, isMapView, robotPosRef, allObstacles
       }
       lastCheckPosRef.current.copy(currentPos);
     }
-
-    // Set real-time velocity vector for predictive dynamic obstacle modeling
-    obstacle.velocity = new THREE.Vector3(dirX * currentSpeed, 0, dirZ * currentSpeed);
-    const moveDist = currentSpeed * delta;
-    if (moveDist > 0) {
-      const direction = new THREE.Vector3().subVectors(targetVector, currentPos).normalize();
-      if (direction.lengthSq() > 0.001) {
-        currentPos.add(direction.multiplyScalar(moveDist));
-      }
-    }
-    const rotDirection = new THREE.Vector3().subVectors(targetVector, currentPos);
-    if (rotDirection.lengthSq() > 0.001) {
-      const targetRotation = Math.atan2(rotDirection.x, rotDirection.z);
-      let diff = targetRotation - ref.current.rotation.y;
-      while (diff < -Math.PI) diff += Math.PI * 2;
-      while (diff > Math.PI) diff -= Math.PI * 2;
-      ref.current.rotation.y += diff * Math.min(1.0, delta * 7.0);
-    }
   });
 
   const startNode = obstacle.path[0] || { x: 0, y: 0, f: 0 };
   const baseStart = getGridPosition(startNode, gridSize, 0.05, isMapView);
-  const startOffset = baseOffset;
-  const startPos: [number, number, number] = [baseStart[0] + startOffset, baseStart[1], baseStart[2]];
+  let startX = baseStart[0];
+  let startZ = baseStart[2];
+  if (obstacle.path.length >= 2) {
+    const [n1x, , n1z] = getGridPosition(obstacle.path[1], gridSize, 0.05, isMapView);
+    const initH = new THREE.Vector3(n1x - startX, 0, n1z - startZ).normalize();
+    const initNorm = new THREE.Vector3(initH.z, 0, -initH.x);
+    startX += initNorm.x * baseOffset;
+    startZ += initNorm.z * baseOffset;
+  } else {
+    startX += baseOffset;
+  }
+  const startPos: [number, number, number] = [startX, baseStart[1], startZ];
 
   return (
     <group ref={ref} position={startPos}>
