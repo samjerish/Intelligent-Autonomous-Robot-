@@ -1466,7 +1466,7 @@ export const DetailedRobot = ({
 
 const Robot = ({
   path, currentIndex, isPlaying, gridSize, isMapView, speed, dynamicObstaclesRef,
-  staticObstacles = [], drivableRouteRef, upcomingLoopPoints3D = [],
+  staticObstacles = [], drivableRouteRef, drivableRouteColorsRef, upcomingLoopPoints3D = [],
   onReachNode, onMissionComplete, onObstacleDetected: _onObstacleDetected, robotPosRef, robotRotRef, isEmergency = false,
   checkpointCountdown = null, checkpointName = "",
   addExplanation
@@ -1480,6 +1480,7 @@ const Robot = ({
   dynamicObstaclesRef: React.MutableRefObject<DynamicObstacle[]>;
   staticObstacles?: GridPoint[];
   drivableRouteRef?: React.MutableRefObject<number[]>;
+  drivableRouteColorsRef?: React.MutableRefObject<number[]>;
   upcomingLoopPoints3D?: THREE.Vector3[];
   onReachNode: (idx: number) => void;
   onMissionComplete: () => void;
@@ -1501,6 +1502,16 @@ const Robot = ({
   const [isFollowingObstacle, setIsFollowingObstacle] = useState(false);
   const [isOvertaking, setIsOvertaking] = useState(false);
   const [followingDistanceLabel, setFollowingDistanceLabel] = useState('');
+  
+  // Reversing and Yielding State (make way for obstacle first, then proceed to destination)
+  const isReversingRef = useRef(false);
+  const [isReversing, setIsReversing] = useState(false);
+  const isYieldWaitingRef = useRef(false);
+  const [isYieldWaiting, setIsYieldWaiting] = useState(false);
+  const reverseTargetSRef = useRef(0);
+  const yieldWaitTimerRef = useRef(0);
+  const conflictingObsIdRef = useRef<string | null>(null);
+
   const isCourteousStandoffRef = useRef(false);
   const courteousClearTimerRef = useRef(0);
   const lastFollowingLogTime = useRef(0);
@@ -1547,18 +1558,36 @@ const Robot = ({
     hasCompletedRef.current = false;
     distanceTraveledRef.current = 0;
     courteousClearTimerRef.current = 0;
+    isReversingRef.current = false;
+    setIsReversing(false);
+    isYieldWaitingRef.current = false;
+    setIsYieldWaiting(false);
+    conflictingObsIdRef.current = null;
   }, [path]);
 
   // Helper function to build the complete, continuous 3D planned navigation line
+  // Normal route: blue (#38bdf8), Diversion segment alone: vibrant orange (#ff7a00)
   const buildFullRouteLine = (
     evalCurve: THREE.CatmullRomCurve3,
     currentS: number,
     posVec: THREE.Vector3,
-    offsetFn: (sVal: number) => number
-  ): number[] => {
+    offsetFn: (sVal: number) => number,
+    isDivertingNow: boolean = false
+  ): { points: number[]; colors: number[] } => {
     const flatRoute: number[] = [];
+    const flatColors: number[] = [];
+
+    const blueColor = new THREE.Color('#38bdf8');
+    const orangeColor = new THREE.Color('#ff7a00');
+
     // Point 0: Robot's exact current 3D position (elevated slightly to y=0.08 above asphalt)
     flatRoute.push(posVec.x, 0.08, posVec.z);
+    const p0Off = Math.abs(offsetFn(currentS));
+    if (isDivertingNow || p0Off > 0.05) {
+      flatColors.push(orangeColor.r, orangeColor.g, orangeColor.b);
+    } else {
+      flatColors.push(blueColor.r, blueColor.g, blueColor.b);
+    }
 
     const sampleStep = 0.30; // High-density 30cm sampling for ultra-smooth curved trajectory
     const startS = Math.min(totalLength, currentS + sampleStep);
@@ -1570,6 +1599,13 @@ const Robot = ({
       const off = offsetFn(testS);
       const drivablePt = basePt.clone().add(normal.clone().multiplyScalar(off));
       flatRoute.push(drivablePt.x, 0.08, drivablePt.z);
+
+      // Highlight route color to orange for taking diversion alone; normal route maintains blue color
+      if (Math.abs(off) > 0.05) {
+        flatColors.push(orangeColor.r, orangeColor.g, orangeColor.b);
+      } else {
+        flatColors.push(blueColor.r, blueColor.g, blueColor.b);
+      }
     }
 
     // Destination endpoint of active leg
@@ -1579,8 +1615,13 @@ const Robot = ({
     const endOff = offsetFn(totalLength);
     const endDrivablePt = endPt.clone().add(endNormal.clone().multiplyScalar(endOff));
     flatRoute.push(endDrivablePt.x, 0.08, endDrivablePt.z);
+    if (Math.abs(endOff) > 0.05) {
+      flatColors.push(orangeColor.r, orangeColor.g, orangeColor.b);
+    } else {
+      flatColors.push(blueColor.r, blueColor.g, blueColor.b);
+    }
 
-    // Seamlessly append all subsequent patrol destinations along the road network
+    // Seamlessly append all subsequent patrol destinations along the road network in standard blue
     if (upcomingLoopPoints3D && upcomingLoopPoints3D.length > 0) {
       for (let i = 0; i < upcomingLoopPoints3D.length; i++) {
         const pt3d = upcomingLoopPoints3D[i];
@@ -1588,10 +1629,11 @@ const Robot = ({
           continue;
         }
         flatRoute.push(pt3d.x, 0.08, pt3d.z);
+        flatColors.push(blueColor.r, blueColor.g, blueColor.b);
       }
     }
 
-    return flatRoute;
+    return { points: flatRoute, colors: flatColors };
   };
 
   useFrame((_state, delta) => {
@@ -1613,13 +1655,18 @@ const Robot = ({
       }
       if (drivableRouteRef) {
         const flatRoute: number[] = [currentPos.x, 0.08, currentPos.z];
+        const flatColors: number[] = [0.22, 0.74, 0.97];
         if (upcomingLoopPoints3D && upcomingLoopPoints3D.length > 0) {
           for (let i = 0; i < upcomingLoopPoints3D.length; i++) {
             flatRoute.push(upcomingLoopPoints3D[i].x, 0.08, upcomingLoopPoints3D[i].z);
+            flatColors.push(0.22, 0.74, 0.97);
           }
         }
         if (flatRoute.length >= 6) {
           drivableRouteRef.current = flatRoute;
+          if (drivableRouteColorsRef) {
+            drivableRouteColorsRef.current = flatColors;
+          }
         }
       }
       return;
