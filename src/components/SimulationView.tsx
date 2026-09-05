@@ -1806,6 +1806,7 @@ const Robot = ({
 
   useFrame((_state, delta) => {
     if (!ref.current) return;
+    const safeDelta = Math.min(0.04, delta);
     const currentPos = ref.current.position;
     robotPosRef.current = currentPos.clone();
     robotRotRef.current = ref.current.rotation.y;
@@ -2540,8 +2541,6 @@ const Robot = ({
       }
 
       // "the robot should not change its positions rapidly"
-      const safeDelta = Math.min(0.04, delta);
-
       // 1. Smooth rate-limited acceleration and deceleration (no sudden braking or jerky stops)
       const isBraking = targetSpeed < actualSpeedRef.current;
       const speedRate = isBraking ? 2.0 : 1.2;
