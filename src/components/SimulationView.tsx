@@ -7,7 +7,6 @@ import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import {
   OrbitControls,
   Box,
-  Line,
   Plane,
   OrthographicCamera,
   PerspectiveCamera,
@@ -88,10 +87,11 @@ const CameraController = ({ isFollowing, robotPosRef, robotRotRef, controlsRef, 
       const behindDist = 4.8;
       const upDist = 2.8;
       
+      const heading = smoothHeading.current ?? rawTheta;
       const offset = new THREE.Vector3(
-        -Math.sin(smoothHeading.current) * behindDist,
+        -Math.sin(heading) * behindDist,
         upDist,
-        -Math.cos(smoothHeading.current) * behindDist
+        -Math.cos(heading) * behindDist
       );
       const desiredPos = new THREE.Vector3().copy(robotPosRef.current).add(offset);
 
@@ -733,6 +733,38 @@ const PoliceVehicle = ({ policeState, policeStateRef, gridSize, isMapView, onRea
   );
 };
 
+const ParkModel = ({ width, depth, height, isEco }: { width: number; depth: number; height: number; isEco: boolean }) => {
+  const treeCount = isEco ? 15 : 4;
+  const trees = useMemo(() => {
+    return Array.from({ length: treeCount }).map((_, i) => {
+      const seed1 = ((i * 9301 + 49297) % 233280) / 233280;
+      const seed2 = (((i + 7) * 9301 + 49297) % 233280) / 233280;
+      const tx = (seed1 - 0.5) * width * 0.8;
+      const tz = (seed2 - 0.5) * depth * 0.8;
+      return { tx, tz, id: i };
+    });
+  }, [width, depth, treeCount]);
+
+  return (
+    <group>
+      <Box args={[width, 0.2, depth]} position={[0, -height / 2 + 0.1, 0]} receiveShadow>
+        <meshStandardMaterial color="#22c55e" />
+      </Box>
+      {trees.map((t) => (
+        <group key={t.id} position={[t.tx, -height / 2 + 0.5, t.tz]}>
+          <Cylinder args={[0.1, 0.1, 0.8]} position={[0, -0.1, 0]}>
+            <meshStandardMaterial color="#78350f" />
+          </Cylinder>
+          <Cylinder args={[0.4, 0.6, 1.2]} position={[0, 0.8, 0]}>
+            <meshStandardMaterial color="#15803d" />
+          </Cylinder>
+        </group>
+      ))}
+      <Butterflies />
+    </group>
+  );
+};
+
 const BuildingModel = React.memo(({ room, width, height, depth }: { room: Room, width: number, height: number, depth: number }) => {
   const type = room.type || "unknown";
   const nameLow = room.name.toLowerCase();
@@ -977,30 +1009,7 @@ const BuildingModel = React.memo(({ room, width, height, depth }: { room: Room, 
       );
     }
   } else if (type === 'park') {
-    return (
-      <group>
-        <Box args={[width, 0.2, depth]} position={[0, -height/2 + 0.1, 0]} receiveShadow>
-          <meshStandardMaterial color="#22c55e" />
-        </Box>
-        {/* Many trees for Eco Park - useMemo so they don't jump around on re-renders */}
-        {useMemo(() => [...Array(nameLow.includes('eco') ? 15 : 4)].map((_, i) => {
-          const tx = (Math.random() - 0.5) * width * 0.8;
-          const tz = (Math.random() - 0.5) * depth * 0.8;
-          return (
-            <group key={i} position={[tx, -height/2 + 0.5, tz]}>
-              <Cylinder args={[0.1, 0.1, 0.8]} position={[0, -0.1, 0]}>
-                 <meshStandardMaterial color="#78350f" />
-              </Cylinder>
-              <Cylinder args={[0.4, 0.6, 1.2]} position={[0, 0.8, 0]}>
-                 <meshStandardMaterial color="#15803d" />
-              </Cylinder>
-            </group>
-          );
-        }), [width, depth, nameLow])}
-        {/* Butterflies */}
-        <Butterflies />
-      </group>
-    );
+    return <ParkModel width={width} depth={depth} height={height} isEco={nameLow.includes('eco')} />;
   } else if (type === 'food') {
     return (
       <group>
@@ -1407,7 +1416,7 @@ export const DetailedRobot = ({
 const Robot = ({
   path, currentIndex, isPlaying, gridSize, isMapView, speed, dynamicObstaclesRef,
   staticObstacles = [], drivableRouteRef, upcomingLoopPoints3D = [],
-  onReachNode, onMissionComplete, onObstacleDetected, robotPosRef, robotRotRef, isEmergency = false,
+  onReachNode, onMissionComplete, onObstacleDetected: _onObstacleDetected, robotPosRef, robotRotRef, isEmergency = false,
   checkpointCountdown = null, checkpointName = "",
   addExplanation
 }: {
@@ -1527,7 +1536,6 @@ const Robot = ({
 
       // --- Predictive Dynamic Obstacle Sensing & Unified Drivable Spline Trajectory ---
       const activeObstacles: { sObstacle: number; peakAmplitude: number; isCrossing: boolean; minCpaDist: number; timeAtCpa: number }[] = [];
-      let isCrossingYield = false;
       let closestObsDist = 999;
       let isAnyObstacleBlocking = false;
       let shouldCourteousStandOff = false;
@@ -1964,7 +1972,7 @@ const DrivablePathLine = ({
   const lineGeom = useMemo(() => new LineGeometry(), []);
   
   const lineMat = useMemo(() => new LineMaterial({
-    color: new THREE.Color(color),
+    color: new THREE.Color(color).getHex(),
     linewidth: lineWidth,
     resolution: new THREE.Vector2(size.width, size.height),
     transparent: true,
@@ -1973,7 +1981,7 @@ const DrivablePathLine = ({
   }), [color, lineWidth, opacity, size.width, size.height]);
 
   const glowMat = useMemo(() => new LineMaterial({
-    color: new THREE.Color(color),
+    color: new THREE.Color(color).getHex(),
     linewidth: lineWidth * 2.2,
     resolution: new THREE.Vector2(size.width, size.height),
     transparent: true,
@@ -2099,13 +2107,53 @@ interface SimulationViewProps {
   selectedStrategyId?: string;
 }
 
-export const PATROL_CHECKPOINTS = [
+const PATROL_CHECKPOINTS = [
   'Administrative Building',
   'Library',
   'Auditorium',
   'Sports Ground',
   'Security Room'
 ];
+
+const RoomsRender = React.memo(({
+  rooms,
+  gridSize,
+  onSelectRoom,
+}: {
+  rooms?: Room[];
+  gridSize: GridPoint;
+  onSelectRoom: (room: Room) => void;
+}) => {
+  if (!rooms) return null;
+  return (
+    <>
+      {rooms.map((room: Room) => {
+        const width = (room.end.x - room.start.x + 1) * 0.75;
+        const depth = (room.end.y - room.start.y + 1) * 0.75;
+        const height = 3;
+        const x = (room.start.x + room.end.x) / 2 - gridSize.x / 2;
+        const z = (room.start.y + room.end.y) / 2 - gridSize.y / 2;
+        return (
+          <group
+            key={room.id}
+            position={[x, height / 2, z]}
+            onClick={(e) => {
+              e.stopPropagation();
+              onSelectRoom(room);
+            }}
+          >
+            <BuildingModel room={room} width={width} height={height} depth={depth} />
+            <Html position={[0, height / 2 + 1.5, 0]} center style={{ pointerEvents: 'none' }}>
+              <div className="text-[10px] font-bold text-white bg-black/80 px-2 py-1 rounded shadow-lg whitespace-nowrap">
+                {room.name}
+              </div>
+            </Html>
+          </group>
+        );
+      })}
+    </>
+  );
+});
 
 export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispatchMission, selectedStrategyId }) => {
   const [path, setPath] = useState<GridPoint[]>([]);
@@ -3549,23 +3597,7 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
               handleEmergencyCall(gridP);
             }} 
           />
-          {useMemo(() => rooms?.map((room: Room) => {
-            const width = (room.end.x - room.start.x + 1) * 0.75;
-            const depth = (room.end.y - room.start.y + 1) * 0.75;
-            const height = 3;
-            const x = (room.start.x + room.end.x) / 2 - gridSize.x / 2;
-            const z = (room.start.y + room.end.y) / 2 - gridSize.y / 2;
-            return (
-              <group key={room.id} position={[x, height / 2, z]} onClick={(e) => { e.stopPropagation(); setSelectedRoom(room); }}>
-                <BuildingModel room={room} width={width} height={height} depth={depth} />
-                <Html position={[0, height / 2 + 1.5, 0]} center style={{ pointerEvents: 'none' }}>
-                  <div className="text-[10px] font-bold text-white bg-black/80 px-2 py-1 rounded shadow-lg whitespace-nowrap">
-                    {room.name}
-                  </div>
-                </Html>
-              </group>
-            );
-          }), [rooms, gridSize, setSelectedRoom])}
+          <RoomsRender rooms={rooms} gridSize={gridSize} onSelectRoom={setSelectedRoom} />
           <RoadsRender roads={mapData.roads || []} gridSize={gridSize} />
           <BlockersRender blockers={userBlockers} gridSize={gridSize} roads={mapData.roads || []} />
           <CrowdsRender crowds={crowds} gridSize={gridSize} />
