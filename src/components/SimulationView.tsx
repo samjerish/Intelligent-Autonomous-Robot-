@@ -1416,7 +1416,7 @@ export const DetailedRobot = ({
           <Html position={[0, 1.50, 0]} center style={{ pointerEvents: 'none' }}>
             <div className="flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-cyan-500/95 border border-cyan-200 text-slate-950 font-mono font-black text-[10.5px] tracking-wider uppercase shadow-[0_0_18px_rgba(6,182,212,0.9)] whitespace-nowrap">
               <span className="w-2 h-2 rounded-full bg-slate-950 animate-ping"></span>
-              <span>⚡ SMOOTH OVERTAKE • WIDE SAFETY CLEARANCE</span>
+              <span>⚡ SAFE WIDE DIVERSION • COMFORTABLE CLEARANCE</span>
             </div>
           </Html>
         )}
@@ -1645,11 +1645,11 @@ const Robot = ({
             const obsSpeed = obsVel.length();
             const isMoving = obsSpeed > 0.08 || (obs.type === 'person' && obs.isMoving);
 
-            // CPA projection across horizon
+            // Predictive trajectory and CPA projection across horizon (t = 0.15s to 4.5s)
             let minCpaDist = 999;
             let timeAtCpa = 1.0;
             let sAtCpa = s + 1.0;
-            for (let tFuture = 0.15; tFuture <= 3.6; tFuture += 0.15) {
+            for (let tFuture = 0.15; tFuture <= 4.5; tFuture += 0.15) {
               const futureObsPos = obsPos3D.clone().add(obsVel.clone().multiplyScalar(tFuture));
               const projectedS = Math.min(totalLength, s + cruiseSpeed * tFuture);
               const projectedRobotPos = curve.getPointAt(projectedS / totalLength);
@@ -1663,7 +1663,7 @@ const Robot = ({
 
             // Estimate projection onto spline
             const lookStart = Math.max(0, s - 1.2);
-            const lookEnd = Math.min(totalLength, s + 8.0);
+            const lookEnd = Math.min(totalLength, s + 9.5);
             let bestDistSq = 9999;
             let sObstacle = sAtCpa;
             let curvePtAtObs = nominalPos;
@@ -1689,7 +1689,7 @@ const Robot = ({
 
             const relForwardVel = obsVel.dot(tangentAtObs);
             const relLateralVel = obsVel.dot(normAtObs);
-            const isCrossingTraffic = Math.abs(relLateralVel) > 0.18 && minCpaDist < 1.6 && timeAtCpa <= 2.5;
+            const isCrossingTraffic = Math.abs(relLateralVel) > 0.12 && minCpaDist < 2.2 && timeAtCpa <= 4.0;
 
             scannedObstacles.push({
               id: obs.id,
@@ -1771,16 +1771,16 @@ const Robot = ({
         }
       }
 
-      // ── Step 2: Obstacle Classification & Safe Non-Stopping Corridor Diversion ──
-      // Look ahead up to 10.0m along the curve, and keep active diversions until 5.0m past
+      // ── Step 2: Predictive Trajectory Modeling & Collision Prevention ──
+      // Forward prediction horizon: scan up to 10.5m along curve and active diversions within 5.0m
       const aheadInCorridor = scannedObstacles.filter(
-        o => o.longitudinalDelta >= -0.2 && o.longitudinalDelta < 10.0 && (o.lateralDist < 1.45 || o.minCpaDist < 1.6)
+        o => o.longitudinalDelta >= -0.2 && o.longitudinalDelta < 10.5 && (o.lateralDist < 1.45 || o.minCpaDist < 2.2)
       );
       aheadInCorridor.sort((a, b) => a.longitudinalDelta - b.longitudinalDelta);
       const primaryAheadObs = aheadInCorridor[0] || null;
 
       const corridorDiversionCandidates = scannedObstacles.filter(
-        o => o.longitudinalDelta > -5.0 && o.longitudinalDelta < 10.0 && (o.lateralDist < 1.45 || o.minCpaDist < 1.6)
+        o => o.longitudinalDelta > -5.0 && o.longitudinalDelta < 10.5 && (o.lateralDist < 1.45 || o.minCpaDist < 2.2)
       );
 
       interface PlannedDiversion {
@@ -1796,9 +1796,15 @@ const Robot = ({
       let targetSpeed = cruiseSpeed;
       let isOvertakeFeasible = false;
 
-      // Evaluate all corridor candidates for planned diversions
+      // Evaluate all corridor candidates with trajectory prediction:
       for (const obs of corridorDiversionCandidates) {
-        // Evaluate space on both sides to maintain a wide safety distance at all times
+        const isPedestrian = obs.type === 'person';
+        const isMoving = obs.isMoving;
+        const isOncoming = obs.relForwardVel < -0.06;
+        const isCrossing = obs.isCrossingTraffic;
+        const willIntersectAhead = obs.minCpaDist < 2.2 && obs.timeAtCpa <= 4.2;
+
+        // Space on both sides of the roadway
         const spaceLeft = 2.2 + obs.sideDot;
         const spaceRight = 2.2 - obs.sideDot;
 
@@ -1821,12 +1827,34 @@ const Robot = ({
           clearSpace = spaceRight;
         }
 
-        const hasEnoughSafeSpace = preferredSide !== 0 && clearSpace >= 1.15;
+        // Strict wide safety gap criteria:
+        // "Maintain a wide, comfortable safety distance at all times; do not scrape past, cut too close, or enter an unsafe gap."
+        // Minimum free space needed to qualify as a safe gap: 1.40m
+        const isWideComfortableGap = preferredSide !== 0 && clearSpace >= 1.40;
 
-        if (hasEnoughSafeSpace) {
-          // SAFE OVERTAKE WITHOUT STOPPING:
-          // Wide safety distance: offset to clear side with wide clearance (neither collides, scrapes, nor comes close)
-          const bypassAmp = preferredSide * Math.min(1.15, Math.max(0.95, 0.75 + Math.abs(obs.sideDot)));
+        // Condition 1: Predictive Slow Down / Waiting for Oncoming Traffic & Crossing Entities
+        // Entering a shared path with oncoming vehicles or cutting across crossing pedestrians violates:
+        // "do not scrape past, cut too close, or enter an unsafe gap... Predict moving obstacles' paths early and smoothly slow down, wait"
+        if (isMoving && (isOncoming || isCrossing) && willIntersectAhead) {
+          if (primaryAheadObs && obs.id === primaryAheadObs.id) {
+            shouldCourteousStandOff = true;
+            if (isCrossing) {
+              currentStandoffLabel = isPedestrian 
+                ? 'PREDICTED CROSSING PEDESTRIAN • WAITING SAFELY' 
+                : 'PREDICTED CROSSING VEHICLE • YIELDING SAFELY';
+            } else {
+              currentStandoffLabel = isPedestrian 
+                ? 'PREDICTED ONCOMING PEDESTRIAN • SMOOTHLY SLOWING DOWN' 
+                : 'PREDICTED ONCOMING VEHICLE • WAITING SAFELY';
+            }
+          }
+          continue;
+        }
+
+        // Condition 2: Safe Diversion when Wide Comfortable Gap Exists
+        if (isWideComfortableGap) {
+          // Generous lateral displacement (±1.15m) ensuring wide safety distance at all times
+          const bypassAmp = preferredSide * Math.min(1.20, Math.max(1.05, 0.85 + Math.abs(obs.sideDot)));
 
           plannedDiversions.push({
             id: obs.id,
@@ -1839,41 +1867,61 @@ const Robot = ({
             isOvertakeFeasible = true;
           }
         } else if (primaryAheadObs && obs.id === primaryAheadObs.id) {
-          // Completely blocked across all lanes with zero passable space
+          // Unsafe or tight gap (< 1.40m):
+          // "do not scrape past, cut too close, or enter an unsafe gap... smoothly slow down, wait"
           shouldCourteousStandOff = true;
-          currentStandoffLabel = 'ROAD COMPLETELY BLOCKED • WAITING FOR SAFE SPACE';
+          currentStandoffLabel = isMoving 
+            ? 'UNSAFE PASSING GAP • WAITING FOR WIDE CLEARANCE' 
+            : 'NARROW GAP • WAITING SAFELY FOR CLEAR PATH';
         }
       }
 
-      // Check if robot is actively in an overtaking diversion maneuver
+      // Check if robot is actively executing a wide safe diversion
       const isOvertakingActive = isOvertakeFeasible || (
         plannedDiversions.length > 0 && plannedDiversions.some(d => Math.abs(s - d.sObstacle) < 4.5)
       );
 
-      // Speed regulation: "The robot should not stop anywhere during patrol because of obstacles.
-      // It may pause only for the required 5 seconds at each destination.
-      // When overtaking is safe, it should take a gradual diversion, pass through the clear space,
-      // and smoothly return to its route while maintaining stable speed and natural movement."
+      // Speed regulation:
       if (shouldCourteousStandOff && primaryAheadObs && !isOvertakingActive) {
-        // Only if road is physically impenetrable with zero space does it decelerate
+        // Predictive smooth early deceleration & comfortable standoff distance
         const distAhead = primaryAheadObs.longitudinalDelta;
-        const gap = Math.max(0, distAhead - 1.8);
-        targetSpeed = cruiseSpeed * Math.min(1.0, Math.max(0.0, gap / 2.0));
+        const SAFE_STANDOFF = 2.8;
+        if (distAhead <= SAFE_STANDOFF) {
+          targetSpeed = 0;
+        } else {
+          // Gradual, gentle deceleration curve well ahead
+          const gap = distAhead - SAFE_STANDOFF;
+          targetSpeed = cruiseSpeed * Math.min(1.0, Math.max(0.1, gap / 3.0)) * 0.55;
+        }
+
         const now = Date.now();
         if (now - lastFollowingLogTime.current > 4000 && addExplanation) {
           lastFollowingLogTime.current = now;
-          addExplanation(`⏳ Road obstructed (${currentStandoffLabel}). Waiting for clear space.`);
+          addExplanation(`🛡️ Predictive Safety: ${currentStandoffLabel}. Maintaining wide safety distance.`);
         }
       } else if (isOvertakingActive) {
-        // Overtakes smoothly WITHOUT stopping, maintaining stable, steady speed
-        targetSpeed = cruiseSpeed * 0.92;
+        // Overtakes with wide, comfortable clearance at stable, controlled speed (88% cruise speed)
+        targetSpeed = cruiseSpeed * 0.88;
         const now = Date.now();
         if (now - lastOvertakeLogTime.current > 4000 && addExplanation) {
           lastOvertakeLogTime.current = now;
-          addExplanation('⚡ Safe space confirmed: Overtaking smoothly without stopping with wide safety clearance.');
+          addExplanation('⚡ Wide safe space confirmed: Taking gradual diversion with wide comfortable safety clearance.');
         }
       } else {
-        // Path is clear - maintain full stable cruise speed
+        // Path is completely clear
+        if (isCourteousStandoffRef.current) {
+          courteousClearTimerRef.current += delta;
+          if (courteousClearTimerRef.current > 0.3) {
+            isCourteousStandoffRef.current = false;
+            setIsCourteousStandoff(false);
+            const now = Date.now();
+            if (now - lastFollowingLogTime.current > 4000 && addExplanation) {
+              lastFollowingLogTime.current = now;
+              addExplanation('✓ Path is clear. Continuing smooth forward patrol.');
+            }
+          }
+        }
+
         const distToEnd = totalLength - s;
         if (distToEnd < 2.0) {
           // Gentle arrival at destination checkpoint
@@ -1883,11 +1931,52 @@ const Robot = ({
         }
       }
 
+      // ── Step 3: Active Physical Collision Shield (Hard Safety Guarantee) ──
+      // "The robot must never collide with any obstacle, pedestrian, or vehicle."
+      const robotRadius = 0.45;
+      const robotHeading = new THREE.Vector3(
+        Math.sin(ref.current.rotation.y),
+        0,
+        Math.cos(ref.current.rotation.y)
+      );
+      const robotLateral = new THREE.Vector3(
+        robotHeading.z,
+        0,
+        -robotHeading.x
+      );
+
+      let isHardShieldTriggered = false;
+      let minEdgeClearance = 999;
+
+      for (const obs of scannedObstacles) {
+        const obsRadius = obs.type === 'car' ? 0.65 : (obs.type === 'static' ? 0.55 : 0.38);
+        const distCenter = currentPos.distanceTo(obs.pos3D);
+        const edgeDist = Math.max(0, distCenter - (robotRadius + obsRadius));
+        if (edgeDist < minEdgeClearance) minEdgeClearance = edgeDist;
+
+        // Relative coordinates along robot heading
+        const toObs = new THREE.Vector3().subVectors(obs.pos3D, currentPos);
+        const fwdDist = toObs.dot(robotHeading);
+        const latDist = Math.abs(toObs.dot(robotLateral));
+
+        // Obstacle physically in forward path
+        if (fwdDist > -0.1 && fwdDist < 2.8 && latDist < 0.88) {
+          if (edgeDist < 1.15) {
+            // Absolute hard boundary: prevent any possibility of contact or scraping
+            isHardShieldTriggered = true;
+          }
+        }
+      }
+
+      if (isHardShieldTriggered) {
+        targetSpeed = 0; // Immediate gentle halt to guarantee zero collision
+      }
+
       // Mathematical function to compute exact lateral diversion at any point along the spline
       // Defines: (1) gradual diversion path, (2) wide safety clearance, (3) smooth return to original route
       const getDrivableOffsetAt = (evalS: number): number => {
         let maxOff = 0;
-        const sigma = 2.5; // Wide, natural Gaussian envelope starting ~5.5m ahead
+        const sigma = 2.6; // Wide, natural Gaussian envelope starting ~6.0m ahead
         for (const div of plannedDiversions) {
           const distFromObs = evalS - div.sObstacle;
           const bell = div.peakAmplitude * Math.exp(-(distFromObs * distFromObs) / (2 * sigma * sigma));
@@ -1902,8 +1991,8 @@ const Robot = ({
           maxOff *= Math.max(0.0, distFromEnd / 2.0);
         }
 
-        // Strictly clamp within valid asphalt boundaries (±1.15m)
-        return Math.max(-1.15, Math.min(1.15, maxOff));
+        // Strictly clamp within valid asphalt boundaries (±1.20m)
+        return Math.max(-1.20, Math.min(1.20, maxOff));
       };
 
       // Robot's current lateral offset
