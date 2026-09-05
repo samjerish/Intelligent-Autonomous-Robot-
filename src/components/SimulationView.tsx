@@ -2582,9 +2582,6 @@ const Robot = ({
       const isOvertakingActive = isOvertakeFeasible || activeDiversionRef.current !== null;
 
       // ── Step 3: Motion & Emergency Fallback State Machine ──
-      const now = Date.now();
-      const reverseCooldownElapsed = now - lastReverseEndTimeRef.current > 3500;
-
       // Step 3: Predictive Collision Prevention & Forward Corridor Envelope
       const robotRadius = 0.40;
       const robotHeading = new THREE.Vector3(
@@ -3152,7 +3149,7 @@ const Robot = ({
     let currentStatus: RobotLiveStatus;
     if (isPausedAtDestination) {
       currentStatus = 'IDLE';
-    } else if (primaryBarricade !== null && isBarricadeBlocked) {
+    } else if (hasBarricadeAhead && isBarricadeBlocked) {
       currentStatus = 'ROAD BARRICADE DETECTED';
     } else if (isOvertaking || activeDiversionRef.current !== null) {
       currentStatus = 'DIVERSION';
