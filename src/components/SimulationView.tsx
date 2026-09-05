@@ -1906,11 +1906,15 @@ const Robot = ({
       return { curve: null, totalLength: 0, waypointDistances: [] };
     }
 
-    // Anchor first point to exact current robot position if nearby to eliminate startup jumps
-    if (ref.current && unique3DPoints.length > 0) {
+    // Anchor first point to exact current robot road centerline to eliminate startup jumps
+    if (ref.current && unique3DPoints.length >= 2) {
       const cur = ref.current.position;
-      if (cur.distanceTo(unique3DPoints[0]) < 2.5) {
-        unique3DPoints[0].set(cur.x, unique3DPoints[0].y, cur.z);
+      const segDir = unique3DPoints[1].clone().sub(unique3DPoints[0]).normalize();
+      const segNormal = new THREE.Vector3(segDir.z, 0, -segDir.x);
+      // Project robot's current position to road centerline by subtracting the assigned lane offset (+0.35m)
+      const centerlineCur = cur.clone().sub(segNormal.clone().multiplyScalar(0.35));
+      if (cur.distanceTo(unique3DPoints[0]) < 3.5) {
+        unique3DPoints[0].set(centerlineCur.x, unique3DPoints[0].y, centerlineCur.z);
       }
     }
 
@@ -2510,10 +2514,27 @@ const Robot = ({
 
           if (!isGenuinelyBlocked) {
             // Normal vehicle or pedestrian traveling in the driving lane ahead:
-            // Follow smoothly at safe cruising distance on the normal blue route without overtaking
-            if (obs.longitudinalDelta < 5.0 && obs.relForwardVel >= 0.20) {
-              const followPace = THREE.MathUtils.clamp((obs.longitudinalDelta - 2.8) / 2.2, 0.25, 0.95);
-              targetSpeed = Math.min(targetSpeed, cruiseSpeed * followPace);
+            // "If overtaking is unsafe, the robot should reduce speed, keep a safe following distance, and give the obstacle enough space to move ahead."
+            // "The robot must never rush past, force an obstacle to move, collide, or come too close."
+            setIsFollowingObstacle(true);
+            setIsOvertaking(false);
+            shouldCourteousStandOff = false;
+
+            const leadSpeed = Math.max(0.2, obs.speed || (obs.relForwardVel + actualSpeedRef.current));
+            const desiredFollowGap = 3.6; // 3.6m safe following distance
+
+            if (obs.longitudinalDelta < desiredFollowGap) {
+              // Too close: reduce speed smoothly to give the lead obstacle space to move ahead
+              const slowDownFactor = THREE.MathUtils.clamp(obs.longitudinalDelta / desiredFollowGap, 0.35, 0.85);
+              targetSpeed = Math.min(targetSpeed, leadSpeed * slowDownFactor);
+              setFollowingDistanceLabel(`GIVING LEAD SPACE (${obs.longitudinalDelta.toFixed(1)}m) • PACING BEHIND`);
+            } else if (obs.longitudinalDelta < desiredFollowGap + 2.5) {
+              // In safe following envelope: pace smoothly behind the lead vehicle
+              const paceFactor = THREE.MathUtils.clamp((obs.longitudinalDelta - desiredFollowGap) / 2.0, 0.70, 1.0);
+              targetSpeed = Math.min(targetSpeed, leadSpeed * paceFactor);
+              setFollowingDistanceLabel(`SAFE FOLLOWING DISTANCE (${obs.longitudinalDelta.toFixed(1)}m) • PACING`);
+            } else {
+              setFollowingDistanceLabel('');
             }
           } else {
             // Blue route is genuinely blocked by a stopped/stalled obstacle or roadblock
@@ -2521,15 +2542,19 @@ const Robot = ({
 
             if (isAlreadyDivertingForThisObs) {
               isOvertakeFeasible = true;
+              setIsOvertaking(true);
+              setIsFollowingObstacle(false);
               shouldCourteousStandOff = false;
-              targetSpeed = cruiseSpeed * 0.92;
+              // "the robot may slowly and smoothly overtake using a planned yellow diversion route... never rush past"
+              targetSpeed = Math.min(cruiseSpeed * 0.50, 1.65);
+              setFollowingDistanceLabel('SLOW & SMOOTH OVERTAKE • WIDE CLEARANCE');
             } else {
               // "When an obstacle is detected ahead, start planning and showing the yellow diversion route well before the robot reaches it."
               // "The robot must begin its gradual turn early, with enough distance to safely move around the obstacle—never make a last-second dodge."
               const safePlan = calculateSafeDiversionPlan(obs);
 
               if (safePlan) {
-                // Safe gap exists on the road: immediately generate yellow diversion path and execute early gradual bypass!
+                // Safe gap exists on the road: slowly and smoothly overtake using planned yellow diversion route
                 activeDiversionRef.current = {
                   obstacleId: obs.id,
                   sStart: safePlan.sStart,
@@ -2545,29 +2570,34 @@ const Robot = ({
                   setIsReversing(false);
                 }
                 isOvertakeFeasible = true;
+                setIsOvertaking(true);
+                setIsFollowingObstacle(false);
                 shouldCourteousStandOff = false;
-                targetSpeed = cruiseSpeed * 0.92;
+                // Slow, smooth overtaking speed (never rush past, controlled pace ~1.6m/s)
+                targetSpeed = Math.min(cruiseSpeed * 0.50, 1.65);
+                setFollowingDistanceLabel('SLOW & SMOOTH OVERTAKE • WIDE CLEARANCE');
                 if (addExplanation) {
-                  addExplanation(`⚡ Obstacle genuinely blocking route ahead (${obs.longitudinalDelta.toFixed(1)}m). Early yellow diversion planned: Gradual bypass engaged with wide clearance.`);
+                  addExplanation(`⚡ Road blocked ahead (${obs.longitudinalDelta.toFixed(1)}m). Executing slow, smooth diversion with wide clearance.`);
                 }
               } else {
-                // "If there is not enough safe space for this full diversion, the robot must slow down and wait at a safe distance until a suitable route becomes available."
+                // "If overtaking is unsafe, the robot should reduce speed, keep a safe following distance, and give the obstacle enough space to move ahead."
                 shouldCourteousStandOff = true;
-                const safeStandoffDist = 3.0; // 3.0m safe buffer from obstacle
+                setIsOvertaking(false);
+                const safeStandoffDist = 3.2; // 3.2m safe buffer from obstacle
 
                 if (obs.longitudinalDelta > safeStandoffDist + 0.2) {
-                  // Smoothly slow down as the robot approaches the blocked obstacle
+                  // Smoothly reduce speed as the robot approaches the blocked obstacle
                   const approachSpeed = THREE.MathUtils.clamp(
-                    (obs.longitudinalDelta - safeStandoffDist) * 0.38,
+                    (obs.longitudinalDelta - safeStandoffDist) * 0.35,
                     0.15,
-                    cruiseSpeed * 0.45
+                    cruiseSpeed * 0.40
                   );
                   targetSpeed = Math.min(targetSpeed, approachSpeed);
-                  currentStandoffLabel = 'OBSTACLE AHEAD • SLOWING TO SAFE STANDOFF';
+                  currentStandoffLabel = 'OBSTACLE AHEAD • REDUCING SPEED';
                 } else {
-                  // Safely holding position at 3.0m standoff distance waiting for safe passing corridor to clear
+                  // Safely holding position at 3.2m standoff distance waiting for safe passing space
                   targetSpeed = 0;
-                  currentStandoffLabel = 'WAITING FOR SAFE PASSING CORRIDOR • STANDOFF (3.0m)';
+                  currentStandoffLabel = 'WAITING FOR SAFE PASSING SPACE • SAFE STANDOFF (3.2m)';
                 }
               }
             }
