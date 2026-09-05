@@ -1772,12 +1772,18 @@ const Robot = ({
       }
 
       // ── Step 2: Obstacle Classification & Corridor Evaluation ──
-      // Obstacles in or adjacent to the travel corridor ahead
-      const inCorridorAhead = scannedObstacles.filter(
-        o => o.longitudinalDelta > -1.2 && o.longitudinalDelta < 7.5 && (o.lateralDist < 1.35 || o.minCpaDist < 1.5)
+      // Obstacles along the travel corridor:
+      // A. Ahead obstacles (in front of robot) for safe following/standoff/overtake decision
+      const aheadInCorridor = scannedObstacles.filter(
+        o => o.longitudinalDelta >= -0.3 && o.longitudinalDelta < 8.0 && (o.lateralDist < 1.35 || o.minCpaDist < 1.5)
       );
-      inCorridorAhead.sort((a, b) => a.longitudinalDelta - b.longitudinalDelta);
-      const primaryObs = inCorridorAhead[0] || null;
+      aheadInCorridor.sort((a, b) => a.longitudinalDelta - b.longitudinalDelta);
+      const primaryAheadObs = aheadInCorridor[0] || null;
+
+      // B. Active or approaching obstacles within diversion zone (-3.8m past robot to +8.5m ahead)
+      const corridorDiversionCandidates = scannedObstacles.filter(
+        o => o.longitudinalDelta > -3.8 && o.longitudinalDelta < 8.5 && (o.lateralDist < 1.35 || o.minCpaDist < 1.5)
+      );
 
       // Safe following distance threshold (meters)
       const SAFE_FOLLOW_DIST = 2.8;
@@ -1795,104 +1801,99 @@ const Robot = ({
       let targetSpeed = cruiseSpeed;
       let isOvertakeFeasible = false;
 
-      if (primaryObs) {
-        const distAhead = primaryObs.longitudinalDelta;
-
-        // Condition A: Protection of Pedestrians & Moving Traffic
-        // "confirm that the road is clear, maintain wide clearance from the obstacle, and avoid disturbing pedestrians or other traffic."
-        const isPedestrian = primaryObs.type === 'person';
-        const isMovingObstacle = primaryObs.isMoving || primaryObs.speed > 0.08 || Math.abs(primaryObs.relForwardVel) > 0.08;
-        const isOncoming = primaryObs.relForwardVel < -0.08;
-        const isCrossing = primaryObs.isCrossingTraffic;
+      // Evaluate all corridor candidates for planned diversions
+      for (const obs of corridorDiversionCandidates) {
+        const isPedestrian = obs.type === 'person';
+        const isMovingObstacle = obs.isMoving || obs.speed > 0.08 || Math.abs(obs.relForwardVel) > 0.08;
+        const isOncoming = obs.relForwardVel < -0.08;
+        const isCrossing = obs.isCrossingTraffic;
 
         // Check if ANY pedestrian or oncoming traffic is in the passing zone or vicinity
         const hasConflictingTraffic = scannedObstacles.some(o => {
-          if (o.id === primaryObs.id) return false;
+          if (o.id === obs.id) return false;
           if (o.type === 'person' && o.distToRobot < 5.5) return true;
           if (o.relForwardVel < -0.05 && o.distToRobot < 7.5) return true;
           if (o.isCrossingTraffic && o.distToRobot < 5.0) return true;
           return false;
         });
 
+        // Moving pedestrians, oncoming vehicles, or conflicting traffic:
+        // Do NOT divert or overtake! Must protect pedestrians and traffic
         if (isPedestrian || isMovingObstacle || isOncoming || isCrossing || hasConflictingTraffic) {
-          // Pedestrian or moving traffic must NOT be disturbed -> Wait patiently at safe following distance
-          shouldCourteousStandOff = true;
-          if (isPedestrian) {
-            currentStandoffLabel = isOncoming ? 'YIELDING TO ONCOMING PEDESTRIAN' : 'PATIENTLY FOLLOWING PEDESTRIAN';
-          } else if (isCrossing) {
-            currentStandoffLabel = 'YIELDING TO CROSSING TRAFFIC';
-          } else if (hasConflictingTraffic) {
-            currentStandoffLabel = 'WAITING FOR TRAFFIC TO PASS';
-          } else {
-            currentStandoffLabel = 'FOLLOWING TRAFFIC AT SAFE DISTANCE';
+          if (primaryAheadObs && obs.id === primaryAheadObs.id) {
+            shouldCourteousStandOff = true;
+            if (isPedestrian) {
+              currentStandoffLabel = isOncoming ? 'YIELDING TO ONCOMING PEDESTRIAN' : 'PATIENTLY FOLLOWING PEDESTRIAN';
+            } else if (isCrossing) {
+              currentStandoffLabel = 'YIELDING TO CROSSING TRAFFIC';
+            } else if (hasConflictingTraffic) {
+              currentStandoffLabel = 'WAITING FOR TRAFFIC TO PASS';
+            } else {
+              currentStandoffLabel = 'FOLLOWING TRAFFIC AT SAFE DISTANCE';
+            }
           }
+          continue;
+        }
 
-          // Smoothly decelerate to halt at safe distance
-          if (distAhead <= SAFE_FOLLOW_DIST) {
-            targetSpeed = 0;
-          } else {
-            const gap = distAhead - SAFE_FOLLOW_DIST;
-            targetSpeed = cruiseSpeed * Math.min(1.0, Math.max(0.1, gap / 2.5)) * 0.45;
-          }
+        // Stationary obstacle (parked car, blocker, barrier)
+        // Verify wide clearance and open road
+        const preferredSide = obs.sideDot >= 0 ? -1 : 1; // if on right, pass left (-); if on left, pass right (+)
+        const bypassAmp = preferredSide * 0.82; // ±0.82m lateral diversion
+        const roadBoundaryDist = preferredSide < 0 ? (2.0 + obs.sideDot) : (2.0 - obs.sideDot);
+        const hasWideClearance = roadBoundaryDist >= 1.35;
 
-          const now = Date.now();
-          if (now - lastFollowingLogTime.current > 4000 && addExplanation) {
-            lastFollowingLogTime.current = now;
-            addExplanation(`🛡️ Safe Following: ${currentStandoffLabel}. Maintaining 2.8m safe distance. Waiting patiently.`);
-          }
-        } else {
-          // Obstacle is stationary (parked car, blocker, barrier)
-          // Condition B: Confirm Road is Clear with Wide Safe Clearance
-          const preferredSide = primaryObs.sideDot >= 0 ? -1 : 1; // if obs is on right, pass left (-); if on left, pass right (+)
-          const bypassAmp = preferredSide * 0.82; // ±0.82m lateral diversion
+        // Verify passing zone is not blocked
+        const passingZoneBlocked = scannedObstacles.some(o => {
+          if (o.id === obs.id) return false;
+          const inZoneS = o.sObstacle > (obs.sObstacle - 2.5) && o.sObstacle < (obs.sObstacle + 2.5);
+          const onBypassSide = (preferredSide < 0 && o.sideDot < -0.2) || (preferredSide > 0 && o.sideDot > 0.2);
+          return inZoneS && onBypassSide;
+        });
 
-          const roadBoundaryDist = preferredSide < 0 ? (2.0 + primaryObs.sideDot) : (2.0 - primaryObs.sideDot);
-          const hasWideClearance = roadBoundaryDist >= 1.35;
-
-          // Check if passing zone has any other blockers
-          const passingZoneBlocked = scannedObstacles.some(o => {
-            if (o.id === primaryObs.id) return false;
-            const inZoneS = o.sObstacle > (primaryObs.sObstacle - 2.5) && o.sObstacle < (primaryObs.sObstacle + 2.5);
-            const onBypassSide = (preferredSide < 0 && o.sideDot < -0.2) || (preferredSide > 0 && o.sideDot > 0.2);
-            return inZoneS && onBypassSide;
+        if (hasWideClearance && !passingZoneBlocked) {
+          // SAFE OVERTAKE PERMITTED: Gradual diversion, wide clearance, smooth return
+          plannedDiversions.push({
+            id: obs.id,
+            sObstacle: obs.sObstacle,
+            peakAmplitude: bypassAmp,
+            clearanceMeters: roadBoundaryDist,
           });
 
-          if (hasWideClearance && !passingZoneBlocked) {
-            // SAFE OVERTAKE PERMITTED: Gradual diversion, pass safely with wide clearance, smooth return
+          if (primaryAheadObs && obs.id === primaryAheadObs.id) {
             isOvertakeFeasible = true;
-            plannedDiversions.push({
-              id: primaryObs.id,
-              sObstacle: primaryObs.sObstacle,
-              peakAmplitude: bypassAmp,
-              clearanceMeters: roadBoundaryDist,
-            });
-
-            // Gentle caution speed while overtaking (65% cruise speed)
-            targetSpeed = cruiseSpeed * 0.65;
-
-            const now = Date.now();
-            if (now - lastOvertakeLogTime.current > 4000 && addExplanation) {
-              lastOvertakeLogTime.current = now;
-              addExplanation(`⚡ Safe clearance verified (${roadBoundaryDist.toFixed(1)}m). Updating blue navigation line with gradual diversion and passing with wide clearance.`);
-            }
-          } else {
-            // Road pinched / not enough safe clearance -> Wait patiently
-            shouldCourteousStandOff = true;
-            currentStandoffLabel = 'NARROW ROAD • WAITING FOR CLEAR PASSING SPACE';
-            if (distAhead <= SAFE_FOLLOW_DIST) {
-              targetSpeed = 0;
-            } else {
-              const gap = distAhead - SAFE_FOLLOW_DIST;
-              targetSpeed = cruiseSpeed * Math.min(1.0, Math.max(0.1, gap / 2.5)) * 0.45;
-            }
-
-            const now = Date.now();
-            if (now - lastFollowingLogTime.current > 4000 && addExplanation) {
-              lastFollowingLogTime.current = now;
-              addExplanation(`⏳ Cannot safely overtake (${currentStandoffLabel}). Holding safe distance until path is fully clear.`);
-            }
           }
+        } else if (primaryAheadObs && obs.id === primaryAheadObs.id) {
+          // Pinched road / lack of safe clearance -> wait patiently
+          shouldCourteousStandOff = true;
+          currentStandoffLabel = 'NARROW ROAD • WAITING FOR CLEAR PASSING SPACE';
         }
+      }
+
+      // Speed regulation
+      if (shouldCourteousStandOff && primaryAheadObs) {
+        const distAhead = primaryAheadObs.longitudinalDelta;
+        if (distAhead <= SAFE_FOLLOW_DIST) {
+          targetSpeed = 0;
+        } else {
+          const gap = distAhead - SAFE_FOLLOW_DIST;
+          targetSpeed = cruiseSpeed * Math.min(1.0, Math.max(0.1, gap / 2.5)) * 0.45;
+        }
+
+        const now = Date.now();
+        if (now - lastFollowingLogTime.current > 4000 && addExplanation) {
+          lastFollowingLogTime.current = now;
+          addExplanation(`🛡️ Safe Following: ${currentStandoffLabel}. Maintaining 2.8m safe distance. Waiting patiently.`);
+        }
+      } else if (isOvertakeFeasible) {
+        targetSpeed = cruiseSpeed * 0.65; // Cautious 65% speed during overtake
+        const now = Date.now();
+        if (now - lastOvertakeLogTime.current > 4000 && addExplanation) {
+          lastOvertakeLogTime.current = now;
+          addExplanation(`⚡ Safe clearance verified. Updating blue navigation line with gradual diversion and passing with wide clearance.`);
+        }
+      } else if (plannedDiversions.length > 0 && plannedDiversions.some(d => Math.abs(s - d.sObstacle) < 2.5)) {
+        // Robot is actively alongside or returning from an obstacle
+        targetSpeed = cruiseSpeed * 0.75;
       } else {
         // Path is completely clear
         if (isCourteousStandoffRef.current) {
