@@ -1570,7 +1570,7 @@ const Robot = ({
   }, [path]);
 
   // Helper function to build the complete, continuous 3D planned navigation line
-  // Normal route: blue (#38bdf8), Diversion segment alone: vibrant orange (#ff7a00)
+  // Normal route: blue (#38bdf8), Diversion segment alone: vibrant yellow (#ffd600)
   const buildFullRouteLine = (
     evalCurve: THREE.CatmullRomCurve3,
     currentS: number,
@@ -1582,18 +1582,18 @@ const Robot = ({
     const flatColors: number[] = [];
 
     const blueColor = new THREE.Color('#38bdf8');
-    const orangeColor = new THREE.Color('#ff7a00');
+    const yellowColor = new THREE.Color('#ffd600');
 
     // Point 0: Robot's exact current 3D position (elevated slightly to y=0.08 above asphalt)
     flatRoute.push(posVec.x, 0.08, posVec.z);
     const p0Off = Math.abs(offsetFn(currentS));
     if (isDivertingNow || p0Off > 0.05) {
-      flatColors.push(orangeColor.r, orangeColor.g, orangeColor.b);
+      flatColors.push(yellowColor.r, yellowColor.g, yellowColor.b);
     } else {
       flatColors.push(blueColor.r, blueColor.g, blueColor.b);
     }
 
-    const sampleStep = 0.30; // High-density 30cm sampling for ultra-smooth curved trajectory
+    const sampleStep = 0.20; // High-density 20cm sampling for ultra-smooth curved trajectory
     const startS = Math.min(totalLength, currentS + sampleStep);
     for (let testS = startS; testS < totalLength; testS += sampleStep) {
       const u = testS / totalLength;
@@ -1604,9 +1604,9 @@ const Robot = ({
       const drivablePt = basePt.clone().add(normal.clone().multiplyScalar(off));
       flatRoute.push(drivablePt.x, 0.08, drivablePt.z);
 
-      // Highlight route color to orange for taking diversion alone; normal route maintains blue color
+      // Yellow line only when a temporary diversion is needed; normal route maintains blue color
       if (Math.abs(off) > 0.05) {
-        flatColors.push(orangeColor.r, orangeColor.g, orangeColor.b);
+        flatColors.push(yellowColor.r, yellowColor.g, yellowColor.b);
       } else {
         flatColors.push(blueColor.r, blueColor.g, blueColor.b);
       }
@@ -1620,7 +1620,7 @@ const Robot = ({
     const endDrivablePt = endPt.clone().add(endNormal.clone().multiplyScalar(endOff));
     flatRoute.push(endDrivablePt.x, 0.08, endDrivablePt.z);
     if (Math.abs(endOff) > 0.05) {
-      flatColors.push(orangeColor.r, orangeColor.g, orangeColor.b);
+      flatColors.push(yellowColor.r, yellowColor.g, yellowColor.b);
     } else {
       flatColors.push(blueColor.r, blueColor.g, blueColor.b);
     }
