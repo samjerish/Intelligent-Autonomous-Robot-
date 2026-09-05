@@ -1598,6 +1598,17 @@ const Robot = ({
   // Robot travels on assigned side of the road (right lane: +0.35m from road centerline)
   const smoothedLateralOffsetRef = useRef(0.35);
 
+  interface ActiveDiversionState {
+    obstacleId: string;
+    sObstacle: number;
+    peakAmplitude: number; // Delta from assigned lane center
+    clearanceMeters: number;
+    diversionEndS: number;
+    targetPassingOffset: number;
+    createdAt: number;
+  }
+  const activeDiversionRef = useRef<ActiveDiversionState | null>(null);
+
   // 1. Build centripetal 3D spline curve and cumulative waypoint distances
   const { curve, totalLength, waypointDistances } = useMemo(() => {
     if (!path || path.length === 0) {
@@ -1647,6 +1658,7 @@ const Robot = ({
     isYieldWaitingRef.current = false;
     setIsYieldWaiting(false);
     conflictingObsIdRef.current = null;
+    activeDiversionRef.current = null;
   }, [path]);
 
   useFrame((_state, delta) => {
@@ -1658,6 +1670,30 @@ const Robot = ({
     if (pauseTimeRef.current > 0) {
       pauseTimeRef.current -= delta;
       if (isMovingRef.current) { isMovingRef.current = false; setIsMoving(false); }
+
+      // Keep continuous blue patrol line visible during checkpoint pause
+      if (drivableRouteRef && curve) {
+        const s = distanceTraveledRef.current;
+        const ASSIGNED_LANE_OFFSET = 0.35;
+        const bluePts: number[] = [];
+        const sampleStep = 0.20;
+        for (let testS = s; testS <= totalLength; testS += sampleStep) {
+          const u = testS / totalLength;
+          const basePt = curve.getPointAt(u);
+          const tangent = curve.getTangentAt(u).normalize();
+          const normal = new THREE.Vector3(tangent.z, 0, -tangent.x);
+          const bluePt = basePt.clone().add(normal.clone().multiplyScalar(ASSIGNED_LANE_OFFSET));
+          bluePts.push(bluePt.x, 0.18, bluePt.z);
+        }
+        if (upcomingLoopPoints3D && upcomingLoopPoints3D.length > 0) {
+          for (let i = 0; i < upcomingLoopPoints3D.length; i++) {
+            bluePts.push(upcomingLoopPoints3D[i].x, 0.18, upcomingLoopPoints3D[i].z);
+          }
+        }
+        if (bluePts.length >= 6) {
+          drivableRouteRef.current = bluePts;
+        }
+      }
       return;
     }
 
@@ -1667,11 +1703,11 @@ const Robot = ({
         currentPos.lerp(new THREE.Vector3(sx, sy, sz), 0.1);
       }
       if (drivableRouteRef) {
-        const flatRoute: number[] = [currentPos.x, 0.08, currentPos.z];
+        const flatRoute: number[] = [currentPos.x, 0.18, currentPos.z];
         const flatColors: number[] = [0.22, 0.74, 0.97];
         if (upcomingLoopPoints3D && upcomingLoopPoints3D.length > 0) {
           for (let i = 0; i < upcomingLoopPoints3D.length; i++) {
-            flatRoute.push(upcomingLoopPoints3D[i].x, 0.08, upcomingLoopPoints3D[i].z);
+            flatRoute.push(upcomingLoopPoints3D[i].x, 0.18, upcomingLoopPoints3D[i].z);
             flatColors.push(0.22, 0.74, 0.97);
           }
         }
@@ -1878,14 +1914,6 @@ const Robot = ({
       corridorObstacles.sort((a, b) => a.longitudinalDelta - b.longitudinalDelta);
       const primaryAheadObs = primaryDirectObstacle || corridorObstacles[0] || null;
 
-      interface PlannedDiversion {
-        id: string;
-        sObstacle: number;
-        peakAmplitude: number; // Delta from assigned lane center
-        clearanceMeters: number;
-      }
-      const plannedDiversions: PlannedDiversion[] = [];
-
       let shouldCourteousStandOff = false;
       let currentStandoffLabel = '';
       let targetSpeed = cruiseSpeed;
@@ -1943,14 +1971,29 @@ const Robot = ({
           if (passingLaneIsSafe) {
             // Enough safe, clear space exists on the road:
             // Create a smooth temporary yellow diversion line around the obstacle
-            // peakAmplitude is the delta from ASSIGNED_LANE_OFFSET
             const peakDelta = targetPassingOffset - ASSIGNED_LANE_OFFSET;
-            plannedDiversions.push({
-              id: obs.id,
-              sObstacle: obs.sObstacle,
-              peakAmplitude: peakDelta,
-              clearanceMeters: requiredSeparation,
-            });
+            const sigma = 2.8;
+            const divEndS = Math.min(totalLength, obs.sObstacle + 2.5 * sigma);
+
+            if (!activeDiversionRef.current) {
+              activeDiversionRef.current = {
+                obstacleId: obs.id,
+                sObstacle: obs.sObstacle,
+                peakAmplitude: peakDelta,
+                clearanceMeters: requiredSeparation,
+                diversionEndS: divEndS,
+                targetPassingOffset,
+                createdAt: Date.now(),
+              };
+              if (addExplanation) {
+                addExplanation('⚡ Safe yellow diversion selected: Smoothly bypassing obstacle.');
+              }
+            } else if (activeDiversionRef.current.obstacleId === obs.id) {
+              activeDiversionRef.current.sObstacle = obs.sObstacle;
+              activeDiversionRef.current.diversionEndS = divEndS;
+              activeDiversionRef.current.peakAmplitude = peakDelta;
+            }
+
             isOvertakeFeasible = true;
             shouldCourteousStandOff = false;
             // Maintain continuous passing speed along yellow line without stopping
@@ -1973,10 +2016,24 @@ const Robot = ({
         }
       }
 
+      // Update or retire active diversion:
+      // "Keep this yellow line visible for the entire diversion. Remove it only after the robot has fully rejoined the blue route."
+      if (activeDiversionRef.current) {
+        const div = activeDiversionRef.current;
+        const hasPassedObstacle = s >= div.sObstacle + 0.3;
+        const lateralDistToBlue = Math.abs(smoothedLateralOffsetRef.current - ASSIGNED_LANE_OFFSET);
+        const hasRejoinedBlue = hasPassedObstacle && lateralDistToBlue < 0.04 && s >= div.diversionEndS - 0.4;
+
+        if (hasRejoinedBlue) {
+          activeDiversionRef.current = null;
+          if (diversionRouteRef) {
+            diversionRouteRef.current = [];
+          }
+        }
+      }
+
       // Check if robot is actively executing a safe yellow diversion
-      const isOvertakingActive = isOvertakeFeasible || (
-        plannedDiversions.length > 0 && plannedDiversions.some(d => Math.abs(s - d.sObstacle) < 4.8)
-      );
+      const isOvertakingActive = isOvertakeFeasible || activeDiversionRef.current !== null;
 
       // ── Step 3: Motion & Emergency Fallback State Machine ──
       const now = Date.now();
