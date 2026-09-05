@@ -1289,13 +1289,15 @@ export const DetailedRobot = ({
   isMoving, showFeatures = false, activeFeature = "", isEmergency = false, 
   isSlowCaution = false, isWaiting = false, isCourteousStandoff = false, standoffLabel = "",
   isFollowingObstacle = false, isOvertaking = false, followingDistanceLabel = "",
-  checkpointCountdown = null, checkpointName = "", isReversing = false, isYieldWaiting = false
+  checkpointCountdown = null, checkpointName = "", isReversing = false, isYieldWaiting = false,
+  isBarricadeBlocked = false, barricadeLabel = ""
 }: { 
   isMoving: boolean; showFeatures?: boolean; activeFeature?: string; isEmergency?: boolean; 
   isSlowCaution?: boolean; isWaiting?: boolean; isCourteousStandoff?: boolean; standoffLabel?: string;
   isFollowingObstacle?: boolean; isOvertaking?: boolean; followingDistanceLabel?: string;
   checkpointCountdown?: number | null; checkpointName?: string; 
   isReversing?: boolean; isYieldWaiting?: boolean;
+  isBarricadeBlocked?: boolean; barricadeLabel?: string;
 }) => {
   const bodyRef = useRef<THREE.Group>(null);
   const headRef = useRef<THREE.Group>(null);
@@ -1576,6 +1578,16 @@ export const DetailedRobot = ({
           </group>
         )}
 
+        {/* Real-time Road Barricade Encounter & Safe Standoff Badge */}
+        {isBarricadeBlocked && (
+          <Html position={[0, 1.60, 0]} center style={{ pointerEvents: 'none' }}>
+            <div className="flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-orange-600/95 border border-orange-200 text-white font-mono font-black text-[10.5px] tracking-wider uppercase shadow-[0_0_22px_rgba(234,88,12,0.95)] whitespace-nowrap">
+              <span className="w-2.5 h-2.5 rounded-full bg-white animate-ping"></span>
+              <span>🚧 {barricadeLabel || 'ROAD BARRICADE • SAFE VIEWING STANDOFF'}</span>
+            </div>
+          </Html>
+        )}
+
         {/* Destination Pause Countdown Badge */}
         {checkpointCountdown !== null && checkpointCountdown !== undefined && (
           <Html position={[0, 1.55, 0]} center style={{ pointerEvents: 'none' }}>
@@ -1653,7 +1665,7 @@ export const DetailedRobot = ({
 const Robot = ({
   path, currentIndex, isPlaying, gridSize, isMapView, speed, dynamicObstaclesRef,
   staticObstacles = [], drivableRouteRef, drivableRouteColorsRef, diversionRouteRef, upcomingLoopPoints3D = [],
-  onReachNode, onMissionComplete, onObstacleDetected: _onObstacleDetected, robotPosRef, robotRotRef, isEmergency = false,
+  onReachNode, onMissionComplete, onObstacleDetected: _onObstacleDetected, onBarricadeBlocked, robotPosRef, robotRotRef, isEmergency = false,
   checkpointCountdown = null, checkpointName = "",
   addExplanation,
   mapData,
@@ -1673,6 +1685,7 @@ const Robot = ({
   onReachNode: (idx: number) => void;
   onMissionComplete: () => void;
   onObstacleDetected: (obsPos: GridPoint) => void;
+  onBarricadeBlocked?: (robotPos: THREE.Vector3, barricadePos: THREE.Vector3) => void;
   robotPosRef: React.MutableRefObject<THREE.Vector3 | null>;
   robotRotRef: React.MutableRefObject<number>;
   isEmergency?: boolean;
@@ -1691,6 +1704,18 @@ const Robot = ({
   const [isFollowingObstacle, setIsFollowingObstacle] = useState(false);
   const [isOvertaking, setIsOvertaking] = useState(false);
   const [followingDistanceLabel, setFollowingDistanceLabel] = useState('');
+  const [isBarricadeBlocked, setIsBarricadeBlocked] = useState(false);
+  const [barricadeStatusLabel, setBarricadeStatusLabel] = useState('');
+  
+  interface BarricadeInspection {
+    blockerId: string;
+    inspectionTimer: number;
+    stage: 'approaching' | 'viewing' | 'rerouting';
+    loggedApproach: boolean;
+    loggedViewing: boolean;
+    loggedReroute: boolean;
+  }
+  const barricadeInspectionRef = useRef<BarricadeInspection | null>(null);
   
   // Reversing and Yielding State (make way for obstacle first, then proceed to destination)
   const isReversingRef = useRef(false);
