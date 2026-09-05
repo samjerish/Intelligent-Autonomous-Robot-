@@ -4200,6 +4200,23 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
                       </span>
                     )}
                   </div>
+
+                  {/* Real-world Navigation Path Legend Card */}
+                  <div className="col-span-2 bg-slate-900/70 border border-white/10 rounded-xl p-2.5 shadow-inner flex flex-col gap-1.5">
+                    <span className="text-[9px] font-bold text-gray-400 uppercase tracking-widest">
+                      Active Trajectory Legend
+                    </span>
+                    <div className="flex items-center justify-between gap-2 text-[10px] font-mono font-bold">
+                      <div className="flex items-center gap-2">
+                        <span className="w-5 h-1.5 rounded-full bg-[#38bdf8] shadow-[0_0_8px_#38bdf8]"></span>
+                        <span className="text-sky-300">Normal Route</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span className="w-5 h-1.5 rounded-full bg-[#ffd600] shadow-[0_0_8px_#ffd600]"></span>
+                        <span className="text-amber-300">Temporary Diversion</span>
+                      </div>
+                    </div>
+                  </div>
                 </div>
 
                 <div className="flex gap-3 pt-2">
