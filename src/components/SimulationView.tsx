@@ -2379,88 +2379,33 @@ const Robot = ({
         shouldCourteousStandOff = true;
         isOvertakeFeasible = false;
         setIsOvertaking(false);
+        setIsBarricadeBlocked(true);
 
-        if (barricade.longitudinalDelta > BARRICADE_SAFE_STOP_GAP && barricade.distToRobot > (BARRICADE_SAFE_STOP_GAP + 0.05)) {
-          // Approach naturally and decelerate smoothly between 8.5m detection horizon and 2.8m safe gap
-          const normDist = THREE.MathUtils.clamp(
-            (barricade.longitudinalDelta - BARRICADE_SAFE_STOP_GAP) / (BARRICADE_DETECT_HORIZON - BARRICADE_SAFE_STOP_GAP),
-            0.0,
-            1.0
-          );
-          // Progressive sine-squared deceleration curve: smooth, natural braking
-          const approachSpeed = Math.max(0.18, cruiseSpeed * Math.sin((Math.PI / 2) * normDist) ** 2);
-          targetSpeed = Math.min(targetSpeed, approachSpeed);
-
-          currentStandoffLabel = `ROAD BARRICADE AHEAD (${barricade.longitudinalDelta.toFixed(1)}m) • SLOWING DOWN`;
-          setBarricadeStatusLabel(`ROAD BARRICADE AHEAD (${barricade.longitudinalDelta.toFixed(1)}m) • SLOWING DOWN`);
-          setIsBarricadeBlocked(true);
-
+        // Immediate rerouting trigger: as soon as barricade is detected ahead (<= 7.5m),
+        // trigger onBarricadeBlocked immediately so an alternate road route is calculated without waiting or freezing
+        if (barricade.longitudinalDelta <= 7.5 && onBarricadeBlocked) {
           if (!barricadeInspectionRef.current || barricadeInspectionRef.current.blockerId !== barricade.id) {
             barricadeInspectionRef.current = {
               blockerId: barricade.id,
               inspectionTimer: 0,
-              stage: 'approaching',
-              loggedApproach: false,
-              loggedViewing: false,
-              loggedReroute: false,
-            };
-          }
-          if (barricadeInspectionRef.current && !barricadeInspectionRef.current.loggedApproach) {
-            barricadeInspectionRef.current.loggedApproach = true;
-            if (addExplanation) {
-              addExplanation(`🚧 Road barricade detected blocking route ahead (${barricade.longitudinalDelta.toFixed(1)}m). Decelerating smoothly to safe standoff distance...`);
-            }
-          }
-        } else {
-          // Stopped at safe viewing distance (2.8m)! Zero speed, safe buffer maintained, no collision or close pass
-          targetSpeed = 0;
-          setIsBarricadeBlocked(true);
-
-          if (!barricadeInspectionRef.current || barricadeInspectionRef.current.blockerId !== barricade.id) {
-            barricadeInspectionRef.current = {
-              blockerId: barricade.id,
-              inspectionTimer: 0,
-              stage: 'viewing',
+              stage: 'rerouting',
               loggedApproach: true,
-              loggedViewing: false,
-              loggedReroute: false,
+              loggedViewing: true,
+              loggedReroute: true,
             };
-          }
-
-          if (barricadeInspectionRef.current) {
-            barricadeInspectionRef.current.stage = 'viewing';
-            if (!barricadeInspectionRef.current.loggedViewing) {
-              barricadeInspectionRef.current.loggedViewing = true;
-              if (addExplanation) {
-                addExplanation('🛑 Stopped at safe viewing distance (2.8m). Road barricade confirmed: Route unavailable.');
-              }
+            if (addExplanation) {
+              addExplanation(`🚧 Road barricade detected blocking route (${barricade.longitudinalDelta.toFixed(1)}m ahead). Calculating and following safe alternate road route.`);
             }
-
-            barricadeInspectionRef.current.inspectionTimer += safeDelta;
-            const inspectTime = barricadeInspectionRef.current.inspectionTimer;
-
-            if (inspectTime < 0.65) {
-              currentStandoffLabel = 'ROAD BARRICADE DETECTED • SAFE VIEWING GAP (2.8m)';
-              setBarricadeStatusLabel('ROAD BARRICADE DETECTED • SAFE VIEWING GAP (2.8m)');
-            } else if (inspectTime < 1.45) {
-              currentStandoffLabel = 'ROUTE UNAVAILABLE • EVALUATING ROAD NETWORK';
-              setBarricadeStatusLabel('ROUTE UNAVAILABLE • EVALUATING ROAD NETWORK');
-            } else {
-              currentStandoffLabel = 'RE-ROUTING TO DESTINATION VIA OPEN ROADS';
-              setBarricadeStatusLabel('RE-ROUTING TO DESTINATION VIA OPEN ROADS');
-              if (!barricadeInspectionRef.current.loggedReroute) {
-                barricadeInspectionRef.current.loggedReroute = true;
-                barricadeInspectionRef.current.stage = 'rerouting';
-                if (addExplanation) {
-                  addExplanation('🧠 Route unavailable: Calculating new valid road-only route to destination...');
-                }
-                if (onBarricadeBlocked) {
-                  onBarricadeBlocked(currentPos, barricade.pos3D);
-                }
-              }
-            }
+            onBarricadeBlocked(currentPos, barricade.pos3D);
           }
         }
+
+        // Smoothly approach without coming to a dead stop while transitioning to the alternate route
+        // Maintain continuous forward momentum (targetSpeed >= 0.55 m/s)
+        const approachSpeed = Math.max(0.55, Math.min(targetSpeed, cruiseSpeed * 0.45));
+        targetSpeed = approachSpeed;
+        currentStandoffLabel = 'ROAD BARRICADE DETECTED • REROUTING VIA OPEN ROADS';
+        setBarricadeStatusLabel('ROAD BARRICADE DETECTED • REROUTING VIA OPEN ROADS');
       } else {
         if (isBarricadeBlocked && (!barricadeInspectionRef.current || barricadeInspectionRef.current.stage !== 'rerouting')) {
           setIsBarricadeBlocked(false);
@@ -2544,24 +2489,35 @@ const Robot = ({
                   addExplanation(`⚡ Road blocked ahead (${obs.longitudinalDelta.toFixed(1)}m). Executing slow, smooth orange diversion with wide clearance.`);
                 }
               } else {
-                // "If overtaking is unsafe, the robot should reduce speed, keep a safe following distance, and give the obstacle enough space to move ahead."
-                shouldCourteousStandOff = true;
-                setIsOvertaking(false);
-                const safeStandoffDist = 3.2; // 3.2m safe buffer from obstacle
-
-                if (obs.longitudinalDelta > safeStandoffDist + 0.2) {
-                  // Smoothly reduce speed as the robot approaches the blocked obstacle
-                  const approachSpeed = THREE.MathUtils.clamp(
-                    (obs.longitudinalDelta - safeStandoffDist) * 0.35,
-                    0.15,
-                    cruiseSpeed * 0.40
-                  );
-                  targetSpeed = Math.min(targetSpeed, approachSpeed);
-                  currentStandoffLabel = 'OBSTACLE AHEAD • REDUCING SPEED';
+                // If local diversion is impossible and obstacle is static/blocking the lane,
+                // do not freeze permanently at targetSpeed = 0.
+                // Trigger road-only rerouting around the blocked area if stationary, or pace behind if moving.
+                if (obs.type === 'static' || !obs.isMoving || obs.speed < 0.20) {
+                  // Static roadblock or parked obstruction: trigger alternate road route immediately
+                  if (onBarricadeBlocked && (!barricadeInspectionRef.current || barricadeInspectionRef.current.blockerId !== obs.id)) {
+                    barricadeInspectionRef.current = {
+                      blockerId: obs.id,
+                      inspectionTimer: 0,
+                      stage: 'rerouting',
+                      loggedApproach: true,
+                      loggedViewing: true,
+                      loggedReroute: true,
+                    };
+                    if (addExplanation) {
+                      addExplanation(`⚠️ Roadway obstructed (${obs.longitudinalDelta.toFixed(1)}m ahead). Navigating to destination via open alternate roads.`);
+                    }
+                    onBarricadeBlocked(currentPos, obs.pos3D);
+                  }
+                  // Keep rolling smoothly at safe crawl speed while steering into alternate route
+                  targetSpeed = Math.max(0.50, Math.min(targetSpeed, cruiseSpeed * 0.40));
+                  currentStandoffLabel = 'OBSTACLE AHEAD • REROUTING VIA OPEN ROADS';
                 } else {
-                  // Safely holding position at 3.2m standoff distance waiting for safe passing space
-                  targetSpeed = 0;
-                  currentStandoffLabel = 'WAITING FOR SAFE PASSING SPACE • SAFE STANDOFF (3.2m)';
+                  // Lead vehicle/person moving: pace smoothly behind them, maintaining safe buffer
+                  shouldCourteousStandOff = false;
+                  setIsFollowingObstacle(true);
+                  const leadSpeed = Math.max(0.35, obs.speed || (obs.relForwardVel + actualSpeedRef.current));
+                  targetSpeed = Math.max(0.40, Math.min(targetSpeed, leadSpeed * 0.85));
+                  currentStandoffLabel = 'SAFE FOLLOWING DISTANCE • PACING BEHIND';
                 }
               }
             }
@@ -2717,17 +2673,17 @@ const Robot = ({
               shouldCourteousStandOff = false;
               targetSpeed = Math.min(cruiseSpeed * 0.50, 1.65);
             } else {
-              targetSpeed = 0;
+              targetSpeed = Math.max(0.45, Math.min(targetSpeed, cruiseSpeed * 0.40));
             }
           }
         }
       } else if (isYieldWaitingRef.current) {
-        targetSpeed = 0;
+        targetSpeed = 0.40;
         yieldWaitTimerRef.current += delta;
         shouldCourteousStandOff = true;
         currentStandoffLabel = 'YIELDING • PREPARING TO PROCEED';
 
-        if (yieldWaitTimerRef.current > 0.8) {
+        if (yieldWaitTimerRef.current > 0.4) {
           isYieldWaitingRef.current = false;
           setIsYieldWaiting(false);
           lastReverseEndTimeRef.current = Date.now();
@@ -2812,11 +2768,9 @@ const Robot = ({
         targetSpeed *= cornerDamping;
       }
 
-      // When stopped or moving very slowly with a large heading discrepancy (such as after rerouting from a barricade),
-      // hold forward speed at 0 while the vehicle smoothly rotates its heading in place to align with the new road direction.
-      // This prevents sliding backwards, jumping, or making abrupt turns.
-      if (Math.abs(yawDiff) > 0.45 && actualSpeedRef.current < 0.25) {
-        targetSpeed = 0;
+      // Maintain continuous forward turning velocity through curves and intersections (never freeze or stall at speed 0)
+      if (Math.abs(yawDiff) > 0.45) {
+        targetSpeed = Math.max(0.40, Math.min(targetSpeed, 0.70));
       }
 
       // ── Physical Longitudinal Dynamics (Gentle Acceleration & Controlled Braking) ──
