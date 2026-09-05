@@ -2097,7 +2097,7 @@ const Robot = ({
           })();
           const distToRobot = currentPos.distanceTo(obsPos3D);
 
-          if (distToRobot < 9.0) {
+          if (distToRobot < 14.0) {
             if (distToRobot < closestObsDist) closestObsDist = distToRobot;
 
             const obsVel = obs.velocity || new THREE.Vector3(0, 0, 0);
@@ -2127,8 +2127,8 @@ const Robot = ({
             }
 
             // Estimate projection onto spline
-            const lookStart = Math.max(0, s - 1.2);
-            const lookEnd = Math.min(totalLength, s + 9.5);
+            const lookStart = Math.max(0, s - 1.5);
+            const lookEnd = Math.min(totalLength, s + 15.0);
             let bestDistSq = 9999;
             let sObstacle = sAtCpa;
             let curvePtAtObs = nominalPos;
@@ -2186,7 +2186,7 @@ const Robot = ({
           const bPos = new THREE.Vector3(bx, currentPos.y, bz);
           const distToRobot = currentPos.distanceTo(bPos);
 
-          if (distToRobot < 8.5) {
+          if (distToRobot < 14.0) {
             if (distToRobot < closestObsDist) closestObsDist = distToRobot;
 
             let bestDistSq = 9999;
@@ -2194,8 +2194,8 @@ const Robot = ({
             let curvePtAtObs = nominalPos;
             let tangentAtObs = nominalTangent;
 
-            const lookStart = Math.max(0, s - 1.0);
-            const lookEnd = Math.min(totalLength, s + 8.0);
+            const lookStart = Math.max(0, s - 1.5);
+            const lookEnd = Math.min(totalLength, s + 15.0);
             for (let testS = lookStart; testS <= lookEnd; testS += 0.3) {
               const testU = testS / totalLength;
               const testPt = curve.getPointAt(testU);
@@ -2239,24 +2239,24 @@ const Robot = ({
       // ── Step 2: Active Free Space Assessment & Pre-Turn Safe Path Calculation ──
       // ASSIGNED_LANE_OFFSET is defined above (+0.35m)
 
-      // Detect static road barricades blocking the robot's driving corridor ahead
+      // Detect static road barricades blocking the robot's driving corridor ahead (up to 14.0m)
       const staticBarricadesAhead = scannedObstacles.filter(
-        o => o.type === 'static' && o.longitudinalDelta >= 0.15 && o.longitudinalDelta <= 8.5 && o.lateralDist <= 1.45
+        o => o.type === 'static' && o.longitudinalDelta >= 0.15 && o.longitudinalDelta <= 14.0 && o.lateralDist <= 1.45
       );
       staticBarricadesAhead.sort((a, b) => a.longitudinalDelta - b.longitudinalDelta);
       const primaryBarricade = staticBarricadesAhead[0] || null;
 
-      // Detect obstacles approaching directly in front of the robot in its assigned lane (ahead within 8.5m)
+      // Detect obstacles directly in front of the robot in its assigned lane (ahead up to 14.0m)
       // Assigned lane is centered around +0.35m; an obstacle directly blocks it if |o.sideDot - ASSIGNED_LANE_OFFSET| <= 0.85m
       const obstructingAhead = scannedObstacles.filter(
-        o => o.longitudinalDelta >= 0.1 && o.longitudinalDelta <= 8.5 && Math.abs(o.sideDot - ASSIGNED_LANE_OFFSET) <= 0.85
+        o => o.longitudinalDelta >= 0.1 && o.longitudinalDelta <= 14.0 && Math.abs(o.sideDot - ASSIGNED_LANE_OFFSET) <= 0.85
       );
       obstructingAhead.sort((a, b) => a.longitudinalDelta - b.longitudinalDelta);
       const primaryDirectObstacle = obstructingAhead[0] || null;
 
       // Wider detection for general awareness and safe distance tracking
       const corridorObstacles = scannedObstacles.filter(
-        o => o.longitudinalDelta >= 0.2 && o.longitudinalDelta <= 8.5 && (o.lateralDist < 1.45 || o.minCpaDist < 2.0)
+        o => o.longitudinalDelta >= 0.2 && o.longitudinalDelta <= 14.0 && (o.lateralDist < 1.45 || o.minCpaDist < 2.0)
       );
       corridorObstacles.sort((a, b) => a.longitudinalDelta - b.longitudinalDelta);
       const primaryAheadObs = primaryBarricade || primaryDirectObstacle || corridorObstacles[0] || null;
@@ -2275,40 +2275,48 @@ const Robot = ({
         requiredSeparation: number;
       }
 
-      // "If a vehicle or obstacle is ahead, the robot must immediately evaluate the available space on both sides of the road."
-      // "If a safe gap exists, generate a yellow diversion path, gradually steer around the obstacle with a wide clearance, pass it smoothly, and merge back onto the blue route."
+      // "When an obstacle is detected ahead, start planning and showing the yellow diversion route well before the robot reaches it."
+      // "The robot must begin its gradual turn early, with enough distance to safely move around the obstacle—never make a last-second dodge."
+      // "The yellow line must form a complete, smooth route: leave the blue route early, curve safely around the front of the obstacle with wide clearance, and gently merge back onto the blue route after passing."
       const calculateSafeDiversionPlan = (
         obs: ScannedObs
       ): CandidateDiversionPlan | null => {
         const obsRadius = obs.type === 'car' ? 0.42 : (obs.type === 'static' ? 0.45 : 0.28);
         const robotRadius = 0.38;
-        const minPhysicalBuffer = 0.30; // At least 30cm of open air between vehicle/robot hulls
-        const requiredSeparation = obsRadius + robotRadius + minPhysicalBuffer; // ~1.10m
+        const wideAirBuffer = 0.45; // Generous wide clearance between hulls (45cm open air)
+        const requiredSeparation = obsRadius + robotRadius + wideAirBuffer; // ~1.25m to 1.28m
 
         // Candidate passing lane offsets on BOTH sides of the road
-        const leftCandidateOffsets = [-0.55, -0.70, -0.85, -0.98, -1.10, -1.20];
-        const rightCandidateOffsets = [0.55, 0.70, 0.85, 0.98, 1.10, 1.20];
+        // Normal lane is ASSIGNED_LANE_OFFSET (+0.35m on right side of road)
+        // Standard passing is on the left corridor (-0.60m to -1.15m)
+        // Alternative passing is on the right shoulder/corridor (+0.75m to +1.15m)
+        const leftCandidateOffsets = [-0.60, -0.75, -0.90, -1.05, -1.15];
+        const rightCandidateOffsets = [0.75, 0.90, 1.05, 1.15];
 
-        // If obstacle is to the right or center (sideDot >= 0.1), evaluate left corridor first, then right corridor.
-        // If obstacle is to the left (sideDot < 0.1), evaluate right corridor first, then left corridor.
+        // If obstacle is to the right or center (sideDot >= 0.1), prioritize left corridor (standard traffic rule), then right.
+        // If obstacle is already to the left (sideDot < 0.1), prioritize right corridor, then left.
         const candidateOffsets = obs.sideDot >= 0.1
           ? [...leftCandidateOffsets, ...rightCandidateOffsets]
           : [...rightCandidateOffsets, ...leftCandidateOffsets];
 
         const sStart = Math.max(0, s);
         const sObs = obs.sObstacle;
-        const halfSpan = Math.max(2.8, Math.min(5.2, Math.max(1.5, obs.longitudinalDelta) * 1.2));
-        const sEnd = Math.min(totalLength, sObs + halfSpan);
+        const leadInSpan = Math.max(0.1, sObs - sStart);
 
-        if (obs.longitudinalDelta < 0.7) {
-          return null; // Too close for immediate forward turn; triggers safe reverse to create turning room
+        // Never make a last-second dodge: require at least 1.4m of lead-in distance before the obstacle
+        if (leadInSpan < 1.4) {
+          return null; // Too close for a safe, gradual, smooth curve; must slow down and wait at safe distance
         }
+
+        // Complete, smooth route: generous early lead-in and gentle, gradual merge-back
+        const trailSpan = Math.max(3.8, Math.min(6.2, leadInSpan * 0.85));
+        const sEnd = Math.min(totalLength, sObs + trailSpan);
 
         for (const passingOffset of candidateOffsets) {
           // Check lateral separation from target obstacle at apex
           const lateralSepAtApex = Math.abs(passingOffset - obs.sideDot);
           if (lateralSepAtApex < requiredSeparation) {
-            continue; // Insufficient separation from obstacle
+            continue; // Insufficient wide clearance from obstacle
           }
 
           const peakDelta = passingOffset - ASSIGNED_LANE_OFFSET;
@@ -2337,35 +2345,44 @@ const Robot = ({
             const totalOffset = ASSIGNED_LANE_OFFSET + diversionDelta;
             const candPt = basePt.clone().add(normal.clone().multiplyScalar(totalOffset));
 
-            // 1. Must be strictly on drivable road surface (never grass, curb, sidewalk, building)
-            if (!isPointOnDrivableRoad(candPt.x, candPt.z, mapData, 0.10)) {
+            // 1. Must be strictly on drivable asphalt road surface (never grass, curb, sidewalk, building)
+            if (!isPointOnDrivableRoad(candPt.x, candPt.z, mapData, 0.12)) {
               isPlanSafe = false;
               break;
             }
 
             // 2. Wide clearance around target obstacle near apex
-            if (Math.abs(testS - sObs) < 0.7) {
+            if (Math.abs(testS - sObs) < 0.9) {
               const distToTargetObs = candPt.distanceTo(obs.pos3D);
-              if (distToTargetObs < obsRadius + robotRadius + 0.28) {
+              if (distToTargetObs < obsRadius + robotRadius + 0.38) {
                 isPlanSafe = false;
                 break;
               }
             }
 
-            // 3. Collision-free against all other obstacles and oncoming traffic
+            // 3. Collision-free against all other obstacles, avoiding pedestrians and traffic (never force anyone to react)
             for (const other of scannedObstacles) {
               if (other.id === obs.id) continue;
-              const otherRadius = other.type === 'car' ? 0.42 : (other.type === 'static' ? 0.45 : 0.28);
+              const otherRadius = other.type === 'car' ? 0.42 : (other.type === 'static' ? 0.45 : 0.30);
+              const extraBuffer = other.type === 'person' ? 0.50 : 0.35;
               const distToOther = candPt.distanceTo(other.pos3D);
-              if (distToOther < robotRadius + otherRadius + 0.30) {
+              if (distToOther < robotRadius + otherRadius + extraBuffer) {
                 isPlanSafe = false;
                 break;
               }
 
-              // Oncoming vehicle conflict check in passing lane
-              if (other.relForwardVel < -0.15 &&
-                  other.longitudinalDelta > -1.0 && other.longitudinalDelta < 8.0 &&
-                  Math.abs(other.sideDot - passingOffset) < 0.80) {
+              // Oncoming vehicle conflict check in passing corridor (never cut off oncoming traffic)
+              if (other.relForwardVel < -0.10 &&
+                  other.longitudinalDelta > -1.0 && other.longitudinalDelta < 12.0 &&
+                  Math.abs(other.sideDot - passingOffset) < 0.95) {
+                isPlanSafe = false;
+                break;
+              }
+
+              // Pedestrian in or near passing corridor
+              if (other.type === 'person' &&
+                  other.longitudinalDelta > -1.0 && other.longitudinalDelta < (sEnd - sStart) + 2.0 &&
+                  Math.abs(other.sideDot - passingOffset) < 0.90) {
                 isPlanSafe = false;
                 break;
               }
