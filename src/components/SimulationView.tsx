@@ -1409,19 +1409,22 @@ const SciFiGate = ({ position, scale = 1, rotation = [0, 0, 0] }: { position: [n
   );
 };
 
-/* ── Detailed Animated 3D Robot Body ── */
+export type RobotLiveStatus = 'IDLE' | 'MOVING' | 'DIVERSION' | 'ROAD BARRICADE DETECTED';
+
 export const DetailedRobot = ({ 
   isMoving, showFeatures = false, activeFeature = "", isEmergency = false, 
-  isSlowCaution = false, isWaiting = false, isCourteousStandoff = false, standoffLabel = "",
-  isFollowingObstacle = false, isOvertaking = false, followingDistanceLabel = "",
-  isReversing = false, isYieldWaiting = false,
-  isBarricadeBlocked = false, barricadeLabel = ""
+  isSlowCaution = false, isWaiting: _isWaiting = false, isCourteousStandoff: _isCourteousStandoff = false, standoffLabel: _standoffLabel = "",
+  isFollowingObstacle: _isFollowingObstacle = false, isOvertaking: _isOvertaking = false, followingDistanceLabel: _followingDistanceLabel = "",
+  isReversing = false, isYieldWaiting: _isYieldWaiting = false,
+  isBarricadeBlocked: _isBarricadeBlocked = false, barricadeLabel: _barricadeLabel = "",
+  liveStatus = 'MOVING'
 }: { 
   isMoving: boolean; showFeatures?: boolean; activeFeature?: string; isEmergency?: boolean; 
   isSlowCaution?: boolean; isWaiting?: boolean; isCourteousStandoff?: boolean; standoffLabel?: string;
   isFollowingObstacle?: boolean; isOvertaking?: boolean; followingDistanceLabel?: string;
   isReversing?: boolean; isYieldWaiting?: boolean;
   isBarricadeBlocked?: boolean; barricadeLabel?: string;
+  liveStatus?: RobotLiveStatus;
 }) => {
   const bodyRef = useRef<THREE.Group>(null);
   const headRef = useRef<THREE.Group>(null);
@@ -1702,75 +1705,35 @@ export const DetailedRobot = ({
           </group>
         )}
 
-        {/* Real-time Road Barricade Encounter & Safe Standoff Badge */}
-        {isBarricadeBlocked && (
-          <Html position={[0, 1.60, 0]} center style={{ pointerEvents: 'none' }}>
-            <div className="flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-orange-600/95 border border-orange-200 text-white font-mono font-black text-[10.5px] tracking-wider uppercase shadow-[0_0_22px_rgba(234,88,12,0.95)] whitespace-nowrap">
-              <span className="w-2.5 h-2.5 rounded-full bg-white animate-ping"></span>
-              <span>🚧 {barricadeLabel || 'ROAD BARRICADE • SAFE VIEWING STANDOFF'}</span>
-            </div>
-          </Html>
-        )}
-
-        {/* Real-time Reversing & Making Way Badge */}
-        {isReversing && (
-          <Html position={[0, 1.55, 0]} center style={{ pointerEvents: 'none' }}>
-            <div className="flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-orange-500/95 border border-orange-200 text-slate-950 font-mono font-black text-[10.5px] tracking-wider uppercase shadow-[0_0_22px_rgba(249,115,22,0.95)] whitespace-nowrap">
-              <span className="w-2.5 h-2.5 rounded-full bg-slate-950 animate-ping"></span>
-              <span>⏪ {standoffLabel || 'REVERSING • CREATING SAFE TURNING ROOM'}</span>
-            </div>
-          </Html>
-        )}
-
-        {/* Real-time Yield Waiting Badge */}
-        {isYieldWaiting && !isReversing && (
-          <Html position={[0, 1.50, 0]} center style={{ pointerEvents: 'none' }}>
-            <div className="flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-amber-500/95 border border-amber-200 text-slate-950 font-mono font-black text-[10.5px] tracking-wider uppercase shadow-[0_0_18px_rgba(245,158,11,0.9)] whitespace-nowrap">
-              <span className="w-2 h-2 rounded-full bg-slate-950 animate-pulse"></span>
-              <span>⏳ YIELDING TO OBSTACLE • MAKING WAY</span>
-            </div>
-          </Html>
-        )}
-
-        {/* Real-time Courteous Standoff Badge */}
-        {isCourteousStandoff && !isReversing && !isYieldWaiting && (
-          <Html position={[0, 1.50, 0]} center style={{ pointerEvents: 'none' }}>
-            <div className="flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-amber-500/95 border border-amber-200 text-slate-950 font-mono font-black text-[10.5px] tracking-wider uppercase shadow-[0_0_18px_rgba(245,158,11,0.9)] whitespace-nowrap">
-              <span className="w-2 h-2 rounded-full bg-slate-950 animate-pulse"></span>
-              <span>🚶 {standoffLabel || 'COURTEOUS STANDOFF • WAITING PATIENTLY'}</span>
-            </div>
-          </Html>
-        )}
-
-        {/* Real-time Courteous Following Badge */}
-        {isFollowingObstacle && !isCourteousStandoff && !isOvertaking && (
-          <Html position={[0, 1.50, 0]} center style={{ pointerEvents: 'none' }}>
-            <div className="flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-blue-600/95 border border-blue-200 text-white font-mono font-black text-[10.5px] tracking-wider uppercase shadow-[0_0_18px_rgba(37,99,235,0.9)] whitespace-nowrap">
-              <span className="w-2 h-2 rounded-full bg-white animate-pulse"></span>
-              <span>🛡️ COURTEOUS FOLLOWING • SAFE DISTANCE ({followingDistanceLabel || '3.2m'})</span>
-            </div>
-          </Html>
-        )}
-
-        {/* Real-time Safe Orange Diversion Badge */}
-        {isOvertaking && (
-          <Html position={[0, 1.50, 0]} center style={{ pointerEvents: 'none' }}>
-            <div className="flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-orange-500 border border-orange-200 text-white font-mono font-black text-[10.5px] tracking-wider uppercase shadow-[0_0_20px_rgba(249,115,22,0.95)] whitespace-nowrap">
-              <span className="w-2 h-2 rounded-full bg-white animate-ping"></span>
-              <span>⚡ SAFE ORANGE DIVERSION • COMFORTABLE CLEARANCE</span>
-            </div>
-          </Html>
-        )}
-
-        {/* Real-time Yielding/Slow Caution fallback Badge */}
-        {!isCourteousStandoff && !isFollowingObstacle && !isOvertaking && (isSlowCaution || isWaiting) && (
-          <Html position={[0, 1.45, 0]} center style={{ pointerEvents: 'none' }}>
-            <div className={`flex items-center gap-1.5 px-3 py-1 rounded-full ${isWaiting ? 'bg-amber-500/95 border-amber-200 shadow-[0_0_16px_rgba(245,158,11,0.9)]' : 'bg-sky-500/95 border-sky-200 shadow-[0_0_16px_rgba(56,189,248,0.9)]'} text-black font-mono font-black text-[10px] tracking-wider uppercase border whitespace-nowrap`}>
-              <span className={`w-2 h-2 rounded-full bg-black ${isWaiting ? 'animate-pulse' : 'animate-ping'}`}></span>
-              <span>{isWaiting ? '⏳ YIELDING TO TRAFFIC' : '⚡ CAUTION • REDUCED SPEED'}</span>
-            </div>
-          </Html>
-        )}
+        {/* Real-time Autonomous Patrol Live Status Label */}
+        <Html position={[0, 1.80, 0]} center style={{ pointerEvents: 'none' }}>
+          <div className="flex items-center justify-center select-none transition-all duration-300 ease-in-out">
+            {liveStatus === 'ROAD BARRICADE DETECTED' && (
+              <div className="flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-amber-950/90 border border-amber-400 text-amber-200 font-mono font-black text-[11px] tracking-wider uppercase shadow-[0_0_22px_rgba(245,158,11,0.85)] backdrop-blur-md whitespace-nowrap">
+                <span className="w-2 h-2 rounded-full bg-amber-400 animate-ping"></span>
+                <span>🚧 ROAD BARRICADE DETECTED</span>
+              </div>
+            )}
+            {liveStatus === 'DIVERSION' && (
+              <div className="flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-orange-950/90 border border-orange-400 text-orange-200 font-mono font-black text-[11px] tracking-wider uppercase shadow-[0_0_20px_rgba(249,115,22,0.8)] backdrop-blur-md whitespace-nowrap">
+                <span className="w-2 h-2 rounded-full bg-orange-400 animate-ping"></span>
+                <span>⚡ DIVERSION</span>
+              </div>
+            )}
+            {liveStatus === 'IDLE' && (
+              <div className="flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-slate-900/90 border border-slate-400 text-slate-200 font-mono font-black text-[11px] tracking-wider uppercase shadow-[0_0_16px_rgba(148,163,184,0.5)] backdrop-blur-md whitespace-nowrap">
+                <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse"></span>
+                <span>⏳ IDLE</span>
+              </div>
+            )}
+            {liveStatus === 'MOVING' && (
+              <div className="flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-cyan-950/90 border border-cyan-400 text-cyan-200 font-mono font-black text-[11px] tracking-wider uppercase shadow-[0_0_20px_rgba(6,182,212,0.8)] backdrop-blur-md whitespace-nowrap">
+                <span className="w-2 h-2 rounded-full bg-cyan-400 animate-ping"></span>
+                <span>🔹 MOVING</span>
+              </div>
+            )}
+          </div>
+        </Html>
       </group>
     </group>
   );
@@ -1782,6 +1745,8 @@ const Robot = ({
   onReachNode, onMissionComplete, onObstacleDetected: _onObstacleDetected, onBarricadeBlocked, robotPosRef, robotRotRef, isEmergency = false,
   addExplanation,
   mapData,
+  isPausedAtDestination = false,
+  isFollowingAlternateRoute = false,
 }: {
   path: GridPoint[];
   currentIndex: number;
@@ -1804,6 +1769,8 @@ const Robot = ({
   isEmergency?: boolean;
   addExplanation?: (msg: string) => void;
   mapData?: MapData | null;
+  isPausedAtDestination?: boolean;
+  isFollowingAlternateRoute?: boolean;
 }) => {
   const ref = useRef<THREE.Group>(null);
   const isMovingRef = useRef(false);
@@ -1817,6 +1784,8 @@ const Robot = ({
   const [followingDistanceLabel, setFollowingDistanceLabel] = useState('');
   const [isBarricadeBlocked, setIsBarricadeBlocked] = useState(false);
   const [barricadeStatusLabel, setBarricadeStatusLabel] = useState('');
+  const [liveStatus, setLiveStatus] = useState<RobotLiveStatus>('MOVING');
+  const liveStatusRef = useRef<RobotLiveStatus>('MOVING');
   
   interface BarricadeInspection {
     blockerId: string;
@@ -3192,6 +3161,27 @@ const Robot = ({
           }
         }
       }
+
+      // ── Live Autonomous Patrol Status Evaluation ──
+      // - ROAD BARRICADE DETECTED: when a barricade blocks the route or alternate route is being calculated/followed
+      // - DIVERSION: when following the orange diversion route to safely avoid an obstacle
+      // - IDLE: shown only when paused at a patrol destination
+      // - MOVING: shown while following its normal blue patrol route
+      let currentStatus: RobotLiveStatus;
+      if (isBarricadeBlocked || isFollowingAlternateRoute) {
+        currentStatus = 'ROAD BARRICADE DETECTED';
+      } else if (isOvertaking || activeDiversionRef.current !== null) {
+        currentStatus = 'DIVERSION';
+      } else if (isPausedAtDestination) {
+        currentStatus = 'IDLE';
+      } else {
+        currentStatus = 'MOVING';
+      }
+
+      if (liveStatusRef.current !== currentStatus) {
+        liveStatusRef.current = currentStatus;
+        setLiveStatus(currentStatus);
+      }
     }
   });
 
@@ -3212,6 +3202,7 @@ const Robot = ({
         isYieldWaiting={isYieldWaiting}
         isBarricadeBlocked={isBarricadeBlocked}
         barricadeLabel={barricadeStatusLabel}
+        liveStatus={liveStatus}
       />
     </group>
   );
@@ -3509,6 +3500,7 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
   const [isIdleMode, setIsIdleMode] = useState(false);
   const [userBlockers, setUserBlockers] = useState<GridPoint[]>([]);
   const [crowds, setCrowds] = useState<GridPoint[]>([]);
+  const [isFollowingAlternateRoute, setIsFollowingAlternateRoute] = useState(false);
 
   const allStaticObstacles = useMemo(() => {
     return [...(mapData?.obstacles || []), ...userBlockers];
@@ -3554,6 +3546,8 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
   const [patrolCountdown, setPatrolCountdown] = useState<number | null>(null);
   const [currentPatrolTarget, setCurrentPatrolTarget] = useState<string>(PATROL_CHECKPOINTS[0]);
   const patrolTimerRef = useRef<any>(null);
+
+  const isPausedAtDestination = patrolCountdown !== null || (robotState === 'idle' && !isPlaying);
 
   const [activeCCTab, setActiveCCTab] = useState<'dashboard' | 'tools' | 'locations'>('dashboard');
   const [modalType, setModalType] = useState<'food' | 'medical' | null>(null);
@@ -3608,6 +3602,7 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
     if (patrolPath.length > 0) {
       setPath(patrolPath);
       setCurrentPosIndex(0);
+      setIsFollowingAlternateRoute(false);
       setRobotState('patrol');
       setIsPlaying(true);
       addExplanation('🚀 Continuous autonomous road patrol engaged. Navigating along drivable corridor.');
@@ -4253,6 +4248,7 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
     
     setCurrentPosIndex(0); 
     isRecalculating.current = false;
+    setIsFollowingAlternateRoute(false);
     
     // Only reset battery if it's the very first load or robot is off
     if (path.length === 0 || robotStateRef.current === 'off') {
@@ -4653,6 +4649,7 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
       }
       setPath(altPath);
       setCurrentPosIndex(0);
+      setIsFollowingAlternateRoute(true);
       setIsPlaying(true);
       addExplanation(`✨ Alternate road route active (${altPath.length} nodes). Navigating to destination via open roads.`);
     } else {
@@ -4752,6 +4749,7 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
         const nextTask = mapData.tasks[currentTaskIndexRef.current];
         
         setIsPlaying(false);
+        setIsFollowingAlternateRoute(false);
         addExplanation('📍 Waypoint reached. Pausing exactly 5.0 seconds for inspection before proceeding.');
 
         if (patrolTimerRef.current) {
@@ -4794,6 +4792,7 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
       } else {
         // Continuous Repeating Patrol Loop: Pause exactly 5.0 seconds at destination, then smoothly advance
         setIsPlaying(false);
+        setIsFollowingAlternateRoute(false);
         addExplanation('📍 Waypoint arrived. Mandatory 5.0-second inspection pause initiated.');
 
         if (patrolTimerRef.current) {
@@ -5166,6 +5165,8 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
               isEmergency={robotState === 'emergency_response' || robotState === 'emergency_to_ctr' || robotState === 'ctr_to_emergency'}
               addExplanation={addExplanation}
               mapData={mapData}
+              isPausedAtDestination={isPausedAtDestination}
+              isFollowingAlternateRoute={isFollowingAlternateRoute}
             />
           )}
         </Canvas>
@@ -5328,7 +5329,7 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
                       robotState === 'emergency_response' ? 'text-red-500 animate-pulse' : 
                       'text-gray-300'
                     }`}>
-                      {patrolCountdown !== null ? `PAUSE (${patrolCountdown.toFixed(1)}s)` : robotState.replace('_', ' ')}
+                      {patrolCountdown !== null ? `IDLE (${patrolCountdown.toFixed(1)}s)` : robotState.replace('_', ' ')}
                     </span>
                   </div>
                   <div className="bg-white/5 border border-white/10 rounded-xl p-3 shadow-inner">
