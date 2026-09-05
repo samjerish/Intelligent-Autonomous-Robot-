@@ -739,7 +739,7 @@ export const isPointOnDrivableRoad = (
   worldX: number,
   worldZ: number,
   mapData: MapData | null | undefined,
-  margin = 0.20
+  margin = 0.22
 ): boolean => {
   if (!mapData || !mapData.roads || mapData.roads.length === 0) return true;
   const { gridSize } = mapData;
