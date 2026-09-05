@@ -3432,11 +3432,6 @@ const RoomsRender = React.memo(({
             }}
           >
             <BuildingModel room={room} width={width} height={height} depth={depth} />
-            <Html position={[0, height / 2 + 1.5, 0]} center style={{ pointerEvents: 'none' }}>
-              <div className="text-[10px] font-bold text-white bg-black/80 px-2 py-1 rounded shadow-lg whitespace-nowrap">
-                {room.name}
-              </div>
-            </Html>
           </group>
         );
       })}
@@ -5324,18 +5319,18 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
                     <span className="text-lg font-black text-white">{path.length > 0 ? Math.ceil((path.length - currentPosIndex) * 0.5) : '--'} <span className="text-[10px] font-bold text-gray-500">min</span></span>
                   </div>
 
-                  {/* Dedicated Patrol Loop Checkpoint Card */}
-                  <div className="col-span-2 bg-gradient-to-r from-sky-950/40 via-sky-900/20 to-emerald-950/40 border border-sky-500/30 rounded-xl p-3 shadow-inner flex items-center justify-between">
+                  {/* Autonomous Navigation System Status Card */}
+                  <div className="col-span-2 bg-gradient-to-r from-sky-950/40 via-sky-900/20 to-blue-950/40 border border-sky-500/30 rounded-xl p-3 shadow-inner flex items-center justify-between">
                     <div>
                       <span className="text-[9px] font-bold text-sky-400 uppercase tracking-widest block">
-                        PATROL CHECKPOINT [{(patrolIndexRef.current % PATROL_CHECKPOINTS.length) + 1}/{PATROL_CHECKPOINTS.length}]
+                        AUTONOMOUS NAVIGATION
                       </span>
                       <span className="text-sm font-black text-white tracking-wide">
-                        {currentPatrolTarget}
+                        PATROL GUIDANCE ACTIVE
                       </span>
                     </div>
                     {patrolCountdown !== null ? (
-                      <span className="px-3 py-1 bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 rounded-lg text-xs font-mono font-black animate-pulse shadow-[0_0_12px_rgba(16,185,129,0.4)]">
+                      <span className="px-3 py-1 bg-sky-500/20 text-sky-300 border border-sky-500/40 rounded-lg text-xs font-mono font-black animate-pulse shadow-[0_0_12px_rgba(56,189,248,0.4)]">
                         PAUSING: {patrolCountdown.toFixed(1)}s
                       </span>
                     ) : (
@@ -5356,8 +5351,8 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
                         <span className="text-sky-300">Normal Route</span>
                       </div>
                       <div className="flex items-center gap-2">
-                        <span className="w-5 h-1.5 rounded-full bg-[#ffd600] shadow-[0_0_8px_#ffd600]"></span>
-                        <span className="text-amber-300">Temporary Diversion</span>
+                        <span className="w-5 h-1.5 rounded-full bg-[#f97316] shadow-[0_0_8px_#f97316]"></span>
+                        <span className="text-orange-400">Temporary Diversion</span>
                       </div>
                     </div>
                   </div>
