@@ -1733,7 +1733,7 @@ const Robot = ({
   addExplanation,
   mapData,
   isPausedAtDestination = false,
-  isFollowingAlternateRoute = false,
+  isFollowingAlternateRoute: _isFollowingAlternateRoute = false,
 }: {
   path: GridPoint[];
   currentIndex: number;
@@ -2194,7 +2194,6 @@ const Robot = ({
       // Safe real-world barricade detection horizon: 8.5m ahead in the road corridor
       // Beyond 8.5m, the robot approaches naturally at normal cruise speed
       const BARRICADE_DETECT_HORIZON = 8.5;
-      const BARRICADE_SAFE_STOP_GAP = 2.8;
 
       // Detect static road barricades blocking the robot's driving corridor ahead (up to 8.5m)
       const staticBarricadesAhead = scannedObstacles.filter(
@@ -3916,15 +3915,15 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
   // Autonomous Repeating Patrol Loop Heartbeat
   useEffect(() => {
     let timeout: any;
-    if (!isIdleMode && (robotState === 'idle' || robotState === 'patrol') && !isPlaying && isOn && patrolCountdown === null && path.length === 0) {
+    if (!isIdleMode && (robotState === 'idle' || robotState === 'patrol') && !isPlaying && isOn && patrolCountdown === null) {
       timeout = setTimeout(() => {
         if (!mapData || !mapData.rooms) return;
         dispatchPatrolCheckpoint(patrolIndexRef.current);
-      }, 500);
+      }, 300);
     }
     prevIsIdleMode.current = isIdleMode;
     return () => clearTimeout(timeout);
-  }, [robotState, isPlaying, path, isOn, isIdleMode, patrolCountdown, mapData]);
+  }, [robotState, isPlaying, isOn, isIdleMode, patrolCountdown, mapData]);
 
   const initializeDynamicObstacles = (routePath?: GridPoint[]) => {
     if (!mapData || !mapData.roads || mapData.roads.length < 5) return;
@@ -4729,7 +4728,7 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
         // Continuous Repeating Patrol Loop: Pause exactly 5.0 seconds at destination, then smoothly advance
         setIsPlaying(false);
         setIsFollowingAlternateRoute(false);
-        addExplanation('📍 Waypoint arrived. Mandatory 5.0-second inspection pause initiated.');
+        addExplanation('📍 Patrol destination reached. Pausing 5.0 seconds for inspection in IDLE state.');
 
         if (patrolTimerRef.current) {
           clearInterval(patrolTimerRef.current);
@@ -4756,7 +4755,7 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
             } else {
               // Advance smoothly to next checkpoint in repeating loop
               const nextIdx = (patrolIndexRef.current + 1) % PATROL_CHECKPOINTS.length;
-              addExplanation('⏱️ 5.0s pause complete. Smoothly continuing autonomous patrol along route.');
+              addExplanation('⏱️ Inspection pause complete. Returning to MOVING state and continuing autonomous patrol.');
               dispatchPatrolCheckpoint(nextIdx);
             }
           }
