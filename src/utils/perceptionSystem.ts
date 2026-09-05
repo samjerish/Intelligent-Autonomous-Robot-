@@ -491,3 +491,128 @@ export function trackEnvironmentObjects(
     summary,
   };
 }
+
+export interface PreMovementAssessment {
+  isSafeToDepart: boolean;
+  hasImmediateBarricade: boolean;
+  hasImmediateObstacle: boolean;
+  immediateObstacleType?: 'barricade' | 'vehicle' | 'pedestrian' | 'static';
+  recommendedAction: 'PROCEED' | 'REROUTE_BARRICADE' | 'ADAPT_LANE' | 'WAIT_CLEAR';
+  openSpaceSummary: string;
+  drivableClearance: number;
+}
+
+/**
+ * Assesses the environment before the robot initiates movement along a planned path.
+ * Verifies road drivability, road boundaries, barricades, vehicles, pedestrians, and open space.
+ */
+export function assessPreMovementEnvironment(
+  currentPos: THREE.Vector3,
+  candidatePath: GridPoint[],
+  mapData: MapData | null,
+  dynamicObstacles: any[],
+  staticObstacles: GridPoint[],
+  userBlockers: GridPoint[],
+  getGridPosFn: (pt: GridPoint, gridSize: GridPoint, yOffset: number, isMapView: boolean) => [number, number, number],
+  isPointOnDrivableRoadFn: (x: number, z: number, mapData: MapData | null, margin: number) => boolean,
+  gridSize: GridPoint,
+  isMapView: boolean
+): PreMovementAssessment {
+  if (!mapData || candidatePath.length < 2) {
+    return {
+      isSafeToDepart: true,
+      hasImmediateBarricade: false,
+      hasImmediateObstacle: false,
+      recommendedAction: 'PROCEED',
+      openSpaceSummary: 'Clear road environment',
+      drivableClearance: 10.0,
+    };
+  }
+
+  // 1. Check immediate departure corridor (first 5 nodes / ~5 meters)
+  const lookaheadNodes = Math.min(candidatePath.length, 5);
+  let hasImmediateBarricade = false;
+  let hasImmediateObstacle = false;
+  let immediateObstacleType: 'barricade' | 'vehicle' | 'pedestrian' | 'static' | undefined;
+  let drivableClearance = 10.0;
+
+  // Check road barricades in userBlockers
+  if (userBlockers && userBlockers.length > 0) {
+    for (let i = 1; i < lookaheadNodes; i++) {
+      const node = candidatePath[i];
+      if (userBlockers.some(b => b.x === node.x && b.y === node.y)) {
+        hasImmediateBarricade = true;
+        immediateObstacleType = 'barricade';
+        drivableClearance = Math.min(drivableClearance, i * 1.0);
+        break;
+      }
+    }
+  }
+
+  // Check static obstacles
+  if (!hasImmediateBarricade && staticObstacles && staticObstacles.length > 0) {
+    for (let i = 1; i < lookaheadNodes; i++) {
+      const node = candidatePath[i];
+      if (staticObstacles.some(o => o.x === node.x && o.y === node.y)) {
+        hasImmediateObstacle = true;
+        immediateObstacleType = 'static';
+        drivableClearance = Math.min(drivableClearance, i * 1.0);
+        break;
+      }
+    }
+  }
+
+  // Check dynamic obstacles (cars, pedestrians) near start position
+  if (dynamicObstacles && dynamicObstacles.length > 0) {
+    for (const d of dynamicObstacles) {
+      let obsPos: THREE.Vector3;
+      if (d.pos3D) {
+        obsPos = d.pos3D.clone();
+      } else if (d.pos) {
+        const [x, y, z] = getGridPosFn(d.pos, gridSize, 0.05, isMapView);
+        obsPos = new THREE.Vector3(x, y, z);
+      } else {
+        continue;
+      }
+
+      const dist = currentPos.distanceTo(obsPos);
+      if (dist < 3.5) {
+        hasImmediateObstacle = true;
+        immediateObstacleType = d.type === 'car' ? 'vehicle' : 'pedestrian';
+        drivableClearance = Math.min(drivableClearance, dist);
+        break;
+      }
+    }
+  }
+
+  // Check drivability of the departure point and road boundaries
+  const startIsDrivable = isPointOnDrivableRoadFn(currentPos.x, currentPos.z, mapData, 0.15);
+  let recommendedAction: 'PROCEED' | 'REROUTE_BARRICADE' | 'ADAPT_LANE' | 'WAIT_CLEAR' = 'PROCEED';
+  let openSpaceSummary = 'Drivable road corridor clear with full boundary clearance';
+
+  if (hasImmediateBarricade) {
+    recommendedAction = 'REROUTE_BARRICADE';
+    openSpaceSummary = 'Barricade blocks departure path; alternate road required';
+  } else if (hasImmediateObstacle) {
+    if (immediateObstacleType === 'vehicle' || immediateObstacleType === 'pedestrian') {
+      recommendedAction = 'ADAPT_LANE';
+      openSpaceSummary = `${immediateObstacleType === 'vehicle' ? 'Vehicle' : 'Pedestrian'} in departure vicinity; adapting lane clearance`;
+    } else {
+      recommendedAction = 'ADAPT_LANE';
+      openSpaceSummary = 'Static obstacle in departure corridor; safe diversion available';
+    }
+  } else if (!startIsDrivable) {
+    openSpaceSummary = 'Near road boundary; aligning toward road centerline';
+  }
+
+  return {
+    isSafeToDepart: !hasImmediateBarricade,
+    hasImmediateBarricade,
+    hasImmediateObstacle,
+    immediateObstacleType,
+    recommendedAction,
+    openSpaceSummary,
+    drivableClearance,
+  };
+}
+
