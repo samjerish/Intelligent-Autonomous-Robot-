@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { GridPoint, MapData } from '../types';
+import type { GridPoint, MapData } from '../types';
 
 export type DetectedObjectClass =
   | 'Moving obstacle / vehicle'
@@ -461,12 +461,16 @@ export function trackEnvironmentObjects(
       overallAction = 'BARRICADE_REROUTE';
       primaryRisk = obj;
       break;
-    } else if (obj.actionRequired === 'DIVERSION' && overallAction !== 'BARRICADE_REROUTE') {
-      overallAction = 'DIVERSION';
-      primaryRisk = obj;
-    } else if (obj.actionRequired === 'FOLLOW_SPACE' && overallAction === 'CLEAR') {
-      overallAction = 'FOLLOW_SPACE';
-      primaryRisk = obj;
+    } else if (obj.actionRequired === 'DIVERSION') {
+      if (!primaryRisk) {
+        overallAction = 'DIVERSION';
+        primaryRisk = obj;
+      }
+    } else if (obj.actionRequired === 'FOLLOW_SPACE') {
+      if (!primaryRisk && overallAction === 'CLEAR') {
+        overallAction = 'FOLLOW_SPACE';
+        primaryRisk = obj;
+      }
     }
   }
 
