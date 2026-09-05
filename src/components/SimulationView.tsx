@@ -1555,6 +1555,7 @@ const Robot = ({
   staticObstacles?: GridPoint[];
   drivableRouteRef?: React.MutableRefObject<number[]>;
   drivableRouteColorsRef?: React.MutableRefObject<number[]>;
+  diversionRouteRef?: React.MutableRefObject<number[]>;
   upcomingLoopPoints3D?: THREE.Vector3[];
   onReachNode: (idx: number) => void;
   onMissionComplete: () => void;
@@ -1594,7 +1595,8 @@ const Robot = ({
   const actualSpeedRef = useRef(0);
   const pauseTimeRef = useRef(0);
   const distanceTraveledRef = useRef(0);
-  const smoothedLateralOffsetRef = useRef(0);
+  // Robot travels on assigned side of the road (right lane: +0.35m from road centerline)
+  const smoothedLateralOffsetRef = useRef(0.35);
 
   // 1. Build centripetal 3D spline curve and cumulative waypoint distances
   const { curve, totalLength, waypointDistances } = useMemo(() => {
@@ -1930,16 +1932,19 @@ const Robot = ({
       }
 
       // ── Step 2: Active Free Space Assessment & Courteous Diversion Decision Engine ──
-      // Scan obstacles directly obstructing the robot's driving corridor (ahead within 7.5m and |sideDot| <= 0.75m)
+      const ASSIGNED_LANE_OFFSET = 0.35; // Center of robot's assigned driving lane (right side of road)
+
+      // Detect obstacles approaching directly in front of the robot in its assigned lane (ahead within 8.0m)
+      // Assigned lane is centered around +0.35m; an obstacle directly blocks it if |o.sideDot - ASSIGNED_LANE_OFFSET| <= 0.65m
       const obstructingAhead = scannedObstacles.filter(
-        o => o.longitudinalDelta >= 0.3 && o.longitudinalDelta <= 7.5 && Math.abs(o.sideDot) <= 0.75
+        o => o.longitudinalDelta >= 0.3 && o.longitudinalDelta <= 8.0 && Math.abs(o.sideDot - ASSIGNED_LANE_OFFSET) <= 0.65
       );
       obstructingAhead.sort((a, b) => a.longitudinalDelta - b.longitudinalDelta);
       const primaryDirectObstacle = obstructingAhead[0] || null;
 
       // Wider detection for general awareness and safe distance tracking
       const corridorObstacles = scannedObstacles.filter(
-        o => o.longitudinalDelta >= 0.2 && o.longitudinalDelta <= 8.5 && (o.lateralDist < 1.35 || o.minCpaDist < 2.0)
+        o => o.longitudinalDelta >= 0.2 && o.longitudinalDelta <= 8.5 && (o.lateralDist < 1.45 || o.minCpaDist < 2.0)
       );
       corridorObstacles.sort((a, b) => a.longitudinalDelta - b.longitudinalDelta);
       const primaryAheadObs = primaryDirectObstacle || corridorObstacles[0] || null;
@@ -1947,7 +1952,7 @@ const Robot = ({
       interface PlannedDiversion {
         id: string;
         sObstacle: number;
-        peakAmplitude: number;
+        peakAmplitude: number; // Delta from assigned lane center
         clearanceMeters: number;
       }
       const plannedDiversions: PlannedDiversion[] = [];
@@ -1957,8 +1962,9 @@ const Robot = ({
       let targetSpeed = cruiseSpeed;
       let isOvertakeFeasible = false;
 
-      // "Display a continuous blue line for the robot’s normal patrol route. When an obstacle blocks this route and there is enough safe drivable space, display a yellow line for the temporary diversion."
-      // "The robot should actively assess free space. If enough safe space exists, it must smoothly follow the yellow diversion around the obstacle without stopping. Only slow down or wait when there is genuinely not enough safe space to pass. Do not make unnecessary diversions or overtakes."
+      // "The robot must travel on its assigned side of the road and remain within the road boundaries. Display a continuous blue line showing the robot’s normal route ahead."
+      // "If an obstacle approaches directly in front of the robot, detect it early and check whether there is enough safe, clear space on the road. If so, create a smooth temporary yellow diversion line around the obstacle."
+      // "The robot should gradually steer along the yellow line, keep a wide safe distance, pass the obstacle without collision, and then smoothly merge back to the center of its assigned lane and continue following the blue route."
       if (primaryDirectObstacle) {
         const obs = primaryDirectObstacle;
         const isFollowingNormalTraffic = obs.isMoving && obs.relForwardVel >= cruiseSpeed * 0.75;
@@ -1966,8 +1972,7 @@ const Robot = ({
         const isBlockingRoute = !obs.isMoving || obs.speed < 0.65 || obs.type === 'static' || obs.relForwardVel < cruiseSpeed * 0.45;
 
         if (isFollowingNormalTraffic) {
-          // Normal traffic/pedestrian moving ahead at pace in our lane:
-          // Be courteous: follow the continuous blue route at a safe following distance. Do NOT make unnecessary diversions.
+          // Following moving traffic ahead on the blue route at safe following distance
           shouldCourteousStandOff = false;
           if (obs.longitudinalDelta < 3.5) {
             targetSpeed = THREE.MathUtils.clamp((obs.longitudinalDelta - 2.8) * 0.85, 0.4, cruiseSpeed * 0.88);
@@ -1975,92 +1980,57 @@ const Robot = ({
             targetSpeed = Math.min(cruiseSpeed, Math.max(0.6, obs.speed * 0.95));
           }
         } else if (isOncomingInOurLane) {
-          // Oncoming traffic in our lane:
-          // Yield courteously, decelerate smoothly on the blue route without startling others
+          // Oncoming traffic in our lane: yield smoothly on the right shoulder, reducing speed
           shouldCourteousStandOff = true;
           currentStandoffLabel = 'YIELDING TO ONCOMING TRAFFIC • REDUCED SPEED';
           targetSpeed = THREE.MathUtils.clamp((obs.longitudinalDelta - 2.8) * 0.7, 0, cruiseSpeed * 0.65);
         } else if (isBlockingRoute) {
-          // Obstacle is genuinely blocking our patrol route:
-          // Actively assess free drivable space on left and right sides:
+          // Obstacle is blocking our assigned lane directly in front of the robot:
+          // Check whether there is enough safe, clear space on the road to divert:
           const obsRadius = obs.type === 'car' ? 0.68 : (obs.type === 'static' ? 0.55 : 0.38);
           const robotRadius = 0.40;
-          const minSafetyBuffer = 0.45; // Strict clearance: at least 45cm separation between outer hulls
+          const minSafetyBuffer = 0.45; // Strict clearance: at least 45cm between outer hulls
           const requiredSeparation = obsRadius + robotRadius + minSafetyBuffer;
 
-          // Target lateral offsets to pass around the obstacle
-          const targetLeft = obs.sideDot - requiredSeparation;
-          const targetRight = obs.sideDot + requiredSeparation;
+          // Since obstacle is on the right side of the road, the natural safe passing space is the left passing lane
+          const targetPassingOffset = Math.max(-1.15, Math.min(-0.70, obs.sideDot - requiredSeparation));
+          const leftWithinRoad = targetPassingOffset >= -1.25;
 
-          // Road drivable limits (asphalt spans ±1.25m from centerline)
-          const leftWithinRoad = targetLeft >= -1.25;
-          const rightWithinRoad = targetRight <= 1.25;
-
-          // Check for oncoming traffic in passing lanes (avoid causing oncoming vehicles to brake/react)
-          const oncomingInLeft = scannedObstacles.some(
+          // Check if left passing lane has oncoming vehicles
+          const oncomingInPassingLane = scannedObstacles.some(
             o => o.id !== obs.id &&
-                 o.longitudinalDelta > -1.0 && o.longitudinalDelta < 7.5 &&
+                 o.longitudinalDelta > -1.0 && o.longitudinalDelta < 8.0 &&
                  o.sideDot < -0.20 &&
                  o.relForwardVel < -0.15
           );
-          const oncomingInRight = scannedObstacles.some(
-            o => o.id !== obs.id &&
-                 o.longitudinalDelta > -1.0 && o.longitudinalDelta < 7.5 &&
-                 o.sideDot > 0.20 &&
-                 o.relForwardVel < -0.15
-          );
 
-          // Check for other physical obstacles occupying the passing space
-          const leftBlockedByObs = scannedObstacles.some(
+          // Check if left passing lane has physical blockers
+          const passingLanePhysicallyBlocked = scannedObstacles.some(
             o => o.id !== obs.id && Math.abs(o.sObstacle - obs.sObstacle) < 3.2 && o.sideDot < -0.25
           );
-          const rightBlockedByObs = scannedObstacles.some(
-            o => o.id !== obs.id && Math.abs(o.sObstacle - obs.sObstacle) < 3.2 && o.sideDot > 0.25
-          );
 
-          const leftIsSafe = leftWithinRoad && !leftBlockedByObs && !oncomingInLeft;
-          const rightIsSafe = rightWithinRoad && !rightBlockedByObs && !oncomingInRight;
+          const passingLaneIsSafe = leftWithinRoad && !passingLanePhysicallyBlocked && !oncomingInPassingLane;
 
-          let preferredSide = 0;
-          let chosenAmplitude = 0;
-
-          // Prefer natural bypass side based on obstacle placement
-          if (obs.sideDot >= 0) {
-            if (leftIsSafe) {
-              preferredSide = -1;
-              chosenAmplitude = Math.max(-1.20, Math.min(-0.95, targetLeft));
-            } else if (rightIsSafe) {
-              preferredSide = 1;
-              chosenAmplitude = Math.min(1.20, Math.max(0.95, targetRight));
-            }
-          } else {
-            if (rightIsSafe) {
-              preferredSide = 1;
-              chosenAmplitude = Math.min(1.20, Math.max(0.95, targetRight));
-            } else if (leftIsSafe) {
-              preferredSide = -1;
-              chosenAmplitude = Math.max(-1.20, Math.min(-0.95, targetLeft));
-            }
-          }
-
-          if (preferredSide !== 0) {
-            // Enough safe space exists:
-            // Display radiant yellow line for temporary diversion and smoothly follow WITHOUT STOPPING!
+          if (passingLaneIsSafe) {
+            // Enough safe, clear space exists on the road:
+            // Create a smooth temporary yellow diversion line around the obstacle
+            // peakAmplitude is the delta from ASSIGNED_LANE_OFFSET
+            const peakDelta = targetPassingOffset - ASSIGNED_LANE_OFFSET;
             plannedDiversions.push({
               id: obs.id,
               sObstacle: obs.sObstacle,
-              peakAmplitude: chosenAmplitude,
+              peakAmplitude: peakDelta,
               clearanceMeters: requiredSeparation,
             });
             isOvertakeFeasible = true;
             shouldCourteousStandOff = false;
-            // Maintain continuous forward momentum at passing speed without stopping
+            // Maintain continuous passing speed along yellow line without stopping
             targetSpeed = cruiseSpeed * 0.95;
           } else {
-            // NOT enough safe space to pass yet (road blocked or oncoming vehicle passing):
-            // Courteously slow down and wait patiently behind the obstacle on the blue route
+            // Passing lane not safe yet (oncoming traffic or narrow blocked passage):
+            // Slow down and wait patiently at safe distance behind obstacle in assigned lane
             shouldCourteousStandOff = true;
-            if (oncomingInLeft || oncomingInRight) {
+            if (oncomingInPassingLane) {
               currentStandoffLabel = 'COURTEOUS YIELD • WAITING FOR ONCOMING TRAFFIC TO PASS';
             } else {
               currentStandoffLabel = 'NARROW PASSAGE • WAITING PATIENTLY AT SAFE DISTANCE';
@@ -2169,36 +2139,39 @@ const Robot = ({
         }
       }
 
-      // Mathematical function to compute exact lateral diversion at any point along the spline
-      // Defines: (1) gradual diversion path, (2) wide safety clearance, (3) smooth return to original route
-      // Yellow diversion arc smoothly reconnects to nominal blue route
+      // Mathematical function to compute exact lateral offset relative to assigned lane
+      // When no diversion is needed: returns ASSIGNED_LANE_OFFSET (+0.35m)
+      // When diverting: smoothly arches out to safe passing lane (e.g. -0.85m to -1.05m), passes obstacle, and smoothly merges back to ASSIGNED_LANE_OFFSET (+0.35m)
       const getDrivableOffsetAt = (evalS: number): number => {
-        let maxOff = 0;
-        const sigma = 2.6; // Wide, natural Gaussian envelope starting ~6.5m ahead and rejoining ~6.5m after
+        let diversionDelta = 0;
+        const sigma = 2.8; // Wide, natural Gaussian envelope starting ~7.0m ahead and merging back ~7.0m after
         for (const div of plannedDiversions) {
           const distFromObs = evalS - div.sObstacle;
           const bell = div.peakAmplitude * Math.exp(-(distFromObs * distFromObs) / (2 * sigma * sigma));
-          if (Math.abs(bell) > Math.abs(maxOff)) {
-            maxOff = bell;
+          if (Math.abs(bell) > Math.abs(diversionDelta)) {
+            diversionDelta = bell;
           }
         }
 
         // Smooth dampening near destination endpoint (< 2.0m from end)
         const distFromEnd = totalLength - evalS;
         if (distFromEnd < 2.0) {
-          maxOff *= Math.max(0.0, distFromEnd / 2.0);
+          diversionDelta *= Math.max(0.0, distFromEnd / 2.0);
         }
 
-        // Strictly clamp within valid asphalt boundaries (±1.20m)
-        return Math.max(-1.20, Math.min(1.20, maxOff));
+        // Offset is assigned lane center PLUS the smooth diversion delta
+        const finalOffset = ASSIGNED_LANE_OFFSET + diversionDelta;
+
+        // Strictly clamp within asphalt road boundaries (±1.15m)
+        return Math.max(-1.15, Math.min(1.15, finalOffset));
       };
 
       // "the robot should not change its positions rapidly"
       const safeDelta = Math.min(0.04, delta);
 
-      // 1. Strictly rate-limit lateral offset changes (maximum 1.05 m/s lateral transition)
+      // 1. Strictly rate-limit lateral offset changes (maximum 0.85 m/s lateral transition)
       const targetOffset = getDrivableOffsetAt(s);
-      const maxOffsetDelta = 1.05 * safeDelta;
+      const maxOffsetDelta = 0.85 * safeDelta;
       smoothedLateralOffsetRef.current = THREE.MathUtils.clamp(
         targetOffset,
         smoothedLateralOffsetRef.current - maxOffsetDelta,
@@ -2241,14 +2214,60 @@ const Robot = ({
         }
       }
 
-      // --- Update Navigation Route Line: Yellow for diversion alone, Blue for normal patrol route ---
+      // --- Update Navigation Route Lines ---
+      // (1) Continuous Blue Route Line: Always displays the normal patrol route ahead on the robot's assigned side of the road (+0.35m)
       if (drivableRouteRef) {
-        const routeData = buildFullRouteLine(curve, s, currentPos, getDrivableOffsetAt, isOvertakingActive);
-        if (routeData.points.length >= 6) {
-          drivableRouteRef.current = routeData.points;
-          if (drivableRouteColorsRef) {
-            drivableRouteColorsRef.current = routeData.colors;
+        const bluePts: number[] = [];
+        const sampleStep = 0.25;
+        for (let testS = s; testS <= totalLength; testS += sampleStep) {
+          const u = testS / totalLength;
+          const basePt = curve.getPointAt(u);
+          const tangent = curve.getTangentAt(u).normalize();
+          const normal = new THREE.Vector3(tangent.z, 0, -tangent.x);
+          const bluePt = basePt.clone().add(normal.clone().multiplyScalar(ASSIGNED_LANE_OFFSET));
+          bluePts.push(bluePt.x, 0.08, bluePt.z);
+        }
+        if (upcomingLoopPoints3D && upcomingLoopPoints3D.length > 0) {
+          for (let i = 0; i < upcomingLoopPoints3D.length; i++) {
+            const pt3d = upcomingLoopPoints3D[i];
+            if (i === 0 && bluePts.length >= 3) {
+              const lastX = bluePts[bluePts.length - 3];
+              const lastZ = bluePts[bluePts.length - 1];
+              if (Math.hypot(pt3d.x - lastX, pt3d.z - lastZ) < 0.25) continue;
+            }
+            bluePts.push(pt3d.x, 0.08, pt3d.z);
           }
+        }
+        if (bluePts.length >= 6) {
+          drivableRouteRef.current = bluePts;
+        }
+      }
+
+      // (2) Temporary Yellow Diversion Line: Appears ONLY for the active safe diversion around the obstacle
+      if (diversionRouteRef) {
+        if (isOvertakingActive && plannedDiversions.length > 0) {
+          const activeDiv = plannedDiversions[0];
+          const yellowPts: number[] = [];
+          const divEndS = Math.min(totalLength, activeDiv.sObstacle + 2.5 * 2.8);
+          // Starts at robot's current 3D position
+          yellowPts.push(currentPos.x, 0.09, currentPos.z);
+          const step = 0.15;
+          for (let testS = s + step; testS <= divEndS; testS += step) {
+            const u = testS / totalLength;
+            const basePt = curve.getPointAt(u);
+            const tangent = curve.getTangentAt(u).normalize();
+            const normal = new THREE.Vector3(tangent.z, 0, -tangent.x);
+            const off = getDrivableOffsetAt(testS);
+            const divPt = basePt.clone().add(normal.clone().multiplyScalar(off));
+            yellowPts.push(divPt.x, 0.09, divPt.z);
+          }
+          if (yellowPts.length >= 6) {
+            diversionRouteRef.current = yellowPts;
+          } else {
+            diversionRouteRef.current = [];
+          }
+        } else {
+          diversionRouteRef.current = [];
         }
       }
 
@@ -2315,6 +2334,7 @@ const Robot = ({
       // Always display clear navigation line showing full planned route ahead even when paused or idle
       if (drivableRouteRef && curve) {
         const s = distanceTraveledRef.current;
+        const ASSIGNED_LANE_OFFSET = 0.35;
         const idleDiversions: { sObstacle: number; peakAmplitude: number }[] = [];
         const allObs: { pos: THREE.Vector3; id: string }[] = [];
         if (staticObstacles && staticObstacles.length > 0) {
@@ -2351,53 +2371,71 @@ const Robot = ({
               tangentAtObs = curve.getTangentAt(u);
             }
           }
-          if (bestDistSq < 0.75 * 0.75 && sObstacle > s - 1.0 && sObstacle < s + 7.5) {
+          if (bestDistSq < 0.85 * 0.85 && sObstacle > s - 1.0 && sObstacle < s + 8.0) {
             const normAtObs = new THREE.Vector3(tangentAtObs.z, 0, -tangentAtObs.x).normalize();
             const toObs = new THREE.Vector3().subVectors(obs.pos, ptAtObs);
             const sideDot = toObs.dot(normAtObs);
-            const obsRadius = 0.55;
-            const robotRadius = 0.40;
-            const minSafetySeparation = obsRadius + robotRadius + 0.45;
-            const targetLeft = sideDot - minSafetySeparation;
-            const targetRight = sideDot + minSafetySeparation;
-            const leftSafe = targetLeft >= -1.25;
-            const rightSafe = targetRight <= 1.25;
-            let preferredSide = 0;
-            let peakAmp = 0;
-            if (sideDot >= 0) {
-              if (leftSafe) { preferredSide = -1; peakAmp = Math.max(-1.20, Math.min(-0.95, targetLeft)); }
-              else if (rightSafe) { preferredSide = 1; peakAmp = Math.min(1.20, Math.max(0.95, targetRight)); }
-            } else {
-              if (rightSafe) { preferredSide = 1; peakAmp = Math.min(1.20, Math.max(0.95, targetRight)); }
-              else if (leftSafe) { preferredSide = -1; peakAmp = Math.max(-1.20, Math.min(-0.95, targetLeft)); }
-            }
-            if (preferredSide !== 0) {
-              idleDiversions.push({
-                sObstacle,
-                peakAmplitude: peakAmp
-              });
+            // Obstacle blocks assigned right lane
+            if (sideDot > -0.15) {
+              const obsRadius = 0.55;
+              const robotRadius = 0.40;
+              const minSafetySeparation = obsRadius + robotRadius + 0.45;
+              const targetPassingOffset = Math.max(-1.15, Math.min(-0.70, sideDot - minSafetySeparation));
+              if (targetPassingOffset >= -1.25) {
+                idleDiversions.push({
+                  sObstacle,
+                  peakAmplitude: targetPassingOffset - ASSIGNED_LANE_OFFSET
+                });
+              }
             }
           }
         }
 
-        const idleOffsetFn = (evalS: number): number => {
-          let maxOff = 0;
-          const sigma = 2.6;
-          for (const div of idleDiversions) {
-            const distFromObs = evalS - div.sObstacle;
-            const bell = div.peakAmplitude * Math.exp(-(distFromObs * distFromObs) / (2 * sigma * sigma));
-            if (Math.abs(bell) > Math.abs(maxOff)) maxOff = bell;
+        // Build continuous blue line along assigned lane
+        const bluePts: number[] = [];
+        const sampleStep = 0.25;
+        for (let testS = s; testS <= totalLength; testS += sampleStep) {
+          const u = testS / totalLength;
+          const basePt = curve.getPointAt(u);
+          const tangent = curve.getTangentAt(u).normalize();
+          const normal = new THREE.Vector3(tangent.z, 0, -tangent.x);
+          const bluePt = basePt.clone().add(normal.clone().multiplyScalar(ASSIGNED_LANE_OFFSET));
+          bluePts.push(bluePt.x, 0.08, bluePt.z);
+        }
+        if (upcomingLoopPoints3D && upcomingLoopPoints3D.length > 0) {
+          for (let i = 0; i < upcomingLoopPoints3D.length; i++) {
+            bluePts.push(upcomingLoopPoints3D[i].x, 0.08, upcomingLoopPoints3D[i].z);
           }
-          const distFromEnd = totalLength - evalS;
-          if (distFromEnd < 2.0) maxOff *= Math.max(0.0, distFromEnd / 2.0);
-          return Math.max(-1.20, Math.min(1.20, maxOff));
-        };
+        }
+        if (bluePts.length >= 6) {
+          drivableRouteRef.current = bluePts;
+        }
 
-        const routeData = buildFullRouteLine(curve, distanceTraveledRef.current, currentPos, idleOffsetFn, idleDiversions.length > 0);
-        if (routeData.points.length >= 6) {
-          drivableRouteRef.current = routeData.points;
-          if (drivableRouteColorsRef) {
-            drivableRouteColorsRef.current = routeData.colors;
+        // Build temporary yellow diversion line if idleDiversion exists
+        if (diversionRouteRef) {
+          if (idleDiversions.length > 0) {
+            const div = idleDiversions[0];
+            const yellowPts: number[] = [];
+            const divEndS = Math.min(totalLength, div.sObstacle + 2.5 * 2.8);
+            yellowPts.push(currentPos.x, 0.09, currentPos.z);
+            for (let testS = s + 0.15; testS <= divEndS; testS += 0.15) {
+              const u = testS / totalLength;
+              const basePt = curve.getPointAt(u);
+              const tangent = curve.getTangentAt(u).normalize();
+              const normal = new THREE.Vector3(tangent.z, 0, -tangent.x);
+              let deltaOff = 0;
+              for (const idiv of idleDiversions) {
+                const distFromObs = testS - idiv.sObstacle;
+                const bell = idiv.peakAmplitude * Math.exp(-(distFromObs * distFromObs) / (2 * 2.8 * 2.8));
+                if (Math.abs(bell) > Math.abs(deltaOff)) deltaOff = bell;
+              }
+              const off = Math.max(-1.15, Math.min(1.15, ASSIGNED_LANE_OFFSET + deltaOff));
+              const divPt = basePt.clone().add(normal.clone().multiplyScalar(off));
+              yellowPts.push(divPt.x, 0.09, divPt.z);
+            }
+            diversionRouteRef.current = yellowPts;
+          } else {
+            diversionRouteRef.current = [];
           }
         }
       }
@@ -2428,7 +2466,8 @@ const Robot = ({
 
 const DrivablePathLine = ({ 
   drivableRouteRef,
-  drivableRouteColorsRef,
+  diversionRouteRef,
+  drivableRouteColorsRef: _colorsRef,
   path,
   gridSize,
   isMapView,
@@ -2437,6 +2476,7 @@ const DrivablePathLine = ({
   opacity = 0.95 
 }: { 
   drivableRouteRef: React.MutableRefObject<number[]>;
+  diversionRouteRef?: React.MutableRefObject<number[]>;
   drivableRouteColorsRef?: React.MutableRefObject<number[]>;
   path: GridPoint[];
   gridSize: GridPoint;
@@ -2446,76 +2486,121 @@ const DrivablePathLine = ({
   opacity?: number; 
 }) => {
   const { size } = useThree();
-  const lineGeom = useMemo(() => new LineGeometry(), []);
-  
-  const lineMat = useMemo(() => new LineMaterial({
-    vertexColors: true,
+
+  // (1) Blue Normal Patrol Route Line (Continuous along assigned side of the road)
+  const blueLineGeom = useMemo(() => new LineGeometry(), []);
+  const blueLineMat = useMemo(() => new LineMaterial({
+    color: new THREE.Color(color).getHex(),
     linewidth: lineWidth,
     resolution: new THREE.Vector2(size.width, size.height),
     transparent: true,
     opacity: opacity,
     depthTest: true,
     depthWrite: false,
-  }), [lineWidth, opacity, size.width, size.height]);
+  }), [lineWidth, opacity, size.width, size.height, color]);
 
-  const glowMat = useMemo(() => new LineMaterial({
-    vertexColors: true,
+  const blueGlowMat = useMemo(() => new LineMaterial({
+    color: new THREE.Color(color).getHex(),
     linewidth: lineWidth * 2.2,
     resolution: new THREE.Vector2(size.width, size.height),
     transparent: true,
     opacity: 0.32,
     depthTest: true,
     depthWrite: false,
+  }), [lineWidth, size.width, size.height, color]);
+
+  const blueLineObj = useMemo(() => new Line2(blueLineGeom, blueLineMat), [blueLineGeom, blueLineMat]);
+  const blueGlowObj = useMemo(() => new Line2(blueLineGeom, blueGlowMat), [blueLineGeom, blueGlowMat]);
+
+  // (2) Radiant Yellow Temporary Diversion Line (Appears ONLY for active safe diversion)
+  const yellowLineGeom = useMemo(() => new LineGeometry(), []);
+  const yellowLineMat = useMemo(() => new LineMaterial({
+    color: new THREE.Color('#ffd600').getHex(),
+    linewidth: lineWidth * 1.15,
+    resolution: new THREE.Vector2(size.width, size.height),
+    transparent: true,
+    opacity: 0.98,
+    depthTest: true,
+    depthWrite: false,
   }), [lineWidth, size.width, size.height]);
 
-  const lineObj = useMemo(() => new Line2(lineGeom, lineMat), [lineGeom, lineMat]);
-  const glowObj = useMemo(() => new Line2(lineGeom, glowMat), [lineGeom, glowMat]);
+  const yellowGlowMat = useMemo(() => new LineMaterial({
+    color: new THREE.Color('#ffd600').getHex(),
+    linewidth: lineWidth * 2.6,
+    resolution: new THREE.Vector2(size.width, size.height),
+    transparent: true,
+    opacity: 0.45,
+    depthTest: true,
+    depthWrite: false,
+  }), [lineWidth, size.width, size.height]);
 
-  // Initial fallback points and default blue colors from path before dynamic simulation frames begin
-  const { fallbackPoints, fallbackColors } = useMemo(() => {
-    if (path.length < 2) return { fallbackPoints: [], fallbackColors: [] };
+  const yellowLineObj = useMemo(() => new Line2(yellowLineGeom, yellowLineMat), [yellowLineGeom, yellowLineMat]);
+  const yellowGlowObj = useMemo(() => new Line2(yellowLineGeom, yellowGlowMat), [yellowLineGeom, yellowGlowMat]);
+
+  // Initial fallback points along assigned lane from path before dynamic simulation frames begin
+  const fallbackPoints = useMemo(() => {
+    if (path.length < 2) return [];
     const pts: number[] = [];
-    const cls: number[] = [];
-    const normalColor = new THREE.Color(color);
     for (let i = 0; i < path.length; i++) {
       const [x, , z] = getGridPosition(path[i], gridSize, 0.08, isMapView);
-      pts.push(x, 0.08, z);
-      cls.push(normalColor.r, normalColor.g, normalColor.b);
+      let nx = 0;
+      let nz = 0;
+      if (i > 0) {
+        const dx = path[i].x - path[i-1].x;
+        const dy = path[i].y - path[i-1].y;
+        const len = Math.hypot(dx, dy);
+        if (len > 0.01) {
+          nx = dy / len;
+          nz = -dx / len;
+        }
+      }
+      pts.push(x + nx * 0.35, 0.08, z + nz * 0.35);
     }
-    return { fallbackPoints: pts, fallbackColors: cls };
-  }, [path, gridSize, isMapView, color]);
+    return pts;
+  }, [path, gridSize, isMapView]);
 
   useFrame(() => {
-    lineMat.resolution.set(size.width, size.height);
-    glowMat.resolution.set(size.width, size.height);
+    blueLineMat.resolution.set(size.width, size.height);
+    blueGlowMat.resolution.set(size.width, size.height);
+    yellowLineMat.resolution.set(size.width, size.height);
+    yellowGlowMat.resolution.set(size.width, size.height);
 
-    const pts = (drivableRouteRef.current && drivableRouteRef.current.length >= 6) 
+    // Update Continuous Blue Normal Patrol Route Line
+    const bluePts = (drivableRouteRef.current && drivableRouteRef.current.length >= 6) 
       ? drivableRouteRef.current 
       : fallbackPoints;
 
-    const colors = (drivableRouteColorsRef && drivableRouteColorsRef.current && drivableRouteColorsRef.current.length === pts.length)
-      ? drivableRouteColorsRef.current
-      : fallbackColors;
-
-    if (pts && pts.length >= 6) {
-      lineGeom.setPositions(pts);
-      if (colors && colors.length === pts.length) {
-        lineGeom.setColors(colors);
-      }
-      lineObj.computeLineDistances();
-      glowObj.computeLineDistances();
-      lineObj.visible = true;
-      glowObj.visible = true;
+    if (bluePts && bluePts.length >= 6) {
+      blueLineGeom.setPositions(bluePts);
+      blueLineObj.computeLineDistances();
+      blueGlowObj.computeLineDistances();
+      blueLineObj.visible = true;
+      blueGlowObj.visible = true;
     } else {
-      lineObj.visible = false;
-      glowObj.visible = false;
+      blueLineObj.visible = false;
+      blueGlowObj.visible = false;
+    }
+
+    // Update Temporary Yellow Diversion Line (Only visible during active diversion)
+    const yellowPts = diversionRouteRef && diversionRouteRef.current;
+    if (yellowPts && yellowPts.length >= 6) {
+      yellowLineGeom.setPositions(yellowPts);
+      yellowLineObj.computeLineDistances();
+      yellowGlowObj.computeLineDistances();
+      yellowLineObj.visible = true;
+      yellowGlowObj.visible = true;
+    } else {
+      yellowLineObj.visible = false;
+      yellowGlowObj.visible = false;
     }
   });
 
   return (
     <group>
-      <primitive object={glowObj} renderOrder={1} />
-      <primitive object={lineObj} renderOrder={2} />
+      <primitive object={blueGlowObj} renderOrder={1} />
+      <primitive object={blueLineObj} renderOrder={2} />
+      <primitive object={yellowGlowObj} renderOrder={3} />
+      <primitive object={yellowLineObj} renderOrder={4} />
     </group>
   );
 };
@@ -2716,6 +2801,7 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
   // Real-time dynamic drivable route polyline coordinates (flat [x, y, z, ...])
   const drivableRouteRef = useRef<number[]>([]);
   const drivableRouteColorsRef = useRef<number[]>([]);
+  const diversionRouteRef = useRef<number[]>([]);
   const isRecalculating = useRef(false);
 
   const [battery, setBattery] = useState(100);
@@ -2817,11 +2903,22 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
         leg = calculatePath(d1, d2, mapData.obstacles || [], mapData, true);
       }
 
-      // Convert grid waypoints along the road to smooth 3D points
+      // Convert grid waypoints along the road to smooth 3D points on assigned lane (+0.35m)
       const startIndex = flat3DPts.length > 0 ? 1 : 0;
       for (let i = startIndex; i < leg.length; i++) {
         const [x, , z] = getGridPosition(leg[i], mapData.gridSize, 0.08, isMapView);
-        flat3DPts.push(new THREE.Vector3(x, 0.08, z));
+        let nx = 0;
+        let nz = 0;
+        if (i > 0) {
+          const dx = leg[i].x - leg[i-1].x;
+          const dy = leg[i].y - leg[i-1].y;
+          const len = Math.hypot(dx, dy);
+          if (len > 0.01) {
+            nx = dy / len;
+            nz = -dx / len;
+          }
+        }
+        flat3DPts.push(new THREE.Vector3(x + nx * 0.35, 0.08, z + nz * 0.35));
       }
     }
 
@@ -4088,9 +4185,10 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
              <SciFiGate position={getGridPosition({ x: 62, y: 86, f: 0 }, gridSize, 0)} scale={3} />
           )}
 
-          {/* Continuous Clear Drivable Blue Route Line */}
+          {/* Continuous Clear Drivable Blue Route Line & Temporary Yellow Diversion Line */}
           <DrivablePathLine 
             drivableRouteRef={drivableRouteRef} 
+            diversionRouteRef={diversionRouteRef}
             drivableRouteColorsRef={drivableRouteColorsRef}
             path={path} 
             gridSize={gridSize} 
@@ -4122,6 +4220,7 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
               dynamicObstaclesRef={dynamicObstaclesRef}
               staticObstacles={userBlockers}
               drivableRouteRef={drivableRouteRef}
+              diversionRouteRef={diversionRouteRef}
               drivableRouteColorsRef={drivableRouteColorsRef}
               upcomingLoopPoints3D={robotState === 'patrol' ? upcomingPatrolPoints3D : []}
               onReachNode={handleReachNode}
