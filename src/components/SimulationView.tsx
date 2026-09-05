@@ -125,7 +125,19 @@ const SKIN_TONES = ['#fcd34d', '#fed7aa', '#fbcfe8', '#e2e8f0', '#d97706'];
 
 const MovingEntity = ({ obstacle, gridSize, isMapView, robotPosRef, allObstaclesRef }: { obstacle: DynamicObstacle, gridSize: GridPoint, isMapView: boolean, robotPosRef?: React.MutableRefObject<THREE.Vector3 | null>, allObstaclesRef?: React.MutableRefObject<DynamicObstacle[]> }) => {
   const ref = useRef<THREE.Group>(null);
-  const yieldOffsetRef = useRef(0);
+  const carIndex = parseInt(obstacle.id.replace(/\D/g, '') || '0', 10);
+  const carColor = CAR_COLORS[carIndex % CAR_COLORS.length];
+  const isCar = obstacle.type === 'car';
+  const isRoadWalker = !isCar && (carIndex % 3 !== 0); // 70% of people walk directly on the roadway
+  const shirtColor = SHIRT_COLORS[carIndex % SHIRT_COLORS.length];
+  const pantsColor = PANTS_COLORS[carIndex % PANTS_COLORS.length];
+  const skinColor = SKIN_TONES[carIndex % SKIN_TONES.length];
+  
+  // Lane offset:
+  // Road obstacles placed directly in the robot's driving path travel in the assigned right lane (+0.35m)
+  const isInDrivingPath = obstacle.id.startsWith('obs_road') || isRoadWalker;
+  const baseOffset = isInDrivingPath ? 0.35 : (isCar ? 0.35 : 0.55);
+  const yieldOffsetRef = useRef(baseOffset);
   const lastDirRef = useRef({ x: 0, z: 1 });
   const walkClockRef = useRef(Math.random() * 10);
   const smoothedSpeedFactorRef = useRef(1.0);
@@ -142,14 +154,6 @@ const MovingEntity = ({ obstacle, gridSize, isMapView, robotPosRef, allObstacles
   const wheel3Ref = useRef<THREE.Group>(null);
   const wheel4Ref = useRef<THREE.Group>(null);
   const taillightMatRef = useRef<THREE.MeshStandardMaterial>(null);
-
-  const carIndex = parseInt(obstacle.id.replace(/\D/g, '') || '0', 10);
-  const carColor = CAR_COLORS[carIndex % CAR_COLORS.length];
-  const isCar = obstacle.type === 'car';
-  const isRoadWalker = !isCar && (carIndex % 3 !== 0); // 70% of people walk directly on the roadway
-  const shirtColor = SHIRT_COLORS[carIndex % SHIRT_COLORS.length];
-  const pantsColor = PANTS_COLORS[carIndex % PANTS_COLORS.length];
-  const skinColor = SKIN_TONES[carIndex % SKIN_TONES.length];
   
   useFrame((_state, delta) => {
     if (!ref.current || obstacle.path.length === 0 || !obstacle.isMoving) return;
@@ -179,16 +183,11 @@ const MovingEntity = ({ obstacle, gridSize, isMapView, robotPosRef, allObstacles
     const latX = dirZ;
     const latZ = -dirX;
     
-    // Lane offset:
-    // Cars drive on the right side of the lane (+0.35)
-    // Road-walking people walk down the roadway (-0.25 or +0.25)
-    // Shoulder-walking people walk on the sidewalk (+0.55)
-    const baseOffset = isCar ? 0.35 : (isRoadWalker ? (carIndex % 2 === 0 ? -0.25 : 0.25) : 0.55);
     let yieldTarget = baseOffset;
     let isYielding = false;
     let speedFactor = 1.0;
 
-    // Smooth obstacle avoidance & mutual yielding with robot (obstacles stay on full continuous movement)
+    // Smooth obstacle dynamics & mutual safety with robot (obstacles stay on full continuous movement directly on the road)
     if (robotPosRef && robotPosRef.current) {
       const distToRobot = currentPos.distanceTo(robotPosRef.current);
       const toRobotX = robotPosRef.current.x - currentPos.x;
@@ -196,15 +195,14 @@ const MovingEntity = ({ obstacle, gridSize, isMapView, robotPosRef, allObstacles
       const fwdToRobot = toRobotX * dirX + toRobotZ * dirZ;
       const latToRobot = Math.abs(toRobotX * latX + toRobotZ * latZ);
 
-      // Yield towards outer curb / sidewalk when robot is in vicinity (within 7.5m)
-      if (distToRobot < 7.5 && fwdToRobot > -1.5) {
-        isYielding = true;
-        // Yield outward towards the road shoulder to create wide clear corridor for robot
-        yieldTarget = baseOffset >= 0 ? 0.72 : -0.72;
+      // "Place moving obstacles directly on the road, within the robot’s driving path."
+      // Moving obstacles stay directly in the driving lane on the road surface (+0.35m)
+      yieldTarget = baseOffset;
 
-        // Approaching robot in corridor: adapt speed smoothly while staying in continuous motion
-        if (fwdToRobot > 0.2 && fwdToRobot < 4.5 && latToRobot < 1.20) {
-          const adapted = THREE.MathUtils.clamp((fwdToRobot - 0.8) / 3.2, 0.72, 0.92);
+      // When robot approaches or is passing nearby, maintain continuous fluid motion
+      if (distToRobot < 6.5 && fwdToRobot > -2.0) {
+        if (fwdToRobot > 0.2 && fwdToRobot < 4.0 && latToRobot < 1.30) {
+          const adapted = THREE.MathUtils.clamp((fwdToRobot - 0.5) / 3.5, 0.75, 0.95);
           speedFactor = Math.min(speedFactor, adapted);
         }
       }
