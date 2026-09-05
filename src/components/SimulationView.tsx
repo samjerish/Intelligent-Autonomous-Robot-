@@ -2433,12 +2433,26 @@ const Robot = ({
       const baseSplineTangent = curve.getTangentAt(currentU).normalize();
       const baseSplineNormal = new THREE.Vector3(baseSplineTangent.z, 0, -baseSplineTangent.x);
 
-      const exactOffset = getDrivableOffsetAt(distanceTraveledRef.current);
-      smoothedLateralOffsetRef.current = exactOffset;
-
-      const targetWithCurvedDiversion = baseSplinePos.clone().add(
+      let exactOffset = getDrivableOffsetAt(distanceTraveledRef.current);
+      let targetWithCurvedDiversion = baseSplinePos.clone().add(
         baseSplineNormal.clone().multiplyScalar(exactOffset)
       );
+
+      // Verify and guarantee robot chassis stays strictly on drivable road surface
+      if (!isPointOnDrivableRoad(targetWithCurvedDiversion.x, targetWithCurvedDiversion.z, mapData, 0.18)) {
+        for (let scale = 0.85; scale >= 0.2; scale -= 0.15) {
+          const testPos = baseSplinePos.clone().add(
+            baseSplineNormal.clone().multiplyScalar(exactOffset * scale)
+          );
+          if (isPointOnDrivableRoad(testPos.x, testPos.z, mapData, 0.18)) {
+            targetWithCurvedDiversion = testPos;
+            exactOffset *= scale;
+            break;
+          }
+        }
+      }
+
+      smoothedLateralOffsetRef.current = exactOffset;
 
       // 4. Precision tracking: Robot travels directly on the visible route line at all times (blue for normal, yellow for diversion)
       currentPos.copy(targetWithCurvedDiversion);
@@ -2458,6 +2472,7 @@ const Robot = ({
 
       // --- Update Navigation Route Lines ---
       // (1) Continuous Blue Route Line: Always displays the full normal patrol route ahead on the robot's assigned side of the road (+0.35m)
+      // Must NEVER go onto sidewalks, grass, buildings, or any non-drivable area
       if (drivableRouteRef) {
         const bluePts: number[] = [];
         const sampleStep = 0.20;
@@ -2466,18 +2481,38 @@ const Robot = ({
           const basePt = curve.getPointAt(u);
           const tangent = curve.getTangentAt(u).normalize();
           const normal = new THREE.Vector3(tangent.z, 0, -tangent.x);
-          const bluePt = basePt.clone().add(normal.clone().multiplyScalar(ASSIGNED_LANE_OFFSET));
-          bluePts.push(bluePt.x, 0.18, bluePt.z);
+
+          let validOffset = ASSIGNED_LANE_OFFSET;
+          let testPt = basePt.clone().add(normal.clone().multiplyScalar(validOffset));
+
+          // Ensure marking NEVER goes onto sidewalks, grass, buildings, or any non-drivable area
+          if (!isPointOnDrivableRoad(testPt.x, testPt.z, mapData, 0.18)) {
+            let found = false;
+            for (let off = ASSIGNED_LANE_OFFSET * 0.75; Math.abs(off) > 0.04; off *= 0.6) {
+              const alt = basePt.clone().add(normal.clone().multiplyScalar(off));
+              if (isPointOnDrivableRoad(alt.x, alt.z, mapData, 0.18)) {
+                testPt = alt;
+                found = true;
+                break;
+              }
+            }
+            if (!found && isPointOnDrivableRoad(basePt.x, basePt.z, mapData, 0.15)) {
+              testPt = basePt.clone();
+            }
+          }
+          bluePts.push(testPt.x, 0.18, testPt.z);
         }
         if (upcomingLoopPoints3D && upcomingLoopPoints3D.length > 0) {
           for (let i = 0; i < upcomingLoopPoints3D.length; i++) {
             const pt3d = upcomingLoopPoints3D[i];
-            if (i === 0 && bluePts.length >= 3) {
-              const lastX = bluePts[bluePts.length - 3];
-              const lastZ = bluePts[bluePts.length - 1];
-              if (Math.hypot(pt3d.x - lastX, pt3d.z - lastZ) < 0.25) continue;
+            if (isPointOnDrivableRoad(pt3d.x, pt3d.z, mapData, 0.18)) {
+              if (i === 0 && bluePts.length >= 3) {
+                const lastX = bluePts[bluePts.length - 3];
+                const lastZ = bluePts[bluePts.length - 1];
+                if (Math.hypot(pt3d.x - lastX, pt3d.z - lastZ) < 0.25) continue;
+              }
+              bluePts.push(pt3d.x, 0.18, pt3d.z);
             }
-            bluePts.push(pt3d.x, 0.18, pt3d.z);
           }
         }
         if (bluePts.length >= 6) {
@@ -2487,6 +2522,7 @@ const Robot = ({
 
       // (2) Temporary Yellow Diversion Line:
       // "When an obstacle blocks the robot’s path and a safe diversion is selected, immediately show a clearly visible yellow line from the robot’s current position, around the obstacle, and back to the blue route. Keep this yellow line visible for the entire diversion. Remove it only after the robot has fully rejoined the blue route."
+      // Must NEVER go onto sidewalks, grass, buildings, or any non-drivable area
       if (diversionRouteRef) {
         if (activeDiversionRef.current) {
           const activeDiv = activeDiversionRef.current;
@@ -2500,7 +2536,18 @@ const Robot = ({
             const tangent = curve.getTangentAt(u).normalize();
             const normal = new THREE.Vector3(tangent.z, 0, -tangent.x);
             const off = getDrivableOffsetAt(testS);
-            const divPt = basePt.clone().add(normal.clone().multiplyScalar(off));
+            let divPt = basePt.clone().add(normal.clone().multiplyScalar(off));
+
+            // Strictly clamp points to ensure yellow line remains 100% on drivable road
+            if (!isPointOnDrivableRoad(divPt.x, divPt.z, mapData, 0.18)) {
+              for (let scale = 0.9; scale >= 0.3; scale -= 0.1) {
+                const alt = basePt.clone().add(normal.clone().multiplyScalar(off * scale));
+                if (isPointOnDrivableRoad(alt.x, alt.z, mapData, 0.18)) {
+                  divPt = alt;
+                  break;
+                }
+              }
+            }
             yellowPts.push(divPt.x, 0.20, divPt.z);
           }
           // Seamlessly reconnects back onto the blue route at the assigned lane center
@@ -2508,7 +2555,10 @@ const Robot = ({
           const endBase = curve.getPointAt(endU);
           const endTangent = curve.getTangentAt(endU).normalize();
           const endNormal = new THREE.Vector3(endTangent.z, 0, -endTangent.x);
-          const endPt = endBase.clone().add(endNormal.clone().multiplyScalar(ASSIGNED_LANE_OFFSET));
+          let endPt = endBase.clone().add(endNormal.clone().multiplyScalar(ASSIGNED_LANE_OFFSET));
+          if (!isPointOnDrivableRoad(endPt.x, endPt.z, mapData, 0.18)) {
+            endPt = endBase.clone();
+          }
           yellowPts.push(endPt.x, 0.20, endPt.z);
 
           if (yellowPts.length >= 6) {
@@ -2529,10 +2579,21 @@ const Robot = ({
       const lookaheadTangent = curve.getTangentAt(lookaheadU).normalize();
       const lookaheadNormal = new THREE.Vector3(lookaheadTangent.z, 0, -lookaheadTangent.x);
 
-      const lookaheadOffset = getDrivableOffsetAt(lookaheadS);
-      const lookaheadTarget = lookaheadBasePos.clone().add(
+      let lookaheadOffset = getDrivableOffsetAt(lookaheadS);
+      let lookaheadTarget = lookaheadBasePos.clone().add(
         lookaheadNormal.clone().multiplyScalar(lookaheadOffset)
       );
+      if (!isPointOnDrivableRoad(lookaheadTarget.x, lookaheadTarget.z, mapData, 0.18)) {
+        for (let scale = 0.85; scale >= 0.2; scale -= 0.15) {
+          const testPos = lookaheadBasePos.clone().add(
+            lookaheadNormal.clone().multiplyScalar(lookaheadOffset * scale)
+          );
+          if (isPointOnDrivableRoad(testPos.x, testPos.z, mapData, 0.18)) {
+            lookaheadTarget = testPos;
+            break;
+          }
+        }
+      }
 
       const forwardVector = new THREE.Vector3().subVectors(lookaheadTarget, currentPos);
       if (forwardVector.lengthSq() > 0.001) {
@@ -3234,7 +3295,13 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
             nz = -dx / len;
           }
         }
-        flat3DPts.push(new THREE.Vector3(x + nx * 0.35, 0.18, z + nz * 0.35));
+        let ptX = x + nx * 0.35;
+        let ptZ = z + nz * 0.35;
+        if (!isPointOnDrivableRoad(ptX, ptZ, mapData, 0.18)) {
+          ptX = x;
+          ptZ = z;
+        }
+        flat3DPts.push(new THREE.Vector3(ptX, 0.18, ptZ));
       }
     }
 
@@ -4604,6 +4671,7 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
               checkpointCountdown={patrolCountdown}
               checkpointName={currentPatrolTarget}
               addExplanation={addExplanation}
+              mapData={mapData}
             />
           )}
         </Canvas>
