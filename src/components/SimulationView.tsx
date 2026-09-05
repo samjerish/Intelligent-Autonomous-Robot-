@@ -1860,7 +1860,7 @@ const Robot = ({
       const primaryAheadObs = aheadInCorridor[0] || null;
 
       const corridorDiversionCandidates = scannedObstacles.filter(
-        o => o.longitudinalDelta > -5.0 && o.longitudinalDelta < 10.5 && (o.lateralDist < 1.45 || o.minCpaDist < 2.2)
+        o => o.longitudinalDelta > -4.5 && o.longitudinalDelta < 10.0 && (o.lateralDist < 1.60 || o.minCpaDist < 2.5)
       );
 
       interface PlannedDiversion {
@@ -1876,175 +1876,65 @@ const Robot = ({
       let targetSpeed = cruiseSpeed;
       let isOvertakeFeasible = false;
 
-      // ── Step 2: Predictive Trajectory Modeling & Obstacle Conflict Evaluation ──
-      // Evaluate all corridor candidates with trajectory prediction:
-      let needsToReverseReason = '';
-      let triggerConflictObs: ScannedObs | null = null;
-
+      // ── Step 2: Predictive Trajectory Modeling & "Detect and Move Through" Diversion Planning ──
+      // The robot detects obstacles in the corridor early and plans a fluid, wide diversion route around them
       for (const obs of corridorDiversionCandidates) {
-        const isPedestrian = obs.type === 'person';
-        const isMoving = obs.isMoving;
-        const isOncoming = obs.relForwardVel < -0.05;
-        const isCrossing = obs.isCrossingTraffic;
-        const willIntersectAhead = obs.minCpaDist < 2.2 && obs.timeAtCpa <= 4.2;
-
-        // Space on both sides of the roadway
+        // Space on both sides of the roadway corridor (road corridor ~4.4m wide)
         const spaceLeft = 2.2 + obs.sideDot;
         const spaceRight = 2.2 - obs.sideDot;
 
-        // Check if secondary blockers or entities obstruct passing on left or right in this zone
+        // Check if secondary obstacles obstruct passing on left or right in this zone
         const leftBlocked = scannedObstacles.some(
-          o => o.id !== obs.id && Math.abs(o.sObstacle - obs.sObstacle) < 3.2 && o.sideDot < -0.3
+          o => o.id !== obs.id && Math.abs(o.sObstacle - obs.sObstacle) < 3.0 && o.sideDot < -0.35
         );
         const rightBlocked = scannedObstacles.some(
-          o => o.id !== obs.id && Math.abs(o.sObstacle - obs.sObstacle) < 3.2 && o.sideDot > 0.3
+          o => o.id !== obs.id && Math.abs(o.sObstacle - obs.sObstacle) < 3.0 && o.sideDot > 0.35
         );
 
         let preferredSide = 0;
         let clearSpace = 0;
 
         if (!leftBlocked && (rightBlocked || spaceLeft >= spaceRight)) {
-          preferredSide = -1; // Pass on the open left side
+          preferredSide = -1; // Move through on the open left side
           clearSpace = spaceLeft;
         } else if (!rightBlocked) {
-          preferredSide = 1;  // Pass on the open right side
+          preferredSide = 1;  // Move through on the open right side
           clearSpace = spaceRight;
+        } else {
+          preferredSide = spaceLeft >= spaceRight ? -1 : 1;
+          clearSpace = Math.max(spaceLeft, spaceRight);
         }
 
-        // Strict wide safety gap criteria: minimum free space needed: 1.40m
-        const isWideComfortableGap = preferredSide !== 0 && clearSpace >= 1.40;
+        // Generous, safe lateral diversion amplitude (clamped within road asphalt boundaries: ±1.15m)
+        const bypassAmp = preferredSide * THREE.MathUtils.clamp(
+          0.95 + Math.abs(obs.sideDot) * 0.35,
+          0.95,
+          1.18
+        );
 
-        // Conflict 1: Oncoming traffic or crossing traffic approaching in corridor
-        // "at any time it should not collide, it should get reverse and make the way to the obstacle first"
-        if (isMoving && (isOncoming || isCrossing) && willIntersectAhead && obs.longitudinalDelta < 4.2) {
-          needsToReverseReason = isOncoming 
-            ? (isPedestrian ? 'Oncoming pedestrian approaching in corridor' : 'Oncoming vehicle approaching in corridor')
-            : (isPedestrian ? 'Pedestrian crossing path ahead' : 'Vehicle crossing path ahead');
-          triggerConflictObs = obs;
-          break;
-        }
+        plannedDiversions.push({
+          id: obs.id,
+          sObstacle: obs.sObstacle,
+          peakAmplitude: bypassAmp,
+          clearanceMeters: clearSpace,
+        });
 
-        // Conflict 2: Critical physical proximity (edge distance < 1.85m or center distance < 2.6m)
-        const obsRadius = obs.type === 'car' ? 0.65 : (obs.type === 'static' ? 0.55 : 0.38);
-        const edgeDist = Math.max(0, currentPos.distanceTo(obs.pos3D) - (0.45 + obsRadius));
-        if (obs.longitudinalDelta > -0.2 && obs.longitudinalDelta < 2.8 && edgeDist < 1.85) {
-          needsToReverseReason = 'Obstacle in close proximity ahead: Reversing to maintain wide safety distance';
-          triggerConflictObs = obs;
-          break;
-        }
-
-        // Conflict 3: Blocked or narrow passage without safe passing gap (< 1.40m)
-        if (obs.longitudinalDelta < 3.0 && !isWideComfortableGap) {
-          needsToReverseReason = 'Narrow road / no safe gap: Reversing to make way and wait';
-          triggerConflictObs = obs;
-          break;
-        }
-
-        // Wide Safe Diversion: when generous clear space (>= 1.40m) is verified
-        if (isWideComfortableGap) {
-          const bypassAmp = preferredSide * Math.min(1.20, Math.max(1.05, 0.85 + Math.abs(obs.sideDot)));
-
-          plannedDiversions.push({
-            id: obs.id,
-            sObstacle: obs.sObstacle,
-            peakAmplitude: bypassAmp,
-            clearanceMeters: clearSpace,
-          });
-
-          if (primaryAheadObs && obs.id === primaryAheadObs.id) {
-            isOvertakeFeasible = true;
-          }
+        if (primaryAheadObs && obs.id === primaryAheadObs.id) {
+          isOvertakeFeasible = true;
         }
       }
 
-      // Check if robot is actively executing a wide safe diversion
+      // Check if robot is actively executing a wide safe diversion to move through obstacles
       const isOvertakingActive = isOvertakeFeasible || (
-        plannedDiversions.length > 0 && plannedDiversions.some(d => Math.abs(s - d.sObstacle) < 4.5)
+        plannedDiversions.length > 0 && plannedDiversions.some(d => Math.abs(s - d.sObstacle) < 5.0)
       );
 
-      // ── Step 3: Reversing & Yielding State Machine ──
-      // "at any time it should not collide, it should get reverse and make the way to the obstacle first and then go to the destination"
-      if (!isReversingRef.current && !isYieldWaitingRef.current && triggerConflictObs) {
-        isReversingRef.current = true;
-        setIsReversing(true);
-        conflictingObsIdRef.current = triggerConflictObs.id;
-        reverseTargetSRef.current = Math.max(0, s - 3.2); // Back up 3.2m along spline to yield way
-        if (addExplanation) {
-          addExplanation(`🛡️ ${needsToReverseReason}: Reversing to make way first.`);
-        }
-      }
+      // ── Step 3: Motion & Emergency Fallback State Machine ──
+      const now = Date.now();
+      const reverseCooldownElapsed = now - lastReverseEndTimeRef.current > 3500;
 
-      if (isReversingRef.current) {
-        // Execute smooth reverse motion
-        targetSpeed = -1.1; // -1.1 m/s smooth reverse velocity
-        shouldCourteousStandOff = true;
-        currentStandoffLabel = 'REVERSING • MAKING WAY FOR OBSTACLE';
-
-        // Check if sufficient reverse distance is achieved or safe clearance established
-        const backedUpFarEnough = s <= reverseTargetSRef.current + 0.05 || s <= 0.02;
-        const obstacleSafelyCleared = !primaryAheadObs || primaryAheadObs.longitudinalDelta >= 3.8;
-
-        if (backedUpFarEnough || obstacleSafelyCleared) {
-          // Reversing phase complete: hold position and let obstacle pass through
-          isReversingRef.current = false;
-          setIsReversing(false);
-          isYieldWaitingRef.current = true;
-          setIsYieldWaiting(true);
-          yieldWaitTimerRef.current = 0;
-          targetSpeed = 0;
-          actualSpeedRef.current = 0;
-          if (addExplanation) {
-            addExplanation('⏳ Made way for obstacle: Holding position safely to let traffic pass.');
-          }
-        }
-      } else if (isYieldWaitingRef.current) {
-        // Yielding & Waiting Phase: let the obstacle make its way through first
-        targetSpeed = 0;
-        actualSpeedRef.current = 0;
-        yieldWaitTimerRef.current += delta;
-        shouldCourteousStandOff = true;
-        currentStandoffLabel = 'YIELDING TO OBSTACLE • MAKING WAY';
-
-        // Check if conflicting obstacle has passed or moved out of the corridor
-        const conflictingStillNear = scannedObstacles.some(
-          o => o.id === conflictingObsIdRef.current && 
-               o.longitudinalDelta > -0.5 && 
-               o.longitudinalDelta < 3.2 &&
-               Math.abs(o.sideDot) < 1.1
-        );
-        const pathAheadClear = !primaryAheadObs || primaryAheadObs.longitudinalDelta >= 3.4;
-
-        if (!conflictingStillNear && pathAheadClear && yieldWaitTimerRef.current > 0.8) {
-          // Obstacle has cleared: smoothly resume journey to destination
-          isYieldWaitingRef.current = false;
-          setIsYieldWaiting(false);
-          conflictingObsIdRef.current = null;
-          targetSpeed = cruiseSpeed;
-          if (addExplanation) {
-            addExplanation('✓ Obstacle has passed. Resuming smooth forward route to destination.');
-          }
-        }
-      } else if (isOvertakingActive) {
-        // Overtakes with wide, comfortable clearance at stable, controlled speed (88% cruise speed)
-        targetSpeed = cruiseSpeed * 0.88;
-        const now = Date.now();
-        if (now - lastOvertakeLogTime.current > 4000 && addExplanation) {
-          lastOvertakeLogTime.current = now;
-          addExplanation('⚡ Wide safe space confirmed: Taking gradual diversion with orange route guidance.');
-        }
-      } else {
-        // Nominal forward driving towards destination
-        const distToEnd = totalLength - s;
-        if (distToEnd < 2.0) {
-          // Gentle arrival at destination checkpoint
-          targetSpeed = THREE.MathUtils.lerp(0.35, cruiseSpeed, Math.max(0.1, distToEnd / 2.0));
-        } else {
-          targetSpeed = cruiseSpeed;
-        }
-      }
-
-      // ── Step 4: Active Hard Physical Collision Shield ──
-      // Absolute guaranteed interlock: if physical clearance drops < 1.15m in forward travel, immediately reverse or halt
+      // Emergency Fallback: Reverse ONLY if roadway is completely, 100% blocked with zero escape gap (< 0.45m)
+      // or if an obstacle is directly touching front bumper (< 0.45m)
       const robotRadius = 0.45;
       const robotHeading = new THREE.Vector3(
         Math.sin(ref.current.rotation.y),
@@ -2057,6 +1947,7 @@ const Robot = ({
         -robotHeading.x
       );
 
+      let criticalDeadlockObs: ScannedObs | null = null;
       for (const obs of scannedObstacles) {
         const obsRadius = obs.type === 'car' ? 0.65 : (obs.type === 'static' ? 0.55 : 0.38);
         const distCenter = currentPos.distanceTo(obs.pos3D);
@@ -2066,25 +1957,85 @@ const Robot = ({
         const fwdDist = toObs.dot(robotHeading);
         const latDist = Math.abs(toObs.dot(robotLateral));
 
-        if (fwdDist > -0.1 && fwdDist < 2.5 && latDist < 0.90 && edgeDist < 1.15) {
-          if (!isReversingRef.current) {
-            isReversingRef.current = true;
-            setIsReversing(true);
-            conflictingObsIdRef.current = obs.id;
-            reverseTargetSRef.current = Math.max(0, s - 3.2);
-            targetSpeed = -1.1;
+        // Critical head-on physical interlock (< 0.45m edge clearance right in front with no lateral escape)
+        if (fwdDist > 0.0 && fwdDist < 0.85 && latDist < 0.45 && edgeDist < 0.45) {
+          criticalDeadlockObs = obs;
+          break;
+        }
+      }
+
+      if (!isReversingRef.current && !isYieldWaitingRef.current && criticalDeadlockObs && reverseCooldownElapsed) {
+        isReversingRef.current = true;
+        setIsReversing(true);
+        conflictingObsIdRef.current = criticalDeadlockObs.id;
+        reverseTargetSRef.current = Math.max(0, s - 2.0); // Gentle 2.0m reverse clearance
+        if (addExplanation) {
+          addExplanation('🛡️ Deadlock gap: Gently reversing to give obstacle safe clearance.');
+        }
+      }
+
+      if (isReversingRef.current) {
+        // Controlled, gentle reverse motion
+        targetSpeed = -0.9;
+        shouldCourteousStandOff = true;
+        currentStandoffLabel = 'REVERSING • MAKING CLEARANCE';
+
+        const backedUpFarEnough = s <= reverseTargetSRef.current + 0.05 || s <= 0.02;
+        if (backedUpFarEnough) {
+          isReversingRef.current = false;
+          setIsReversing(false);
+          isYieldWaitingRef.current = true;
+          setIsYieldWaiting(true);
+          yieldWaitTimerRef.current = 0;
+          targetSpeed = 0;
+          actualSpeedRef.current = 0;
+          if (addExplanation) {
+            addExplanation('⏳ Clearance established: Pausing briefly before proceeding.');
           }
+        }
+      } else if (isYieldWaitingRef.current) {
+        targetSpeed = 0;
+        actualSpeedRef.current = 0;
+        yieldWaitTimerRef.current += delta;
+        shouldCourteousStandOff = true;
+        currentStandoffLabel = 'YIELDING • PREPARING TO MOVE THROUGH';
+
+        if (yieldWaitTimerRef.current > 0.8) {
+          isYieldWaitingRef.current = false;
+          setIsYieldWaiting(false);
+          lastReverseEndTimeRef.current = Date.now();
+          conflictingObsIdRef.current = null;
+          targetSpeed = cruiseSpeed;
+          if (addExplanation) {
+            addExplanation('✓ Moving through obstacle corridor to destination.');
+          }
+        }
+      } else if (isOvertakingActive) {
+        // "robot should detect and move through it"
+        // Stable, smooth forward speed (90% of cruise speed) navigating through the clear lane
+        targetSpeed = cruiseSpeed * 0.90;
+        const logTime = Date.now();
+        if (logTime - lastOvertakeLogTime.current > 4000 && addExplanation) {
+          lastOvertakeLogTime.current = logTime;
+          addExplanation('⚡ Obstacle detected: Smoothly moving through via orange diversion route.');
+        }
+      } else {
+        // Nominal forward driving towards destination
+        const distToEnd = totalLength - s;
+        if (distToEnd < 2.0) {
+          // Gentle arrival at destination checkpoint
+          targetSpeed = THREE.MathUtils.lerp(0.35, cruiseSpeed, Math.max(0.1, distToEnd / 2.0));
+        } else {
+          targetSpeed = cruiseSpeed;
         }
       }
 
       // Mathematical function to compute exact lateral diversion at any point along the spline
       // Defines: (1) gradual diversion path, (2) wide safety clearance, (3) smooth return to original route
+      // NEVER snaps to 0; always preserves smooth Gaussian envelope
       const getDrivableOffsetAt = (evalS: number): number => {
-        if (isReversingRef.current || isYieldWaitingRef.current) {
-          return 0; // Maintain central road alignment while reversing/yielding
-        }
         let maxOff = 0;
-        const sigma = 2.6; // Wide, natural Gaussian envelope starting ~6.0m ahead
+        const sigma = 2.4; // Wide, natural Gaussian envelope starting ~5.5m ahead
         for (const div of plannedDiversions) {
           const distFromObs = evalS - div.sObstacle;
           const bell = div.peakAmplitude * Math.exp(-(distFromObs * distFromObs) / (2 * sigma * sigma));
@@ -2099,24 +2050,26 @@ const Robot = ({
           maxOff *= Math.max(0.0, distFromEnd / 2.0);
         }
 
-        // Strictly clamp within valid asphalt boundaries (±1.20m)
-        return Math.max(-1.20, Math.min(1.20, maxOff));
+        // Strictly clamp within valid asphalt boundaries (±1.18m)
+        return Math.max(-1.18, Math.min(1.18, maxOff));
       };
 
-      // Robot's current lateral offset
+      // "the robot should not change its positions rapidly"
+      // 1. Strictly rate-limit lateral offset changes (maximum 1.2 m/s lateral transition)
       const targetOffset = getDrivableOffsetAt(s);
-      smoothedLateralOffsetRef.current = THREE.MathUtils.lerp(
-        smoothedLateralOffsetRef.current,
+      const maxOffsetDelta = 1.2 * delta;
+      smoothedLateralOffsetRef.current = THREE.MathUtils.clamp(
         targetOffset,
-        delta * 3.5
+        smoothedLateralOffsetRef.current - maxOffsetDelta,
+        smoothedLateralOffsetRef.current + maxOffsetDelta
       );
 
-      // Smooth rate-limited acceleration and deceleration (no sudden braking or jerk)
+      // 2. Smooth rate-limited acceleration and deceleration (no sudden braking or jerky stops)
       const isBraking = targetSpeed < actualSpeedRef.current;
-      const rateLimit = isBraking ? 2.2 : 1.5;
-      actualSpeedRef.current = THREE.MathUtils.lerp(actualSpeedRef.current, targetSpeed, delta * rateLimit);
+      const speedRate = isBraking ? 2.0 : 1.2;
+      actualSpeedRef.current = THREE.MathUtils.lerp(actualSpeedRef.current, targetSpeed, delta * speedRate);
 
-      // Advance distance along the spline continuously (both forward and reverse)
+      // 3. Advance distance along the spline continuously
       if (Math.abs(actualSpeedRef.current) > 0.01) {
         if (!isMovingRef.current) { isMovingRef.current = true; setIsMoving(true); }
         distanceTraveledRef.current = Math.max(0, Math.min(totalLength, distanceTraveledRef.current + actualSpeedRef.current * delta));
@@ -2134,7 +2087,7 @@ const Robot = ({
         baseSplineNormal.clone().multiplyScalar(smoothedLateralOffsetRef.current)
       );
 
-      // Position update: track smoothly
+      // 4. Position update: smooth tracking without rapid jumping
       currentPos.copy(targetWithCurvedDiversion);
 
       // --- Update Navigation Route Line: Orange for diversion alone, Blue for normal route ---
@@ -2148,8 +2101,8 @@ const Robot = ({
         }
       }
 
-      // Stable orientation facing direction of travel
-      const lookaheadDist = 0.75;
+      // 5. Stable orientation: lookahead point with rate-limited yaw damping
+      const lookaheadDist = 1.2;
       const lookaheadS = Math.min(totalLength, Math.max(0, distanceTraveledRef.current + lookaheadDist));
       const lookaheadU = lookaheadS / totalLength;
       const lookaheadBasePos = curve.getPointAt(lookaheadU);
@@ -2168,8 +2121,9 @@ const Robot = ({
         while (diff < -Math.PI) diff += Math.PI * 2;
         while (diff > Math.PI) diff -= Math.PI * 2;
 
-        if (Math.abs(diff) > 0.002) {
-          ref.current.rotation.y += diff * Math.min(1.0, delta * 3.2);
+        if (Math.abs(diff) > 0.005) {
+          const maxYawRate = 2.4 * delta;
+          ref.current.rotation.y += THREE.MathUtils.clamp(diff, -maxYawRate, maxYawRate);
         }
       }
 
