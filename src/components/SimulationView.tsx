@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState, useMemo, useCallback } from 'react';
 import type { MapData, GridPoint, Room } from '../types';
 import { calculatePath, calculateLongPath } from '../utils/simulationEngine';
-import { trackEnvironmentObjects, type PerceptionScanResult } from '../utils/perceptionSystem';
+import { trackEnvironmentObjects, assessPreMovementEnvironment, type PerceptionScanResult } from '../utils/perceptionSystem';
 import { Play, RotateCcw, Activity, ShieldAlert, Crosshair, Maximize, Minimize, Bot, Power, Send, Construction, Pause, Users, Utensils, Cross } from 'lucide-react';
 import { DeliveryModal } from './DeliveryModal';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
@@ -3490,7 +3490,6 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
   const [isEmergencyTargeting, setIsEmergencyTargeting] = useState(false);
   const [isPlacingBlocker, setIsPlacingBlocker] = useState(false);
   const [isPlacingCrowd, setIsPlacingCrowd] = useState(false);
-  const [isIdleMode, setIsIdleMode] = useState(false);
   const [userBlockers, setUserBlockers] = useState<GridPoint[]>([]);
   const [crowds, setCrowds] = useState<GridPoint[]>([]);
   const [isFollowingAlternateRoute, setIsFollowingAlternateRoute] = useState(false);
@@ -3540,7 +3539,7 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
   const [currentPatrolTarget, setCurrentPatrolTarget] = useState<string>(PATROL_CHECKPOINTS[0]);
   const patrolTimerRef = useRef<any>(null);
 
-  const isPausedAtDestination = patrolCountdown !== null || (robotState === 'idle' && !isPlaying);
+  const isPausedAtDestination = patrolCountdown !== null;
 
   const [activeCCTab, setActiveCCTab] = useState<'dashboard' | 'tools' | 'locations'>('dashboard');
   const [modalType, setModalType] = useState<'food' | 'medical' | null>(null);
@@ -3588,14 +3587,52 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
     const allObstacles = [...(mapData.obstacles || []), ...userBlockers];
     let patrolPath = calculatePath(currentLoc, targetLoc, allObstacles, mapData, true);
     if (patrolPath.length < 2) {
-      // If user blocker blocked route, calculate road path around static obstacles
-      patrolPath = calculatePath(currentLoc, targetLoc, mapData.obstacles || [], mapData, true);
+      // If direct route is obstructed, try alternate road detour around obstacles
+      patrolPath = calculateLongPath(currentLoc, targetLoc, allObstacles, mapData, true);
+    }
+    if (patrolPath.length < 2) {
+      // Checkpoint may be completely enclosed; advance to next checkpoint in continuous sequence
+      addExplanation(`⚠️ Checkpoint "${targetName}" obstructed. Selecting next open patrol destination.`);
+      const nextIdx = (checkpointIndex + 1) % PATROL_CHECKPOINTS.length;
+      if (nextIdx !== checkpointIndex) {
+        dispatchPatrolCheckpoint(nextIdx);
+        return;
+      }
+    }
+
+    // ── Pre-Movement Environmental Awareness Scan ──
+    const [currX, , currZ] = getGridPosition(currentLoc, mapData.gridSize, 0.22, isMapView);
+    const currPos3D = new THREE.Vector3(currX, 0.22, currZ);
+
+    const preAssessment = assessPreMovementEnvironment(
+      currPos3D,
+      patrolPath,
+      mapData,
+      dynamicObstaclesRef.current || [],
+      mapData.obstacles || [],
+      userBlockers,
+      getGridPosition,
+      isPointOnDrivableRoad,
+      mapData.gridSize,
+      isMapView
+    );
+
+    let isAlternate = false;
+    if (preAssessment.recommendedAction === 'REROUTE_BARRICADE') {
+      addExplanation(`🚧 Pre-movement scan: Barricade blocks departure corridor. Calculating safe alternate road route.`);
+      const alt = calculateLongPath(currentLoc, targetLoc, allObstacles, mapData, true);
+      if (alt.length >= 2) {
+        patrolPath = alt;
+        isAlternate = true;
+      }
+    } else {
+      addExplanation(`🌐 Pre-movement scan: ${preAssessment.openSpaceSummary}. Road clearance: ${preAssessment.drivableClearance.toFixed(1)}m.`);
     }
 
     if (patrolPath.length > 0) {
       setPath(patrolPath);
       setCurrentPosIndex(0);
-      setIsFollowingAlternateRoute(false);
+      setIsFollowingAlternateRoute(isAlternate);
       setRobotState('patrol');
       setIsPlaying(true);
       addExplanation('🚀 Continuous autonomous road patrol engaged. Navigating along drivable corridor.');
