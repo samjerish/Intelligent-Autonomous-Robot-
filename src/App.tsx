@@ -3,6 +3,7 @@ import { Sidebar } from './components/Sidebar';
 
 // import { StrategyComparison } from './components/StrategyComparison';
 import { SimulationView } from './components/SimulationView';
+import { IntroSequence } from './components/IntroSequence';
 
 import { useLocalStorage } from './hooks/useLocalStorage';
 import type { MissionHistoryItem, MissionResult } from './types';
@@ -32,8 +33,14 @@ function App() {
   const [currentMission, setCurrentMission] = useState<MissionHistoryItem | null>(null);
 
   const [initialMapData, setInitialMapData] = useState<any>(null);
+  const isMobile = typeof window !== 'undefined' && window.innerWidth < 768;
+  const safeGetSession = (key: string) => {
+    try { return sessionStorage.getItem(key); } catch(e) { return null; }
+  };
+  const [showIntro, setShowIntro] = useState(() => isMobile ? false : !safeGetSession('hasSeenIntro'));
+  const [introRendered, setIntroRendered] = useState(() => isMobile ? false : !safeGetSession('hasSeenIntro'));
   const [pendingEmergency, setPendingEmergency] = useState<{x: number, y: number} | null>(null);
-  const [isOn, setIsOn] = useState(true);
+  const [isOn, setIsOn] = useState(false);
   const [showQR, setShowQR] = useState(false);
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
   const [isAlarmActive, setIsAlarmActive] = useState(false);
@@ -48,6 +55,12 @@ function App() {
   const executeMissionBroadcast = () => {
     socketRef.current?.emit('update_state', { executeMission: Date.now() });
     window.dispatchEvent(new CustomEvent('remote_execute_mission'));
+  };
+
+  const handleIntroComplete = () => {
+    try { sessionStorage.setItem('hasSeenIntro', 'true'); } catch(e) {}
+    setShowIntro(false);
+    setTimeout(() => setIntroRendered(false), 2000);
   };
 
   useEffect(() => {
@@ -284,8 +297,10 @@ function App() {
 
   return (
     <div className="flex flex-col h-screen bg-[#050505] text-text overflow-hidden font-sans relative">
+      {introRendered && <IntroSequence onComplete={handleIntroComplete} />}
+      
       {/* Futuristic Navbar */}
-      <nav className="flex items-center justify-between px-6 py-4 border-b border-white/5 bg-black/40 backdrop-blur-md z-40">
+      <nav className={`flex items-center justify-between px-6 py-4 border-b border-white/5 bg-black/40 backdrop-blur-md z-40 transition-all duration-1000 ${showIntro ? 'opacity-0 translate-y-[-20px]' : 'opacity-100 translate-y-0'}`}>
         <div className="flex items-center gap-4">
           <div className="text-cyan-400 font-black tracking-widest text-xl drop-shadow-[0_0_8px_rgba(34,211,238,0.5)]">ASPIRE</div>
           <div className="w-px h-6 bg-white/10 hidden md:block"></div>
@@ -309,7 +324,7 @@ function App() {
       </nav>
 
       {/* Main Workspace Area */}
-      <div className="flex flex-col md:flex-row flex-1 p-2 md:p-6 gap-2 md:gap-6 overflow-hidden">
+      <div className={`flex flex-col md:flex-row flex-1 p-2 md:p-6 gap-2 md:gap-6 overflow-hidden transition-all duration-1000 delay-500 ${showIntro ? 'opacity-0 scale-95 blur-sm' : 'opacity-100 scale-100 blur-0'}`}>
         {/* Ambient Grid for App */}
         {/* Removed outer background grid */}
         

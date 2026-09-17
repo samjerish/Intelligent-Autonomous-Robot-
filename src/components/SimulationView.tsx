@@ -1,13 +1,13 @@
 import React, { useEffect, useRef, useState, useMemo, useCallback } from 'react';
 import type { MapData, GridPoint, Room } from '../types';
-import { calculatePath, calculateLongPath } from '../utils/simulationEngine';
-import { trackEnvironmentObjects, assessPreMovementEnvironment, type PerceptionScanResult } from '../utils/perceptionSystem';
-import { Play, RotateCcw, Activity, ShieldAlert, Crosshair, Maximize, Minimize, Bot, Power, Send, Construction, Users, Utensils, Cross } from 'lucide-react';
+import { calculatePath, calculateLongPath, calculateEvadePath } from '../utils/simulationEngine';
+import { Play, RotateCcw, Activity, ShieldAlert, Crosshair, Maximize, Minimize, Bot, Power, Send, Construction, Pause, Users, Utensils, Cross } from 'lucide-react';
 import { DeliveryModal } from './DeliveryModal';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import {
   OrbitControls,
   Box,
+  Line,
   Plane,
   OrthographicCamera,
   PerspectiveCamera,
@@ -17,9 +17,9 @@ import {
   Sphere,
   Cylinder,
   RoundedBox,
+  Text,
 } from '@react-three/drei';
 import * as THREE from 'three';
-import { Line2, LineMaterial, LineGeometry } from 'three-stdlib';
 
 const CELL_SIZE = 1;
 
@@ -27,14 +27,11 @@ export type DynamicObstacle = {
   id: string;
   type: 'car' | 'person';
   pos: GridPoint;
-  pos3D?: THREE.Vector3;
   targetPos: GridPoint;
   path: GridPoint[];
   currentIndex: number;
   speed: number;
-  velocity?: THREE.Vector3;
   isMoving: boolean;
-  isRoadWalker?: boolean;
 };
 
 export type RobotState = 'idle' | 'mission' | 'patrol' | 'charging' | 'emergency_response' | 'emergency_to_ctr' | 'ctr_to_emergency' | 'crowd_control' | 'waiting_for_police' | 'evading_obstacle' | 'returning_home' | 'off';
@@ -51,8 +48,6 @@ const CameraController = ({ isFollowing, robotPosRef, robotRotRef, controlsRef, 
   const { camera } = useThree();
   // Smoothed look-target to prevent jitter when following
   const smoothTarget = useRef(new THREE.Vector3(0, 0.5, 0));
-  // Heavy low-pass filtered heading to eliminate camera wobble on steering maneuvers
-  const smoothHeading = useRef<number | null>(null);
 
   useFrame((_state, delta) => {
     if (triggerReset) {
@@ -72,35 +67,24 @@ const CameraController = ({ isFollowing, robotPosRef, robotRotRef, controlsRef, 
     }
 
     if (isFollowing && robotPosRef.current && robotRotRef?.current !== undefined) {
-      // 3rd Person Smooth Follow Camera with decoupled yaw damping
-      const rawTheta = robotRotRef.current;
-      if (smoothHeading.current === null) {
-        smoothHeading.current = rawTheta;
-      } else {
-        let diff = rawTheta - smoothHeading.current;
-        while (diff < -Math.PI) diff += Math.PI * 2;
-        while (diff > Math.PI) diff -= Math.PI * 2;
-        // Soft, majestic drone-like heading tracking (delta * 1.5)
-        smoothHeading.current += diff * Math.min(1.0, delta * 1.5);
-      }
-
-      const behindDist = 4.8;
-      const upDist = 2.8;
+      // 3rd Person Follow Camera
+      const theta = robotRotRef.current;
+      const behindDist = 4.5;
+      const upDist = 2.5;
       
-      const heading = smoothHeading.current ?? rawTheta;
       const offset = new THREE.Vector3(
-        -Math.sin(heading) * behindDist,
+        -Math.sin(theta) * behindDist,
         upDist,
-        -Math.cos(heading) * behindDist
+        -Math.cos(theta) * behindDist
       );
       const desiredPos = new THREE.Vector3().copy(robotPosRef.current).add(offset);
 
-      // Deep, vibration-free spring damping for camera position
-      const lerpAlpha = 1 - Math.pow(0.001, delta);
+      // Very smooth position lerp
+      const lerpAlpha = 1 - Math.pow(0.005, delta);
       camera.position.lerp(desiredPos, lerpAlpha);
 
-      // Smooth look-at target focused slightly above the robot's chassis
-      const targetLook = new THREE.Vector3().copy(robotPosRef.current).add(new THREE.Vector3(0, 0.45, 0));
+      // Smooth the look-at target to look slightly ahead/above the robot
+      const targetLook = new THREE.Vector3().copy(robotPosRef.current).add(new THREE.Vector3(0, 0.5, 0));
       smoothTarget.current.lerp(targetLook, lerpAlpha);
       camera.lookAt(smoothTarget.current);
 
@@ -114,564 +98,92 @@ const CameraController = ({ isFollowing, robotPosRef, robotRotRef, controlsRef, 
   return null;
 };
 
-const CAR_COLORS = [
-  '#ef4444', '#3b82f6', '#f59e0b', '#10b981', '#8b5cf6', 
-  '#06b6d4', '#f97316', '#ec4899', '#14b8a6', '#6366f1', 
-  '#e2e8f0', '#e11d48'
-];
-
-const SHIRT_COLORS = ['#3b82f6', '#ef4444', '#10b981', '#f59e0b', '#8b5cf6', '#06b6d4', '#ec4899', '#f97316', '#14b8a6', '#6366f1'];
-const PANTS_COLORS = ['#1e293b', '#334155', '#475569', '#1e1b4b', '#0f172a', '#374151'];
-const SKIN_TONES = ['#fcd34d', '#fed7aa', '#fbcfe8', '#e2e8f0', '#d97706'];
-
-const MovingEntity = ({ 
-  obstacle, 
-  gridSize, 
-  isMapView, 
-  robotPosRef, 
-  allObstaclesRef,
-  mapData,
-  userBlockers = []
-}: { 
-  obstacle: DynamicObstacle; 
-  gridSize: GridPoint; 
-  isMapView: boolean; 
-  robotPosRef?: React.MutableRefObject<THREE.Vector3 | null>; 
-  allObstaclesRef?: React.MutableRefObject<DynamicObstacle[]>;
-  mapData?: MapData | null;
-  userBlockers?: GridPoint[];
-}) => {
+const MovingEntity = ({ obstacle, gridSize, isMapView, robotPosRef, allObstaclesRef }: { obstacle: DynamicObstacle, gridSize: GridPoint, isMapView: boolean, robotPosRef?: React.MutableRefObject<THREE.Vector3 | null>, allObstaclesRef?: React.MutableRefObject<DynamicObstacle[]> }) => {
   const ref = useRef<THREE.Group>(null);
-  const carIndex = parseInt(obstacle.id.replace(/\D/g, '') || '0', 10);
-  const carColor = CAR_COLORS[carIndex % CAR_COLORS.length];
-  const isCar = obstacle.type === 'car';
-  const isRoadWalker = obstacle.isRoadWalker ?? (!isCar && (carIndex % 3 !== 0));
-  const shirtColor = SHIRT_COLORS[carIndex % SHIRT_COLORS.length];
-  const pantsColor = PANTS_COLORS[carIndex % PANTS_COLORS.length];
-  const skinColor = SKIN_TONES[carIndex % SKIN_TONES.length];
-  
-  // Lane offset: Road walkers and vehicles stay on right lane (+0.35m); sidewalk walkers use outer margin (+0.60m)
-  const baseOffset = (isCar || isRoadWalker) ? 0.35 : 0.60;
-  const yieldOffsetRef = useRef(baseOffset);
-  const lastDirRef = useRef({ x: 0, z: 1 });
-  const walkClockRef = useRef(Math.random() * 10);
-  const smoothedSpeedFactorRef = useRef(1.0);
-  const stuckTimerRef = useRef(0);
-  const lastCheckPosRef = useRef<THREE.Vector3 | null>(null);
-  const isExtendingPathRef = useRef(false);
-  
-  // Animation refs
-  const leftLegRef = useRef<THREE.Group>(null);
-  const rightLegRef = useRef<THREE.Group>(null);
-  const leftArmRef = useRef<THREE.Group>(null);
-  const rightArmRef = useRef<THREE.Group>(null);
-  const wheel1Ref = useRef<THREE.Group>(null);
-  const wheel2Ref = useRef<THREE.Group>(null);
-  const wheel3Ref = useRef<THREE.Group>(null);
-  const wheel4Ref = useRef<THREE.Group>(null);
-  const taillightMatRef = useRef<THREE.MeshStandardMaterial>(null);
   
   useFrame((_state, delta) => {
     if (!ref.current || obstacle.path.length === 0 || !obstacle.isMoving) return;
     const currentPos = ref.current.position;
     
-    walkClockRef.current += delta;
-    const t = walkClockRef.current;
-
-    // Continuously update obstacle's grid position & 3D world position for real-time tracking
-    obstacle.pos = getGridPointFromVector3(currentPos, gridSize);
-    obstacle.pos3D = currentPos.clone();
-
-    // ── 1. Seamless Continuous Route Extension (No 180° flips, No stopping) ──
-    const remainingNodes = obstacle.path.length - obstacle.currentIndex;
-    if (remainingNodes <= 4 && mapData && mapData.roads && mapData.roads.length > 5 && !isExtendingPathRef.current) {
-      isExtendingPathRef.current = true;
-      const endNode = obstacle.path[obstacle.path.length - 1];
-      let candidateTarget: GridPoint | null = null;
-      for (let attempt = 0; attempt < 10; attempt++) {
-        const r = mapData.roads[Math.floor(Math.random() * mapData.roads.length)];
-        if (Math.hypot(r.x - endNode.x, r.y - endNode.y) >= 6) {
-          candidateTarget = r;
-          break;
-        }
-      }
-      if (!candidateTarget) {
-        candidateTarget = mapData.roads[Math.floor(Math.random() * mapData.roads.length)];
-      }
-
-      if (candidateTarget && (candidateTarget.x !== endNode.x || candidateTarget.y !== endNode.y)) {
-        const allObs = [...(mapData.obstacles || []), ...(userBlockers || [])];
-        const extension = calculatePath(endNode, candidateTarget, allObs, mapData, true);
-        if (extension && extension.length > 1) {
-          obstacle.path.push(...extension.slice(1));
-          obstacle.targetPos = obstacle.path[obstacle.path.length - 1];
-        }
-      }
-      isExtendingPathRef.current = false;
-    }
-
-    if (obstacle.currentIndex >= obstacle.path.length - 1) {
-      obstacle.currentIndex = Math.max(0, obstacle.path.length - 2);
-    }
-
-    // ── 2. Lookahead Path Sampling (Smooth continuous trajectory & curvature) ──
-    const lookaheadDist = isCar ? 1.4 : 0.9;
-    let accumulatedDist = 0;
-    const clampedIdx = Math.min(obstacle.currentIndex, obstacle.path.length - 1);
-    const [currNodeX, currNodeY, currNodeZ] = getGridPosition(obstacle.path[clampedIdx], gridSize, 0.05, isMapView);
-    let prevPt = new THREE.Vector3(currNodeX, currNodeY, currNodeZ);
-    let headingVec = new THREE.Vector3(lastDirRef.current.x, 0, lastDirRef.current.z);
-    let lookaheadPt = prevPt.clone();
-    let pathCurvature = 0;
-
-    for (let i = clampedIdx; i < obstacle.path.length - 1; i++) {
-      const [nx, ny, nz] = getGridPosition(obstacle.path[i + 1], gridSize, 0.05, isMapView);
-      const nextPt = new THREE.Vector3(nx, ny, nz);
-      const segLen = prevPt.distanceTo(nextPt);
-      if (accumulatedDist + segLen >= lookaheadDist) {
-        const tSeg = Math.max(0, Math.min(1, (lookaheadDist - accumulatedDist) / Math.max(0.01, segLen)));
-        lookaheadPt = prevPt.clone().lerp(nextPt, tSeg);
-        headingVec = nextPt.clone().sub(prevPt).normalize();
-
-        if (i + 2 < obstacle.path.length) {
-          const [nnx, , nnz] = getGridPosition(obstacle.path[i + 2], gridSize, 0.05, isMapView);
-          const futureHeading = new THREE.Vector3(nnx - nx, 0, nnz - nz).normalize();
-          pathCurvature = Math.abs(headingVec.angleTo(futureHeading));
-        }
-        break;
-      }
-      accumulatedDist += segLen;
-      prevPt = nextPt;
-      lookaheadPt = nextPt.clone();
-    }
-
-    if (headingVec.lengthSq() > 0.01) {
-      lastDirRef.current = { x: headingVec.x, z: headingVec.z };
-    }
-    const dirX = lastDirRef.current.x;
-    const dirZ = lastDirRef.current.z;
-    const latX = dirZ;
-    const latZ = -dirX;
-
-    let yieldTarget = baseOffset;
-    let isYielding = false;
-    let speedFactor = 1.0;
-    const myRadius = isCar ? 0.42 : 0.28;
-
-    // ── 3. Predictive Mutual Collision Avoidance with Robot ──
+    // Anti-overlap: Yield to robot
     if (robotPosRef && robotPosRef.current) {
-      const distToRobot = currentPos.distanceTo(robotPosRef.current);
-      const toRobot = new THREE.Vector3().subVectors(robotPosRef.current, currentPos);
-      const fwdToRobot = toRobot.x * dirX + toRobot.z * dirZ;
-      const latToRobot = Math.abs(toRobot.x * latX + toRobot.z * latZ);
-
-      // Following behind robot
-      if (fwdToRobot > 0.1 && fwdToRobot < 6.5 && latToRobot < 1.30) {
-        isYielding = true;
-        if (fwdToRobot < 3.2) {
-          // Check if passing lane on the left (-0.75m) is clear to pass the robot smoothly
-          let passingLaneClear = true;
-          if (allObstaclesRef && allObstaclesRef.current) {
-            for (const other of allObstaclesRef.current) {
-              if (other.id === obstacle.id || !other.pos3D) continue;
-              const d = currentPos.distanceTo(other.pos3D);
-              if (d < 3.5 && (other.pos3D.x - currentPos.x) * latX + (other.pos3D.z - currentPos.z) * latZ < 0) {
-                passingLaneClear = false;
-                break;
-              }
-            }
-          }
-
-          if (passingLaneClear && fwdToRobot < 2.8) {
-            // Smoothly steer into passing corridor and pass smoothly!
-            yieldTarget = -0.75;
-            speedFactor = Math.min(speedFactor, 0.85);
-          } else {
-            // Pace speed smoothly behind robot without stopping (minimum crawl 0.25)
-            const followFactor = THREE.MathUtils.clamp((fwdToRobot - 1.8) / 2.2, 0.25, 0.95);
-            speedFactor = Math.min(speedFactor, followFactor);
-            yieldTarget = 0.45;
-          }
-        }
-      } 
-      // Oncoming or passing alongside robot
-      else if (distToRobot < 4.5 && fwdToRobot <= 0.1) {
-        if (latToRobot < 1.30) {
-          yieldTarget = Math.max(yieldTarget, 0.55);
-          speedFactor = Math.min(speedFactor, 0.88);
-        }
-      }
-
-      // Hard physical exclusion: obstacle must NEVER touch or penetrate robot hull (generous safety buffer)
-      const minRobotSep = myRadius + 0.40 + 0.35;
-      if (distToRobot < minRobotSep && distToRobot > 0.001) {
-        const pushDir = toRobot.clone().negate().normalize();
-        const overlap = minRobotSep - distToRobot;
-        currentPos.add(pushDir.multiplyScalar(overlap * delta * 2.0));
+      if (currentPos.distanceTo(robotPosRef.current) < 2.5) {
+        return; // Stop moving, wait for robot to pass
       }
     }
-
-    // ── 4. Predictive Mutual Collision Avoidance with Other Obstacles ──
+    
+    const targetNode = obstacle.path[Math.min(obstacle.currentIndex, obstacle.path.length - 1)];
+    
+    // Anti-overlap: Yield to other obstacles
     if (allObstaclesRef && allObstaclesRef.current) {
-      for (const other of allObstaclesRef.current) {
-        if (other.id === obstacle.id || !other.pos3D) continue;
-        const otherPos = other.pos3D;
-        const otherIsCar = other.type === 'car';
-        const otherRadius = otherIsCar ? 0.42 : 0.28;
-        const minCenterSep = myRadius + otherRadius + 0.45;
-
-        const distToOther = currentPos.distanceTo(otherPos);
-        if (distToOther < 7.0) {
-          const toOther = new THREE.Vector3().subVectors(otherPos, currentPos);
-          const fwd = toOther.x * dirX + toOther.z * dirZ;
-          const lat = Math.abs(toOther.x * latX + toOther.z * latZ);
-
-          // Following another obstacle in the same lane
-          if (fwd > 0.1 && fwd < 6.0 && lat < 1.25) {
-            isYielding = true;
-            if (fwd < 3.2) {
-              const isOtherSlower = (other.speed || 1.5) < obstacle.speed;
-              if (isOtherSlower && fwd < 2.6) {
-                yieldTarget = -0.75; // Overtake via left passing corridor!
-                speedFactor = Math.min(speedFactor, 0.90);
-              } else {
-                const pace = THREE.MathUtils.clamp((fwd - minCenterSep) / 2.5, 0.25, 0.95);
-                speedFactor = Math.min(speedFactor, pace);
-                yieldTarget = 0.50;
-              }
-            }
-          }
-
-          // Oncoming traffic approaching
-          const otherVel = other.velocity;
-          if (otherVel) {
-            const closingSpeed = -(otherVel.x * dirX + otherVel.z * dirZ);
-            if (closingSpeed > 0.25 && distToOther < 6.0 && lat < 1.35) {
-              isYielding = true;
-              yieldTarget = 0.60;
-              const adapted = THREE.MathUtils.clamp((distToOther - minCenterSep) / 3.5, 0.55, 0.95);
-              speedFactor = Math.min(speedFactor, adapted);
-            }
-          }
-
-          // Intersection / Crossing traffic (Predictive CPA)
-          if (otherVel && Math.abs(fwd) < 3.5 && lat > 0.8 && lat < 4.0) {
-            const vSelf = new THREE.Vector3(dirX * obstacle.speed, 0, dirZ * obstacle.speed);
-            const vRel = new THREE.Vector3().subVectors(otherVel, vSelf);
-            const rRel = toOther.clone();
-            const relSpeedSq = vRel.lengthSq();
-            if (relSpeedSq > 0.1) {
-              const tCpa = -rRel.dot(vRel) / relSpeedSq;
-              if (tCpa > 0.2 && tCpa < 2.5) {
-                const posSelfAtCpa = currentPos.clone().add(vSelf.clone().multiplyScalar(tCpa));
-                const posOtherAtCpa = otherPos.clone().add(otherVel.clone().multiplyScalar(tCpa));
-                const distAtCpa = posSelfAtCpa.distanceTo(posOtherAtCpa);
-                if (distAtCpa < minCenterSep + 0.40) {
-                  if (carIndex > parseInt(other.id.replace(/\D/g, '') || '0', 10)) {
-                    isYielding = true;
-                    const yieldDecel = THREE.MathUtils.clamp(tCpa / 2.5, 0.35, 0.85);
-                    speedFactor = Math.min(speedFactor, yieldDecel);
-                  }
-                }
-              }
-            }
-          }
-
-          // Zero-overlap repulsive separation
-          if (distToOther < minCenterSep && distToOther > 0.001) {
-            const pushDir = toOther.clone().negate().normalize();
-            const overlap = minCenterSep - distToOther;
-            currentPos.add(pushDir.multiplyScalar(overlap * delta * 2.0));
-          }
-        }
-      }
+       const isBlockedByAnother = allObstaclesRef.current.some(other => 
+           other.id !== obstacle.id && 
+           other.pos.x === targetNode.x && 
+           other.pos.y === targetNode.y && 
+           other.pos.f === targetNode.f
+       );
+       // Basic tie-breaker: obstacle with lower ID yields
+       if (isBlockedByAnother && obstacle.id > allObstaclesRef.current.find(o => o.pos.x === targetNode.x && o.pos.y === targetNode.y)?.id!) {
+           return;
+       }
     }
 
-    // ── 5. Smooth Speed Regulation & Dynamic Cornering ──
-    yieldOffsetRef.current = THREE.MathUtils.lerp(yieldOffsetRef.current, yieldTarget, delta * 3.5);
-
-    if (taillightMatRef.current) {
-      taillightMatRef.current.emissiveIntensity = isYielding ? 2.2 : 1.0;
-    }
-
-    // Natural cornering deceleration
-    if (pathCurvature > 0.25) {
-      const cornerDamp = THREE.MathUtils.lerp(1.0, 0.60, Math.min(1.0, pathCurvature / 1.2));
-      speedFactor *= cornerDamp;
-    }
-
-    // Guaranteed continuous motion: never drop to 0! Minimum crawling speed 0.22
-    const clampedFactor = Math.max(0.22, Math.min(1.0, speedFactor));
-    const lerpRate = clampedFactor < smoothedSpeedFactorRef.current ? 3.5 : 2.0;
-    smoothedSpeedFactorRef.current = THREE.MathUtils.lerp(smoothedSpeedFactorRef.current, clampedFactor, delta * lerpRate);
-
-    // Organic speed variation
-    const organicSpeed = obstacle.speed * (1.0 + 0.08 * Math.sin(t * 0.7 + carIndex * 1.618));
-    const currentSpeed = organicSpeed * smoothedSpeedFactorRef.current;
-
-    // ── 6. Visual Animations (Wheels & Legs) ──
-    if (!isCar) {
-      const walkSpeed = currentSpeed * 3.2;
-      const legAngle = Math.sin(t * walkSpeed) * 0.45;
-      const armAngle = Math.sin(t * walkSpeed) * -0.4;
-      if (leftLegRef.current) leftLegRef.current.rotation.x = legAngle;
-      if (rightLegRef.current) rightLegRef.current.rotation.x = -legAngle;
-      if (leftArmRef.current) leftArmRef.current.rotation.x = armAngle;
-      if (rightArmRef.current) rightArmRef.current.rotation.x = -armAngle;
-    } else {
-      const wheelSpin = delta * currentSpeed * 3.5;
-      if (wheel1Ref.current) wheel1Ref.current.rotation.x += wheelSpin;
-      if (wheel2Ref.current) wheel2Ref.current.rotation.x += wheelSpin;
-      if (wheel3Ref.current) wheel3Ref.current.rotation.x += wheelSpin;
-      if (wheel4Ref.current) wheel4Ref.current.rotation.x += wheelSpin;
-    }
-
-    // ── 7. Lookahead Target Vector & Smooth Motion Update ──
-    const targetVector = new THREE.Vector3(
-      lookaheadPt.x + latX * yieldOffsetRef.current,
-      lookaheadPt.y,
-      lookaheadPt.z + latZ * yieldOffsetRef.current
-    );
-
-    // Advance waypoint progression along path
-    if (obstacle.currentIndex < obstacle.path.length - 1) {
-      const currNode = obstacle.path[obstacle.currentIndex];
-      const [cnx, , cnz] = getGridPosition(currNode, gridSize, 0.05, isMapView);
-      const toNode = new THREE.Vector3(cnx - currentPos.x, 0, cnz - currentPos.z);
-      if (toNode.dot(headingVec) <= 0.25 || currentPos.distanceTo(new THREE.Vector3(cnx, currentPos.y, cnz)) < 0.65) {
+    const [tx, ty, tz] = getGridPosition(targetNode, gridSize, obstacle.type === 'car' ? 0.2 : 0.5, isMapView);
+    const targetVector = new THREE.Vector3(tx, ty, tz);
+    
+    const dist = currentPos.distanceTo(targetVector);
+    if (dist < 0.05) {
+      if (obstacle.currentIndex < obstacle.path.length - 1) {
         obstacle.currentIndex++;
-        obstacle.pos = obstacle.path[obstacle.currentIndex];
-      }
-    }
-
-    // Set real-time velocity vector for predictive dynamic obstacle modeling
-    obstacle.velocity = new THREE.Vector3(dirX * currentSpeed, 0, dirZ * currentSpeed);
-    const moveDist = currentSpeed * delta;
-    if (moveDist > 0) {
-      const moveDir = new THREE.Vector3().subVectors(targetVector, currentPos).normalize();
-      if (moveDir.lengthSq() > 0.001) {
-        currentPos.add(moveDir.multiplyScalar(moveDist));
-      }
-    }
-
-    // ── 8. Rate-Limited Steering & Front Wheel Angle ──
-    const toTarget = new THREE.Vector3().subVectors(targetVector, currentPos);
-    if (toTarget.lengthSq() > 0.001) {
-      const targetRotation = Math.atan2(toTarget.x, toTarget.z);
-      let diff = targetRotation - ref.current.rotation.y;
-      while (diff < -Math.PI) diff += Math.PI * 2;
-      while (diff > Math.PI) diff -= Math.PI * 2;
-      const maxTurnRate = isCar ? 2.0 : 3.2; // Realistic smooth steering without snapping
-      const turnDelta = THREE.MathUtils.clamp(diff, -maxTurnRate * delta, maxTurnRate * delta);
-      ref.current.rotation.y += turnDelta;
-
-      // Physically turn front wheels on cars into the steering curve
-      if (isCar) {
-        const steerAngle = THREE.MathUtils.clamp(diff * 0.45, -0.42, 0.42);
-        if (wheel1Ref.current) wheel1Ref.current.rotation.y = steerAngle;
-        if (wheel2Ref.current) wheel2Ref.current.rotation.y = steerAngle;
-      }
-    }
-
-    // ── 9. Anti-Stuck Dynamic Detour Watchdog ──
-    if (!lastCheckPosRef.current) {
-      lastCheckPosRef.current = currentPos.clone();
-    } else {
-      const stepMoved = currentPos.distanceTo(lastCheckPosRef.current);
-      if (stepMoved < 0.10 * delta) {
-        stuckTimerRef.current += delta;
-        if (stuckTimerRef.current > 2.0 && mapData && mapData.roads && mapData.roads.length > 5) {
-          const myGrid = getGridPointFromVector3(currentPos, gridSize);
-          const detourTarget = mapData.roads[Math.floor(Math.random() * mapData.roads.length)];
-          const allObs = [...(mapData.obstacles || []), ...(userBlockers || [])];
-          const detourPath = calculatePath(myGrid, detourTarget, allObs, mapData, true);
-          if (detourPath && detourPath.length >= 2) {
-            obstacle.path = detourPath;
-            obstacle.currentIndex = 0;
-            obstacle.targetPos = detourPath[detourPath.length - 1];
-          }
-          stuckTimerRef.current = 0;
-        }
       } else {
-        stuckTimerRef.current = 0;
+        obstacle.path.reverse();
+        obstacle.currentIndex = 0;
       }
-      lastCheckPosRef.current.copy(currentPos);
+      obstacle.pos = obstacle.path[obstacle.currentIndex];
+    } else {
+      const moveDist = obstacle.speed * delta;
+      if (moveDist >= dist) {
+        currentPos.copy(targetVector);
+        obstacle.pos = targetNode;
+      } else {
+        const direction = new THREE.Vector3().subVectors(targetVector, currentPos).normalize();
+        currentPos.add(direction.multiplyScalar(moveDist));
+      }
+      const rotDirection = new THREE.Vector3().subVectors(targetVector, currentPos);
+      if (rotDirection.lengthSq() > 0.001) {
+        const targetRotation = Math.atan2(rotDirection.x, rotDirection.z);
+        let diff = targetRotation - ref.current.rotation.y;
+        while (diff < -Math.PI) diff += Math.PI * 2;
+        while (diff > Math.PI) diff -= Math.PI * 2;
+        ref.current.rotation.y += diff * delta * 10;
+      }
     }
   });
 
-  const startNode = obstacle.path[0] || { x: 0, y: 0, f: 0 };
-  const baseStart = getGridPosition(startNode, gridSize, 0.05, isMapView);
-  let startX = obstacle.pos3D ? obstacle.pos3D.x : baseStart[0];
-  let startZ = obstacle.pos3D ? obstacle.pos3D.z : baseStart[2];
-  if (!obstacle.pos3D) {
-    if (obstacle.path.length >= 2) {
-      const [n1x, , n1z] = getGridPosition(obstacle.path[1], gridSize, 0.05, isMapView);
-      const initH = new THREE.Vector3(n1x - startX, 0, n1z - startZ).normalize();
-      const initNorm = new THREE.Vector3(initH.z, 0, -initH.x);
-      startX += initNorm.x * baseOffset;
-      startZ += initNorm.z * baseOffset;
-    } else {
-      startX += baseOffset;
-    }
-  }
-  const startPos: [number, number, number] = [startX, obstacle.pos3D ? obstacle.pos3D.y : baseStart[1], startZ];
-
-  useEffect(() => {
-    if (ref.current && obstacle.path.length >= 2) {
-      const [p0x, , p0z] = getGridPosition(obstacle.path[0], gridSize, 0.05, isMapView);
-      const [p1x, , p1z] = getGridPosition(obstacle.path[1], gridSize, 0.05, isMapView);
-      const initYaw = Math.atan2(p1x - p0x, p1z - p0z);
-      ref.current.rotation.y = initYaw;
-      lastDirRef.current = { x: Math.sin(initYaw), z: Math.cos(initYaw) };
-    }
-  }, []);
+  const startPos = getGridPosition(obstacle.path[0] || {x:0, y:0, f:0}, gridSize, obstacle.type === 'car' ? 0.2 : 0.5, isMapView);
 
   return (
-    <group ref={ref} position={startPos}>
+    <group ref={ref} position={startPos} scale={1.8}>
       {obstacle.type === 'car' ? (
-        /* Sized to match robot stature (scale 1.45) */
-        <group scale={1.45}>
-          {/* Main Aerodynamic Chassis */}
-          <RoundedBox args={[0.62, 0.32, 1.25]} radius={0.06} smoothness={4} position={[0, 0.22, 0]} castShadow receiveShadow>
-            <meshStandardMaterial color={carColor} metalness={0.7} roughness={0.25} />
-          </RoundedBox>
-
-          {/* Cabin / Tinted Glass Canopy */}
-          <RoundedBox args={[0.54, 0.26, 0.68]} radius={0.05} smoothness={4} position={[0, 0.48, -0.06]} castShadow>
-            <meshStandardMaterial color="#0b0f19" metalness={0.9} roughness={0.1} />
-          </RoundedBox>
-
-          {/* Front Windshield Angle Accent */}
-          <Box args={[0.48, 0.2, 0.02]} position={[0, 0.46, 0.28]} rotation={[0.3, 0, 0]}>
-            <meshStandardMaterial color="#1e293b" metalness={0.9} roughness={0.1} transparent opacity={0.85} />
+        <group>
+          <Box args={[0.7, 0.4, 1.2]} position={[0, 0.2, 0]} castShadow>
+            <meshStandardMaterial color="#ef4444" metalness={0.6} roughness={0.3} />
           </Box>
-
-          {/* Front LED Headlights */}
-          <Box args={[0.14, 0.06, 0.02]} position={[0.2, 0.24, 0.63]}>
-            <meshStandardMaterial color="#fef08a" emissive="#fef08a" emissiveIntensity={2.0} />
-          </Box>
-          <Box args={[0.14, 0.06, 0.02]} position={[-0.2, 0.24, 0.63]}>
-            <meshStandardMaterial color="#fef08a" emissive="#fef08a" emissiveIntensity={2.0} />
-          </Box>
-          {/* Front Grille */}
-          <Box args={[0.22, 0.06, 0.02]} position={[0, 0.16, 0.63]}>
-            <meshStandardMaterial color="#0f172a" metalness={0.8} roughness={0.3} />
-          </Box>
-
-          {/* Rear LED Taillight Bar */}
-          <Box args={[0.52, 0.06, 0.02]} position={[0, 0.26, -0.63]}>
-            <meshStandardMaterial ref={taillightMatRef} color="#ef4444" emissive="#ef4444" emissiveIntensity={1.4} />
-          </Box>
-
-          {/* Wheels - Front Left & Right */}
-          <group ref={wheel1Ref} position={[-0.32, 0.14, 0.38]}>
-            <Cylinder args={[0.14, 0.14, 0.09, 16]} rotation={[0, 0, Math.PI / 2]} castShadow>
-              <meshStandardMaterial color="#0f172a" roughness={0.8} />
-            </Cylinder>
-            <Cylinder args={[0.07, 0.07, 0.1, 10]} rotation={[0, 0, Math.PI / 2]}>
-              <meshStandardMaterial color="#94a3b8" metalness={0.9} roughness={0.2} />
-            </Cylinder>
-          </group>
-          <group ref={wheel2Ref} position={[0.32, 0.14, 0.38]}>
-            <Cylinder args={[0.14, 0.14, 0.09, 16]} rotation={[0, 0, Math.PI / 2]} castShadow>
-              <meshStandardMaterial color="#0f172a" roughness={0.8} />
-            </Cylinder>
-            <Cylinder args={[0.07, 0.07, 0.1, 10]} rotation={[0, 0, Math.PI / 2]}>
-              <meshStandardMaterial color="#94a3b8" metalness={0.9} roughness={0.2} />
-            </Cylinder>
-          </group>
-
-          {/* Wheels - Rear Left & Right */}
-          <group ref={wheel3Ref} position={[-0.32, 0.14, -0.38]}>
-            <Cylinder args={[0.14, 0.14, 0.09, 16]} rotation={[0, 0, Math.PI / 2]} castShadow>
-              <meshStandardMaterial color="#0f172a" roughness={0.8} />
-            </Cylinder>
-            <Cylinder args={[0.07, 0.07, 0.1, 10]} rotation={[0, 0, Math.PI / 2]}>
-              <meshStandardMaterial color="#94a3b8" metalness={0.9} roughness={0.2} />
-            </Cylinder>
-          </group>
-          <group ref={wheel4Ref} position={[0.32, 0.14, -0.38]}>
-            <Cylinder args={[0.14, 0.14, 0.09, 16]} rotation={[0, 0, Math.PI / 2]} castShadow>
-              <meshStandardMaterial color="#0f172a" roughness={0.8} />
-            </Cylinder>
-            <Cylinder args={[0.07, 0.07, 0.1, 10]} rotation={[0, 0, Math.PI / 2]}>
-              <meshStandardMaterial color="#94a3b8" metalness={0.9} roughness={0.2} />
-            </Cylinder>
-          </group>
+          {/* Simple wheels */}
+          <Cylinder args={[0.15, 0.15, 0.9, 12]} position={[0, 0, 0.35]} rotation={[0, 0, Math.PI / 2]} castShadow>
+            <meshStandardMaterial color="#1e293b" />
+          </Cylinder>
+          <Cylinder args={[0.15, 0.15, 0.9, 12]} position={[0, 0, -0.35]} rotation={[0, 0, Math.PI / 2]} castShadow>
+            <meshStandardMaterial color="#1e293b" />
+          </Cylinder>
         </group>
       ) : (
-        /* Detailed Animated Pedestrian scaled to human proportions (scale 1.4) */
-        <group scale={1.4}>
-          {/* Pelvis / Hips */}
-          <Box args={[0.3, 0.12, 0.2]} position={[0, 0.52, 0]} castShadow>
-            <meshStandardMaterial color={pantsColor} roughness={0.6} />
+        <group>
+          <Box args={[0.3, 0.6, 0.3]} position={[0, 0.3, 0]} castShadow>
+            <meshStandardMaterial color="#10b981" />
           </Box>
-
-          {/* Left Leg */}
-          <group ref={leftLegRef} position={[-0.09, 0.48, 0]}>
-            <Box args={[0.1, 0.46, 0.12]} position={[0, -0.23, 0]} castShadow>
-              <meshStandardMaterial color={pantsColor} roughness={0.6} />
-            </Box>
-            {/* Left Shoe */}
-            <Box args={[0.11, 0.07, 0.17]} position={[0, -0.46, 0.03]} castShadow>
-              <meshStandardMaterial color="#0f172a" roughness={0.4} />
-            </Box>
-          </group>
-
-          {/* Right Leg */}
-          <group ref={rightLegRef} position={[0.09, 0.48, 0]}>
-            <Box args={[0.1, 0.46, 0.12]} position={[0, -0.23, 0]} castShadow>
-              <meshStandardMaterial color={pantsColor} roughness={0.6} />
-            </Box>
-            {/* Right Shoe */}
-            <Box args={[0.11, 0.07, 0.17]} position={[0, -0.46, 0.03]} castShadow>
-              <meshStandardMaterial color="#0f172a" roughness={0.4} />
-            </Box>
-          </group>
-
-          {/* Torso (Shirt) */}
-          <RoundedBox args={[0.36, 0.44, 0.22]} radius={0.04} smoothness={4} position={[0, 0.78, 0]} castShadow>
-            <meshStandardMaterial color={shirtColor} roughness={0.5} />
-          </RoundedBox>
-
-          {/* Backpack on back */}
-          <Box args={[0.26, 0.32, 0.12]} position={[0, 0.78, -0.15]} castShadow>
-            <meshStandardMaterial color="#0f172a" roughness={0.7} />
-          </Box>
-
-          {/* Left Arm */}
-          <group ref={leftArmRef} position={[-0.22, 0.94, 0]}>
-            <Box args={[0.08, 0.42, 0.09]} position={[0, -0.21, 0]} castShadow>
-              <meshStandardMaterial color={shirtColor} roughness={0.5} />
-            </Box>
-            <Sphere args={[0.05, 8, 8]} position={[0, -0.42, 0]}>
-              <meshStandardMaterial color={skinColor} roughness={0.4} />
-            </Sphere>
-          </group>
-
-          {/* Right Arm */}
-          <group ref={rightArmRef} position={[0.22, 0.94, 0]}>
-            <Box args={[0.08, 0.42, 0.09]} position={[0, -0.21, 0]} castShadow>
-              <meshStandardMaterial color={shirtColor} roughness={0.5} />
-            </Box>
-            <Sphere args={[0.05, 8, 8]} position={[0, -0.42, 0]}>
-              <meshStandardMaterial color={skinColor} roughness={0.4} />
-            </Sphere>
-          </group>
-
-          {/* Neck */}
-          <Cylinder args={[0.06, 0.06, 0.08, 8]} position={[0, 1.04, 0]}>
-            <meshStandardMaterial color={skinColor} roughness={0.4} />
-          </Cylinder>
-
-          {/* Head */}
-          <Sphere args={[0.13, 16, 16]} position={[0, 1.16, 0]} castShadow>
-            <meshStandardMaterial color={skinColor} roughness={0.4} />
-          </Sphere>
-
-          {/* Hair / Cap */}
-          <Sphere args={[0.135, 14, 14]} position={[0, 1.19, -0.02]} scale={[1.02, 0.8, 1.02]}>
-            <meshStandardMaterial color="#1e293b" roughness={0.8} />
+          <Sphere args={[0.15, 12, 12]} position={[0, 0.75, 0]} castShadow>
+            <meshStandardMaterial color="#fcd34d" />
           </Sphere>
         </group>
       )}
@@ -697,99 +209,6 @@ const getGridPointFromVector3 = (point: THREE.Vector3, gridSize: GridPoint): Gri
   const clampedX = Math.max(0, Math.min(gridSize.x - 1, gridX));
   const clampedZ = Math.max(0, Math.min(gridSize.y - 1, gridZ));
   return { x: clampedX, y: clampedZ, f: 0 };
-};
-
-const getNearestRoadPoint = (pt: GridPoint, mapData: MapData): GridPoint => {
-  if (!mapData || !mapData.roads || mapData.roads.length === 0) return pt;
-  const targetF = pt.f || 0;
-  const isAlreadyRoad = mapData.roads.some(r => r.x === pt.x && r.y === pt.y && r.f === targetF);
-  if (isAlreadyRoad) return pt;
-
-  let bestDistSq = Infinity;
-  let bestPt = pt;
-  for (const r of mapData.roads) {
-    if (r.f !== targetF) continue;
-    const dSq = (r.x - pt.x) * (r.x - pt.x) + (r.y - pt.y) * (r.y - pt.y);
-    if (dSq < bestDistSq) {
-      bestDistSq = dSq;
-      bestPt = r;
-    }
-  }
-  return bestPt;
-};
-
-// Cached lookup set for mapData road network to allow O(1) drivable road validation
-const roadSetCache = new WeakMap<MapData, Set<string>>();
-const getRoadSet = (mapData: MapData): Set<string> => {
-  let set = roadSetCache.get(mapData);
-  if (!set) {
-    set = new Set<string>();
-    if (mapData.roads) {
-      for (const r of mapData.roads) {
-        set.add(`${r.x},${r.y}`);
-      }
-    }
-    roadSetCache.set(mapData, set);
-  }
-  return set;
-};
-
-// Strict check: Determines if a 3D world coordinate is strictly on the drivable road surface,
-// never touching grass, curb, sidewalk, or building room boundaries.
-export const isPointOnDrivableRoad = (
-  worldX: number,
-  worldZ: number,
-  mapData: MapData | null | undefined,
-  margin = 0.22
-): boolean => {
-  if (!mapData || !mapData.roads || mapData.roads.length === 0) return true;
-  const { gridSize } = mapData;
-  const offsetX = (gridSize.x * CELL_SIZE) / 2;
-  const offsetZ = (gridSize.y * CELL_SIZE) / 2;
-  const roadSet = getRoadSet(mapData);
-
-  // Probes around the test point to guarantee full clearance from non-drivable edges (grass, curbs, sidewalks)
-  const probes: [number, number][] = [
-    [0, 0],
-    [margin, 0],
-    [-margin, 0],
-    [0, margin],
-    [0, -margin],
-    [margin * 0.707, margin * 0.707],
-    [-margin * 0.707, margin * 0.707],
-    [margin * 0.707, -margin * 0.707],
-    [-margin * 0.707, -margin * 0.707],
-  ];
-
-  for (let i = 0; i < probes.length; i++) {
-    const px = worldX + probes[i][0];
-    const pz = worldZ + probes[i][1];
-    const gx = Math.floor((px + offsetX) / CELL_SIZE);
-    const gy = Math.floor((pz + offsetZ) / CELL_SIZE);
-    if (gx < 0 || gx >= gridSize.x || gy < 0 || gy >= gridSize.y) {
-      return false; // Beyond campus boundaries
-    }
-    if (!roadSet.has(`${gx},${gy}`)) {
-      return false; // Non-drivable area (grass, curb, or sidewalk)
-    }
-  }
-
-  // Ensure not intersecting or touching any building room footprint
-  if (mapData.rooms) {
-    for (let i = 0; i < mapData.rooms.length; i++) {
-      const room = mapData.rooms[i];
-      const rMinX = (room.start.x * CELL_SIZE) - offsetX;
-      const rMaxX = ((room.end.x + 1) * CELL_SIZE) - offsetX;
-      const rMinZ = (room.start.y * CELL_SIZE) - offsetZ;
-      const rMaxZ = ((room.end.y + 1) * CELL_SIZE) - offsetZ;
-      if (worldX >= rMinX - margin && worldX <= rMaxX + margin &&
-          worldZ >= rMinZ - margin && worldZ <= rMaxZ + margin) {
-        return false; // Building wall/interior
-      }
-    }
-  }
-
-  return true;
 };
 
 const RoadsRender = ({ roads, gridSize }: { roads: GridPoint[], gridSize: GridPoint }) => {
@@ -1059,38 +478,6 @@ const PoliceVehicle = ({ policeState, policeStateRef, gridSize, isMapView, onRea
   );
 };
 
-const ParkModel = ({ width, depth, height, isEco }: { width: number; depth: number; height: number; isEco: boolean }) => {
-  const treeCount = isEco ? 15 : 4;
-  const trees = useMemo(() => {
-    return Array.from({ length: treeCount }).map((_, i) => {
-      const seed1 = ((i * 9301 + 49297) % 233280) / 233280;
-      const seed2 = (((i + 7) * 9301 + 49297) % 233280) / 233280;
-      const tx = (seed1 - 0.5) * width * 0.8;
-      const tz = (seed2 - 0.5) * depth * 0.8;
-      return { tx, tz, id: i };
-    });
-  }, [width, depth, treeCount]);
-
-  return (
-    <group>
-      <Box args={[width, 0.2, depth]} position={[0, -height / 2 + 0.1, 0]} receiveShadow>
-        <meshStandardMaterial color="#22c55e" />
-      </Box>
-      {trees.map((t) => (
-        <group key={t.id} position={[t.tx, -height / 2 + 0.5, t.tz]}>
-          <Cylinder args={[0.1, 0.1, 0.8]} position={[0, -0.1, 0]}>
-            <meshStandardMaterial color="#78350f" />
-          </Cylinder>
-          <Cylinder args={[0.4, 0.6, 1.2]} position={[0, 0.8, 0]}>
-            <meshStandardMaterial color="#15803d" />
-          </Cylinder>
-        </group>
-      ))}
-      <Butterflies />
-    </group>
-  );
-};
-
 const BuildingModel = React.memo(({ room, width, height, depth }: { room: Room, width: number, height: number, depth: number }) => {
   const type = room.type || "unknown";
   const nameLow = room.name.toLowerCase();
@@ -1335,7 +722,30 @@ const BuildingModel = React.memo(({ room, width, height, depth }: { room: Room, 
       );
     }
   } else if (type === 'park') {
-    return <ParkModel width={width} depth={depth} height={height} isEco={nameLow.includes('eco')} />;
+    return (
+      <group>
+        <Box args={[width, 0.2, depth]} position={[0, -height/2 + 0.1, 0]} receiveShadow>
+          <meshStandardMaterial color="#22c55e" />
+        </Box>
+        {/* Many trees for Eco Park - useMemo so they don't jump around on re-renders */}
+        {useMemo(() => [...Array(nameLow.includes('eco') ? 15 : 4)].map((_, i) => {
+          const tx = (Math.random() - 0.5) * width * 0.8;
+          const tz = (Math.random() - 0.5) * depth * 0.8;
+          return (
+            <group key={i} position={[tx, -height/2 + 0.5, tz]}>
+              <Cylinder args={[0.1, 0.1, 0.8]} position={[0, -0.1, 0]}>
+                 <meshStandardMaterial color="#78350f" />
+              </Cylinder>
+              <Cylinder args={[0.4, 0.6, 1.2]} position={[0, 0.8, 0]}>
+                 <meshStandardMaterial color="#15803d" />
+              </Cylinder>
+            </group>
+          );
+        }), [width, depth, nameLow])}
+        {/* Butterflies */}
+        <Butterflies />
+      </group>
+    );
   } else if (type === 'food') {
     return (
       <group>
@@ -1406,27 +816,18 @@ const SciFiGate = ({ position, scale = 1, rotation = [0, 0, 0] }: { position: [n
        <Box args={[3.2, 0.1, 0.1]} position={[0, 2.9, 0]}>
          <meshStandardMaterial color="#0ea5e9" emissive="#0ea5e9" emissiveIntensity={2} />
        </Box>
+       {/* Title Text */}
+       <Html position={[0, 4, 0]} center style={{ pointerEvents: 'none' }}>
+          <div className="text-[12px] font-black text-cyan-400 bg-black/80 px-3 py-1 rounded shadow-lg whitespace-nowrap border border-cyan-500/50 uppercase tracking-[0.3em]">
+             ASPIRE GATEWAY
+          </div>
+       </Html>
     </group>
   );
 };
 
-export type RobotLiveStatus = 'IDLE' | 'MOVING' | 'DIVERSION' | 'ROAD BARRICADE DETECTED';
-
-export const DetailedRobot = ({ 
-  isMoving, showFeatures = false, activeFeature = "", isEmergency = false, 
-  isSlowCaution = false, isWaiting: _isWaiting = false, isCourteousStandoff: _isCourteousStandoff = false, standoffLabel: _standoffLabel = "",
-  isFollowingObstacle: _isFollowingObstacle = false, isOvertaking: _isOvertaking = false, followingDistanceLabel: _followingDistanceLabel = "",
-  isReversing = false, isYieldWaiting: _isYieldWaiting = false,
-  isBarricadeBlocked: _isBarricadeBlocked = false, barricadeLabel: _barricadeLabel = "",
-  liveStatus = 'MOVING'
-}: { 
-  isMoving: boolean; showFeatures?: boolean; activeFeature?: string; isEmergency?: boolean; 
-  isSlowCaution?: boolean; isWaiting?: boolean; isCourteousStandoff?: boolean; standoffLabel?: string;
-  isFollowingObstacle?: boolean; isOvertaking?: boolean; followingDistanceLabel?: string;
-  isReversing?: boolean; isYieldWaiting?: boolean;
-  isBarricadeBlocked?: boolean; barricadeLabel?: string;
-  liveStatus?: RobotLiveStatus;
-}) => {
+/* ── Detailed Animated 3D Robot Body ── */
+export const DetailedRobot = ({ isMoving, showFeatures = false, activeFeature = "", isEmergency = false }: { isMoving: boolean; showFeatures?: boolean; activeFeature?: string; isEmergency?: boolean }) => {
   const bodyRef = useRef<THREE.Group>(null);
   const headRef = useRef<THREE.Group>(null);
   const leftArmRef = useRef<THREE.Group>(null);
@@ -1445,10 +846,11 @@ export const DetailedRobot = ({
     const t = clock.current;
 
     if (bodyRef.current) bodyRef.current.position.y = 0;
+    if (headRef.current) headRef.current.rotation.y = 0;
     if (leftArmRef.current) leftArmRef.current.rotation.x = 0;
     if (rightArmRef.current) rightArmRef.current.rotation.x = 0;
 
-    const ws = isReversing ? -4.5 : (isMoving ? (isSlowCaution ? 2.5 : 8) : 0);
+    const ws = isMoving ? 8 : 0.5;
     if (leftWheelRef.current) leftWheelRef.current.rotation.x += delta * ws;
     if (rightWheelRef.current) rightWheelRef.current.rotation.x += delta * ws;
     if (frontWheelRef.current) frontWheelRef.current.rotation.x += delta * ws;
@@ -1460,10 +862,6 @@ export const DetailedRobot = ({
         mat.color.set('#ef4444');
         mat.emissive.set('#ef4444');
         mat.emissiveIntensity = 1.0 + 1.0 * Math.sin(t * 15);
-      } else if (isSlowCaution) {
-        mat.color.set('#f59e0b');
-        mat.emissive.set('#f59e0b');
-        mat.emissiveIntensity = 1.2 + 1.2 * Math.sin(t * 10);
       } else {
         mat.color.set('#f97316');
         mat.emissive.set('#f97316');
@@ -1472,10 +870,8 @@ export const DetailedRobot = ({
     }
     
     if (headRef.current) {
-      if (isSlowCaution) {
-        headRef.current.rotation.y = Math.sin(t * 5.0) * 0.45; // alert scanning
-      } else if (isMoving) {
-        headRef.current.rotation.y = Math.sin(t * 2.5) * 0.3;
+      if (isMoving) {
+        headRef.current.rotation.y = Math.sin(t * 2.5) * 0.4;
       } else {
         headRef.current.rotation.y = THREE.MathUtils.lerp(headRef.current.rotation.y, 0, 0.1);
       }
@@ -1683,55 +1079,6 @@ export const DetailedRobot = ({
         <Box args={[0.6, 0.02, 0.5]} position={[0, -0.2, 0]}>
           <meshStandardMaterial color="#0ea5e9" emissive="#0ea5e9" emissiveIntensity={0.4} transparent opacity={0.7} />
         </Box>
-
-        {/* Forward LiDAR Radar Sensor Arc */}
-        <group position={[0, -0.15, 0.35]} rotation={[-Math.PI / 2, 0, 0]}>
-          <ringGeometry args={[0.25, isSlowCaution ? 2.6 : 1.4, 32, 1, -Math.PI / 3, (2 * Math.PI) / 3]} />
-          <meshBasicMaterial 
-            color={isSlowCaution ? '#f59e0b' : '#00ffff'} 
-            transparent 
-            opacity={isSlowCaution ? 0.45 + 0.18 * Math.sin(clock.current * 10) : (isMoving ? 0.14 : 0.05)} 
-            side={THREE.DoubleSide} 
-          />
-        </group>
-        {isSlowCaution && (
-          <group position={[0, -0.14, 0.35]} rotation={[-Math.PI / 2, 0, 0]}>
-            <ringGeometry args={[1.3, 1.45, 32, 1, -Math.PI / 3, (2 * Math.PI) / 3]} />
-            <meshBasicMaterial 
-              color="#ef4444" 
-              transparent 
-              opacity={0.6 + 0.3 * Math.sin(clock.current * 12)} 
-              side={THREE.DoubleSide} 
-            />
-          </group>
-        )}
-
-        {/* Real-time Autonomous Patrol Live Status Label */}
-        <Html position={[0, 1.80, 0]} center style={{ pointerEvents: 'none' }}>
-          <div className="flex items-center justify-center select-none transition-all duration-300 ease-in-out">
-            {liveStatus === 'IDLE' ? (
-              <div className="flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-slate-900/90 border border-slate-400 text-slate-200 font-mono font-black text-[11px] tracking-wider uppercase shadow-[0_0_16px_rgba(148,163,184,0.5)] backdrop-blur-md whitespace-nowrap">
-                <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse"></span>
-                <span>IDLE</span>
-              </div>
-            ) : liveStatus === 'DIVERSION' ? (
-              <div className="flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-orange-950/90 border border-orange-400 text-orange-200 font-mono font-black text-[11px] tracking-wider uppercase shadow-[0_0_20px_rgba(249,115,22,0.8)] backdrop-blur-md whitespace-nowrap">
-                <span className="w-2 h-2 rounded-full bg-orange-400 animate-pulse"></span>
-                <span>DIVERSION</span>
-              </div>
-            ) : liveStatus === 'ROAD BARRICADE DETECTED' ? (
-              <div className="flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-amber-950/90 border border-amber-400 text-amber-200 font-mono font-black text-[11px] tracking-wider uppercase shadow-[0_0_20px_rgba(245,158,11,0.8)] backdrop-blur-md whitespace-nowrap">
-                <span className="w-2 h-2 rounded-full bg-amber-400 animate-ping"></span>
-                <span>ROAD BARRICADE DETECTED</span>
-              </div>
-            ) : (
-              <div className="flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-cyan-950/90 border border-cyan-400 text-cyan-200 font-mono font-black text-[11px] tracking-wider uppercase shadow-[0_0_20px_rgba(6,182,212,0.8)] backdrop-blur-md whitespace-nowrap">
-                <span className="w-2 h-2 rounded-full bg-cyan-400 animate-ping"></span>
-                <span>MOVING</span>
-              </div>
-            )}
-          </div>
-        </Html>
       </group>
     </group>
   );
@@ -1739,14 +1086,7 @@ export const DetailedRobot = ({
 
 const Robot = ({
   path, currentIndex, isPlaying, gridSize, isMapView, speed, dynamicObstaclesRef,
-  staticObstacles = [], drivableRouteRef, drivableRouteColorsRef, diversionRouteRef, upcomingLoopPoints3D = [],
-  onReachNode, onMissionComplete, onObstacleDetected: _onObstacleDetected, onBarricadeBlocked, robotPosRef, robotRotRef, isEmergency = false,
-  addExplanation,
-  mapData,
-  isPausedAtDestination = false,
-  isFollowingAlternateRoute: _isFollowingAlternateRoute = false,
-  userBlockers = [],
-  onPerceptionUpdate,
+  onReachNode, onMissionComplete, onObstacleDetected, robotPosRef, robotRotRef, isEmergency = false
 }: {
   path: GridPoint[];
   currentIndex: number;
@@ -1755,1593 +1095,120 @@ const Robot = ({
   isMapView: boolean;
   speed: number;
   dynamicObstaclesRef: React.MutableRefObject<DynamicObstacle[]>;
-  staticObstacles?: GridPoint[];
-  drivableRouteRef?: React.MutableRefObject<number[]>;
-  drivableRouteColorsRef?: React.MutableRefObject<number[]>;
-  diversionRouteRef?: React.MutableRefObject<number[]>;
-  upcomingLoopPoints3D?: THREE.Vector3[];
   onReachNode: (idx: number) => void;
   onMissionComplete: () => void;
   onObstacleDetected: (obsPos: GridPoint) => void;
-  onBarricadeBlocked?: (robotPos: THREE.Vector3, barricadePos: THREE.Vector3) => void;
   robotPosRef: React.MutableRefObject<THREE.Vector3 | null>;
   robotRotRef: React.MutableRefObject<number>;
   isEmergency?: boolean;
-  addExplanation?: (msg: string) => void;
-  mapData?: MapData | null;
-  isPausedAtDestination?: boolean;
-  isFollowingAlternateRoute?: boolean;
-  userBlockers?: GridPoint[];
-  onPerceptionUpdate?: (res: PerceptionScanResult) => void;
 }) => {
   const ref = useRef<THREE.Group>(null);
-  const lastPerceptionEmitRef = useRef(0);
   const isMovingRef = useRef(false);
   const [isMoving, setIsMoving] = useState(false);
-  const [isSlowCaution, setIsSlowCaution] = useState(false);
-  const [isWaiting, setIsWaiting] = useState(false);
-  const [isCourteousStandoff, setIsCourteousStandoff] = useState(false);
-  const [standoffReason, setStandoffReason] = useState<string>('');
-  const [isFollowingObstacle, setIsFollowingObstacle] = useState(false);
-  const [isOvertaking, setIsOvertaking] = useState(false);
-  const [followingDistanceLabel, setFollowingDistanceLabel] = useState('');
-  const [isBarricadeBlocked, setIsBarricadeBlocked] = useState(false);
-  const [barricadeStatusLabel, setBarricadeStatusLabel] = useState('');
-  const [liveStatus, setLiveStatus] = useState<RobotLiveStatus>('MOVING');
-  const liveStatusRef = useRef<RobotLiveStatus>('MOVING');
-  
-  interface BarricadeInspection {
-    blockerId: string;
-    inspectionTimer: number;
-    stage: 'approaching' | 'viewing' | 'rerouting';
-    loggedApproach: boolean;
-    loggedViewing: boolean;
-    loggedReroute: boolean;
-  }
-  const barricadeInspectionRef = useRef<BarricadeInspection | null>(null);
-  
-  // Reversing and Yielding State (make way for obstacle first, then proceed to destination)
-  const isReversingRef = useRef(false);
-  const [isReversing, setIsReversing] = useState(false);
-  const isYieldWaitingRef = useRef(false);
-  const [isYieldWaiting, setIsYieldWaiting] = useState(false);
-  const reverseTargetSRef = useRef(0);
-  const yieldWaitTimerRef = useRef(0);
-  const conflictingObsIdRef = useRef<string | null>(null);
-  const lastReverseEndTimeRef = useRef(0);
-
-  const isCourteousStandoffRef = useRef(false);
-  const courteousClearTimerRef = useRef(0);
-  const lastOvertakeLogTime = useRef(0);
   const hasCompletedRef = useRef(false);
-  const actualSpeedRef = useRef(0);
-  const pauseTimeRef = useRef(0);
-  const distanceTraveledRef = useRef(0);
-  // Robot travels on assigned side of the road (right lane: +0.35m from road centerline)
-  const smoothedLateralOffsetRef = useRef(0.35);
 
-  interface ActiveDiversionState {
-    obstacleId: string;
-    sStart: number;
-    sObstacle: number;
-    peakAmplitude: number; // Delta from assigned lane center
-    clearanceMeters: number;
-    diversionEndS: number;
-    targetPassingOffset: number;
-    createdAt: number;
-  }
-  const activeDiversionRef = useRef<ActiveDiversionState | null>(null);
-
-  // 1. Build centripetal 3D spline curve and cumulative waypoint distances
-  const { curve, totalLength, waypointDistances } = useMemo(() => {
-    if (!path || path.length === 0) {
-      return { curve: null, totalLength: 0, waypointDistances: [] };
-    }
-
-    const unique3DPoints: THREE.Vector3[] = [];
-    const wpDists: number[] = [0];
-
-    for (let i = 0; i < path.length; i++) {
-      const pt = path[i];
-      const [x, y, z] = getGridPosition(pt, gridSize, 0.22, isMapView);
-      const vec = new THREE.Vector3(x, y, z);
-      if (unique3DPoints.length === 0 || unique3DPoints[unique3DPoints.length - 1].distanceTo(vec) > 0.08) {
-        if (unique3DPoints.length > 0) {
-          const segDist = unique3DPoints[unique3DPoints.length - 1].distanceTo(vec);
-          wpDists.push(wpDists[wpDists.length - 1] + segDist);
-        }
-        unique3DPoints.push(vec);
-      }
-    }
-
-    if (unique3DPoints.length < 2) {
-      return { curve: null, totalLength: 0, waypointDistances: [] };
-    }
-
-    // Anchor first point to exact current robot road centerline to eliminate startup jumps
-    if (ref.current && unique3DPoints.length >= 2) {
-      const cur = ref.current.position;
-      const segDir = unique3DPoints[1].clone().sub(unique3DPoints[0]).normalize();
-      const segNormal = new THREE.Vector3(segDir.z, 0, -segDir.x);
-      // Project robot's current position to road centerline by subtracting the assigned lane offset (+0.35m)
-      const centerlineCur = cur.clone().sub(segNormal.clone().multiplyScalar(0.35));
-      if (cur.distanceTo(unique3DPoints[0]) < 3.5) {
-        unique3DPoints[0].set(centerlineCur.x, unique3DPoints[0].y, centerlineCur.z);
-      }
-    }
-
-    const catmull = new THREE.CatmullRomCurve3(unique3DPoints, false, 'centripetal');
-    const len = catmull.getLength();
-    return { curve: catmull, totalLength: len, waypointDistances: wpDists };
-  }, [path, gridSize, isMapView]);
-
-  // Reset progress when new path is assigned
   useEffect(() => {
     hasCompletedRef.current = false;
-    distanceTraveledRef.current = 0;
-    courteousClearTimerRef.current = 0;
-    isReversingRef.current = false;
-    setIsReversing(false);
-    isYieldWaitingRef.current = false;
-    setIsYieldWaiting(false);
-    conflictingObsIdRef.current = null;
-    activeDiversionRef.current = null;
-    barricadeInspectionRef.current = null;
-    setIsBarricadeBlocked(false);
-    setBarricadeStatusLabel('');
   }, [path]);
+
+  const pauseTimeRef = useRef(0);
+
+  const targetVector = useMemo(() => {
+    if (path.length === 0) return new THREE.Vector3(0, 0, 0);
+    const pos = path[Math.min(currentIndex, path.length - 1)];
+    const [x, y, z] = getGridPosition(pos, gridSize, 0.22, isMapView);
+    return new THREE.Vector3(x, y, z);
+  }, [path, currentIndex, gridSize, isMapView]);
 
   useFrame((_state, delta) => {
     if (!ref.current) return;
-    const safeDelta = Math.min(0.04, delta);
     const currentPos = ref.current.position;
     robotPosRef.current = currentPos.clone();
     robotRotRef.current = ref.current.rotation.y;
-
-    // Continuous 360° Real-Time Object Detection & Forward Corridor Tracking
-    const currentHeading = curve && totalLength > 0.01 
-      ? curve.getTangentAt(Math.min(1.0, Math.max(0.0, distanceTraveledRef.current / totalLength))).normalize()
-      : new THREE.Vector3(Math.sin(ref.current.rotation.y), 0, Math.cos(ref.current.rotation.y));
-
-    const actualStatic = staticObstacles.filter(
-      so => !userBlockers.some(ub => ub.x === so.x && ub.y === so.y)
-    );
-
-    const perceptionResult = trackEnvironmentObjects(
-      currentPos,
-      currentHeading,
-      actualSpeedRef.current,
-      curve,
-      totalLength,
-      distanceTraveledRef.current,
-      dynamicObstaclesRef.current || [],
-      actualStatic,
-      userBlockers,
-      mapData || null,
-      getGridPosition,
-      isPointOnDrivableRoad,
-      gridSize,
-      isMapView,
-      16.0
-    );
-
-    const now = performance.now();
-    if (now - lastPerceptionEmitRef.current > 120) {
-      lastPerceptionEmitRef.current = now;
-      if (onPerceptionUpdate) {
-        onPerceptionUpdate(perceptionResult);
-      }
-    }
-
+    
     if (pauseTimeRef.current > 0) {
       pauseTimeRef.current -= delta;
       if (isMovingRef.current) { isMovingRef.current = false; setIsMoving(false); }
-
-      // Keep continuous blue patrol line visible during checkpoint pause (strictly on drivable road surface)
-      if (drivableRouteRef && curve) {
-        const s = distanceTraveledRef.current;
-        const ASSIGNED_LANE_OFFSET = 0.35;
-        const bluePts: number[] = [];
-        const sampleStep = 0.20;
-        for (let testS = s; testS <= totalLength; testS += sampleStep) {
-          const u = testS / totalLength;
-          const basePt = curve.getPointAt(u);
-          const tangent = curve.getTangentAt(u).normalize();
-          const normal = new THREE.Vector3(tangent.z, 0, -tangent.x);
-
-          let testPt = basePt.clone().add(normal.clone().multiplyScalar(ASSIGNED_LANE_OFFSET));
-          if (!isPointOnDrivableRoad(testPt.x, testPt.z, mapData, 0.18)) {
-            for (let off = ASSIGNED_LANE_OFFSET * 0.75; Math.abs(off) > 0.04; off *= 0.6) {
-              const alt = basePt.clone().add(normal.clone().multiplyScalar(off));
-              if (isPointOnDrivableRoad(alt.x, alt.z, mapData, 0.18)) {
-                testPt = alt;
-                break;
-              }
-            }
-            if (!isPointOnDrivableRoad(testPt.x, testPt.z, mapData, 0.15)) {
-              testPt = basePt.clone();
-            }
-          }
-          bluePts.push(testPt.x, 0.18, testPt.z);
-        }
-        if (upcomingLoopPoints3D && upcomingLoopPoints3D.length > 0) {
-          for (let i = 0; i < upcomingLoopPoints3D.length; i++) {
-            const pt3d = upcomingLoopPoints3D[i];
-            if (isPointOnDrivableRoad(pt3d.x, pt3d.z, mapData, 0.18)) {
-              bluePts.push(pt3d.x, 0.18, pt3d.z);
-            }
-          }
-        }
-        if (bluePts.length >= 6) {
-          drivableRouteRef.current = bluePts;
-        }
-      }
-      return;
+      // Don't return early here, we still want to check for obstacles behind us
     }
+    
+    const dist = currentPos.distanceTo(targetVector);
 
-    if (!curve || totalLength <= 0.01) {
-      if (path.length > 0) {
-        const [sx, sy, sz] = getGridPosition(path[0], gridSize, 0.22, isMapView);
-        currentPos.lerp(new THREE.Vector3(sx, sy, sz), 0.1);
-      }
-      if (drivableRouteRef) {
-        const flatRoute: number[] = [currentPos.x, 0.18, currentPos.z];
-        const flatColors: number[] = [0.22, 0.74, 0.97];
-        if (upcomingLoopPoints3D && upcomingLoopPoints3D.length > 0) {
-          for (let i = 0; i < upcomingLoopPoints3D.length; i++) {
-            flatRoute.push(upcomingLoopPoints3D[i].x, 0.18, upcomingLoopPoints3D[i].z);
-            flatColors.push(0.22, 0.74, 0.97);
-          }
-        }
-        if (flatRoute.length >= 6) {
-          drivableRouteRef.current = flatRoute;
-          if (drivableRouteColorsRef) {
-            drivableRouteColorsRef.current = flatColors;
-          }
-        }
-      }
-      return;
-    }
-
-    let hasBarricadeAhead = false;
+    if (pauseTimeRef.current > 0) return; // Wait if still paused
 
     if (isPlaying) {
-      const s = distanceTraveledRef.current;
-      const uCurrent = Math.min(1.0, Math.max(0.0, s / totalLength));
-
-      // Current nominal curve position & tangent
-      const nominalPos = curve.getPointAt(uCurrent);
-      const nominalTangent = curve.getTangentAt(uCurrent).normalize();
-
-      const cruiseSpeed = speed;
-      const ASSIGNED_LANE_OFFSET = 0.35; // Center of robot's assigned driving lane (right side of road)
-
-      // Analytical raised-cosine function to compute exact lateral offset relative to assigned lane (+0.35m)
-      // When no diversion is needed: returns ASSIGNED_LANE_OFFSET (+0.35m)
-      // When diverting: smooth raised-cosine arch out to targetPassingOffset, passes obstacle, and merges seamlessly back to ASSIGNED_LANE_OFFSET (+0.35m)
-      const getDrivableOffsetAt = (evalS: number): number => {
-        if (!activeDiversionRef.current) {
-          return ASSIGNED_LANE_OFFSET;
-        }
-
-        const div = activeDiversionRef.current;
-        const sStart = div.sStart;
-        const sObs = div.sObstacle;
-        const sEnd = div.diversionEndS;
-        const A = div.peakAmplitude;
-
-        let diversionDelta = 0;
-        if (evalS <= sStart) {
-          diversionDelta = 0;
-        } else if (evalS <= sObs) {
-          const span = Math.max(0.01, sObs - sStart);
-          const p = (evalS - sStart) / span;
-          diversionDelta = A * Math.sin((Math.PI / 2) * p) ** 2;
-        } else if (evalS < sEnd) {
-          const span = Math.max(0.01, sEnd - sObs);
-          const q = (evalS - sObs) / span;
-          diversionDelta = A * Math.cos((Math.PI / 2) * q) ** 2;
-        } else {
-          diversionDelta = 0;
-        }
-
-        // Smooth dampening near destination endpoint (< 2.0m from end)
-        const distFromEnd = totalLength - evalS;
-        if (distFromEnd < 2.0) {
-          diversionDelta *= Math.max(0.0, distFromEnd / 2.0);
-        }
-
-        // Offset is assigned lane center PLUS the smooth diversion delta
-        const finalOffset = ASSIGNED_LANE_OFFSET + diversionDelta;
-
-        // Strictly clamp within asphalt road boundaries (±1.15m)
-        return Math.max(-1.15, Math.min(1.15, finalOffset));
-      };
-
-      // ── Step 1: Scan All Obstacles (Dynamic & Static) ──
-      interface ScannedObs {
-        id: string;
-        isDynamic: boolean;
-        type: 'car' | 'person' | 'static' | 'barricade';
-        pos3D: THREE.Vector3;
-        radius: number; // Hull collision radius
-        vel3D: THREE.Vector3;
-        heading: THREE.Vector3;
-        distToRobot: number;
-        sObstacle: number;
-        longitudinalDelta: number; // sObstacle - s
-        lateralDist: number;
-        sideDot: number;
-        isMoving: boolean;
-        speed: number;
-        relForwardVel: number;
-        relLateralVel: number;
-        isCrossingTraffic: boolean;
-        minCpaDist: number;
-        timeAtCpa: number;
-      }
-
-      const scannedObstacles: ScannedObs[] = [];
-      let closestObsDist = 999;
-
-      // A. Dynamic Obstacles (Vehicles and Pedestrians)
-      if (dynamicObstaclesRef && dynamicObstaclesRef.current && dynamicObstaclesRef.current.length > 0) {
+      // --- Sensor Logic: Check for dynamic obstacles ahead ---
+      if (dynamicObstaclesRef && dynamicObstaclesRef.current.length > 0) {
+        const upcomingPath = path.slice(currentIndex, currentIndex + 4);
         for (const obs of dynamicObstaclesRef.current) {
-          const obsPos3D = obs.pos3D || (() => {
-            const [ox, , oz] = getGridPosition(obs.pos, gridSize, 0.05, isMapView);
-            return new THREE.Vector3(ox, currentPos.y, oz);
-          })();
-          const distToRobot = currentPos.distanceTo(obsPos3D);
-
-          if (distToRobot < 15.0) {
-            if (distToRobot < closestObsDist) closestObsDist = distToRobot;
-
-            const obsVel = obs.velocity || new THREE.Vector3(0, 0, 0);
-            const obsSpeed = obsVel.length();
-            const isMoving = obsSpeed > 0.08 || (obs.type === 'person' && obs.isMoving);
-            const obsRadius = obs.type === 'car' ? 0.45 : 0.32;
-
-            // Predictive trajectory and CPA projection across horizon (t = 0.15s to 4.5s)
-            // Projects robot's actual position along active lane + diversion offset
-            let minCpaDist = 999;
-            let timeAtCpa = 1.0;
-            let sAtCpa = s + 1.0;
-            for (let tFuture = 0.15; tFuture <= 4.5; tFuture += 0.15) {
-              const futureObsPos = obsPos3D.clone().add(obsVel.clone().multiplyScalar(tFuture));
-              const projectedS = Math.min(totalLength, s + cruiseSpeed * tFuture);
-              const uProj = Math.min(1.0, Math.max(0.0, projectedS / totalLength));
-              const projBase = curve.getPointAt(uProj);
-              const projTangent = curve.getTangentAt(uProj).normalize();
-              const projNormal = new THREE.Vector3(projTangent.z, 0, -projTangent.x);
-              const projOffset = getDrivableOffsetAt(projectedS);
-              const projectedRobotPos = projBase.add(projNormal.multiplyScalar(projOffset));
-              const cpaDist = projectedRobotPos.distanceTo(futureObsPos);
-              if (cpaDist < minCpaDist) {
-                minCpaDist = cpaDist;
-                timeAtCpa = tFuture;
-                sAtCpa = projectedS;
-              }
-            }
-
-            // Estimate projection onto spline
-            const lookStart = Math.max(0, s - 1.5);
-            const lookEnd = Math.min(totalLength, s + 16.0);
-            let bestDistSq = 9999;
-            let sObstacle = sAtCpa;
-            let curvePtAtObs = nominalPos;
-            let tangentAtObs = nominalTangent;
-
-            for (let testS = lookStart; testS <= lookEnd; testS += 0.25) {
-              const testU = testS / totalLength;
-              const testPt = curve.getPointAt(testU);
-              const dSq = testPt.distanceToSquared(obsPos3D);
-              if (dSq < bestDistSq) {
-                bestDistSq = dSq;
-                sObstacle = testS;
-                curvePtAtObs = testPt;
-                tangentAtObs = curve.getTangentAt(testU);
-              }
-            }
-
-            const lateralDist = Math.sqrt(bestDistSq);
-            const normAtObs = new THREE.Vector3(tangentAtObs.z, 0, -tangentAtObs.x).normalize();
-            const toObs = new THREE.Vector3().subVectors(obsPos3D, curvePtAtObs);
-            const sideDot = toObs.dot(normAtObs);
-            const longitudinalDelta = sObstacle - s;
-
-            const relForwardVel = obsVel.dot(tangentAtObs);
-            const relLateralVel = obsVel.dot(normAtObs);
-            const isCrossingTraffic = Math.abs(relLateralVel) > 0.10 && minCpaDist < 2.4 && timeAtCpa <= 4.0;
-            const obsHeading = obsSpeed > 0.05 ? obsVel.clone().normalize() : tangentAtObs.clone().normalize();
-
-            scannedObstacles.push({
-              id: obs.id,
-              isDynamic: true,
-              type: obs.type,
-              pos3D: obsPos3D,
-              radius: obsRadius,
-              vel3D: obsVel.clone(),
-              heading: obsHeading,
-              distToRobot,
-              sObstacle,
-              longitudinalDelta,
-              lateralDist,
-              sideDot,
-              isMoving,
-              speed: obsSpeed,
-              relForwardVel,
-              relLateralVel,
-              isCrossingTraffic,
-              minCpaDist,
-              timeAtCpa,
-            });
-          }
-        }
-      }
-
-      // B. Static Obstacles (Blockers, Barriers, and Map Obstacles)
-      if (staticObstacles && staticObstacles.length > 0) {
-        for (let idx = 0; idx < staticObstacles.length; idx++) {
-          const blocker = staticObstacles[idx];
-          const [bx, , bz] = getGridPosition(blocker, gridSize, 0.05, isMapView);
-          const bPos = new THREE.Vector3(bx, currentPos.y, bz);
-          const distToRobot = currentPos.distanceTo(bPos);
-
-          if (distToRobot < 15.0) {
-            if (distToRobot < closestObsDist) closestObsDist = distToRobot;
-
-            let bestDistSq = 9999;
-            let sObstacle = s + 1.0;
-            let curvePtAtObs = nominalPos;
-            let tangentAtObs = nominalTangent;
-
-            const lookStart = Math.max(0, s - 1.5);
-            const lookEnd = Math.min(totalLength, s + 16.0);
-            for (let testS = lookStart; testS <= lookEnd; testS += 0.25) {
-              const testU = testS / totalLength;
-              const testPt = curve.getPointAt(testU);
-              const dSq = testPt.distanceToSquared(bPos);
-              if (dSq < bestDistSq) {
-                bestDistSq = dSq;
-                sObstacle = testS;
-                curvePtAtObs = testPt;
-                tangentAtObs = curve.getTangentAt(testU);
-              }
-            }
-
-            const lateralDist = Math.sqrt(bestDistSq);
-            const normAtObs = new THREE.Vector3(tangentAtObs.z, 0, -tangentAtObs.x).normalize();
-            const toObs = new THREE.Vector3().subVectors(bPos, curvePtAtObs);
-            const sideDot = toObs.dot(normAtObs);
-            const longitudinalDelta = sObstacle - s;
-            const obsHeading = tangentAtObs.clone().normalize();
-            const isUserBarricade = userBlockers.some(b => b.x === blocker.x && b.y === blocker.y);
-
-            scannedObstacles.push({
-              id: `${isUserBarricade ? 'barricade' : 'static'}-${blocker.x}-${blocker.y}-${idx}`,
-              isDynamic: false,
-              type: isUserBarricade ? 'barricade' : 'static',
-              pos3D: bPos,
-              radius: isUserBarricade ? 0.55 : 0.45, // Physical static obstacle radius
-              vel3D: new THREE.Vector3(0, 0, 0),
-              heading: obsHeading,
-              distToRobot,
-              sObstacle,
-              longitudinalDelta,
-              lateralDist,
-              sideDot,
-              isMoving: false,
-              speed: 0,
-              relForwardVel: 0,
-              relLateralVel: 0,
-              isCrossingTraffic: false,
-              minCpaDist: lateralDist,
-              timeAtCpa: 0,
-            });
-          }
-        }
-      }
-
-      // ── Step 2: Active Free Space Assessment & Pre-Turn Safe Path Calculation ──
-      // ASSIGNED_LANE_OFFSET is defined above (+0.35m)
-      const now = Date.now();
-      const reverseCooldownElapsed = now - lastReverseEndTimeRef.current > 3500;
-
-      // Safe real-world barricade detection horizon: 8.5m ahead in the road corridor
-      // Beyond 8.5m, the robot approaches naturally at normal cruise speed
-      const BARRICADE_DETECT_HORIZON = 8.5;
-
-      // Detect static road barricades blocking the robot's driving corridor ahead (up to 8.5m)
-      const staticBarricadesAhead = scannedObstacles.filter(
-        o => o.type === 'barricade' && o.longitudinalDelta >= 0.20 && o.longitudinalDelta <= BARRICADE_DETECT_HORIZON && o.lateralDist <= 1.35
-      );
-      staticBarricadesAhead.sort((a, b) => a.longitudinalDelta - b.longitudinalDelta);
-      const primaryBarricade = staticBarricadesAhead[0] || null;
-      hasBarricadeAhead = primaryBarricade !== null;
-
-      // Detect dynamic or static obstacles directly in front of the robot in its assigned lane (ahead up to 14.0m)
-      // Assigned lane is centered around +0.35m; an obstacle directly blocks it if |o.sideDot - ASSIGNED_LANE_OFFSET| <= 0.85m
-      const obstructingAhead = scannedObstacles.filter(
-        o => o.type !== 'barricade' && o.longitudinalDelta >= 0.1 && o.longitudinalDelta <= 14.0 && Math.abs(o.sideDot - ASSIGNED_LANE_OFFSET) <= 0.85
-      );
-      obstructingAhead.sort((a, b) => a.longitudinalDelta - b.longitudinalDelta);
-      const primaryDirectObstacle = obstructingAhead[0] || null;
-
-      // Wider detection for general awareness and safe distance tracking (dynamic and static obstacles)
-      const corridorObstacles = scannedObstacles.filter(
-        o => o.type !== 'barricade' && o.longitudinalDelta >= 0.2 && o.longitudinalDelta <= 14.0 && (o.lateralDist < 1.45 || o.minCpaDist < 2.0)
-      );
-      corridorObstacles.sort((a, b) => a.longitudinalDelta - b.longitudinalDelta);
-      const primaryAheadObs = primaryBarricade || primaryDirectObstacle || corridorObstacles[0] || null;
-
-      let shouldCourteousStandOff = false;
-      let currentStandoffLabel = '';
-      let targetSpeed = cruiseSpeed;
-      let isOvertakeFeasible = false;
-
-      interface CandidateDiversionPlan {
-        sStart: number;
-        sObstacle: number;
-        diversionEndS: number;
-        peakAmplitude: number;
-        targetPassingOffset: number;
-        requiredSeparation: number;
-      }
-
-      // "When an obstacle is detected ahead, start planning and showing the yellow diversion route well before the robot reaches it."
-      // "The robot must begin its gradual turn early, with enough distance to safely move around the obstacle—never make a last-second dodge."
-      // "The yellow line must form a complete, smooth route: leave the blue route early, curve safely around the front of the obstacle with wide clearance, and gently merge back onto the blue route after passing."
-      const calculateSafeDiversionPlan = (
-        obs: ScannedObs
-      ): CandidateDiversionPlan | null => {
-        // Road barricades block the entire roadway: never attempt to drive around or overtake a barricade
-        if (obs.type === 'barricade') {
-          return null;
-        }
-
-        const obsRadius = obs.type === 'car' ? 0.45 : obs.type === 'person' ? 0.32 : 0.45;
-        const robotRadius = 0.40;
-        const wideAirBuffer = 0.30; // Physical clearance between hulls (>30cm pure open air)
-        const requiredSeparation = obsRadius + robotRadius + wideAirBuffer; // ~1.02m to 1.15m center-to-center
-
-        // Candidate passing lane offsets on BOTH sides of the road
-        // Normal lane is ASSIGNED_LANE_OFFSET (+0.35m on right side of road)
-        // Fine-resolution passing offsets so a safe path can always be found on campus asphalt roads
-        const leftCandidateOffsets = [-0.50, -0.65, -0.80, -0.95, -1.05];
-        const rightCandidateOffsets = [0.60, 0.75, 0.90, 1.05];
-
-        // If obstacle is to the right or center (sideDot >= 0.05), prioritize left corridor (standard traffic rule), then right.
-        // If obstacle is already to the left (sideDot < 0.05), prioritize right corridor, then left.
-        const candidateOffsets = obs.sideDot >= 0.05
-          ? [...leftCandidateOffsets, ...rightCandidateOffsets]
-          : [...rightCandidateOffsets, ...leftCandidateOffsets];
-
-        const sStart = Math.max(0, s);
-        const sObs = Math.max(sStart + 0.8, obs.sObstacle);
-        const leadInSpan = Math.max(0.8, sObs - sStart);
-        const trailSpan = Math.max(3.5, Math.min(6.5, leadInSpan * 1.1));
-        const sEnd = Math.min(totalLength, sObs + trailSpan);
-
-        for (const passingOffset of candidateOffsets) {
-          // Check lateral separation from target obstacle at apex
-          const lateralSepAtApex = Math.abs(passingOffset - obs.sideDot);
-          if (lateralSepAtApex < requiredSeparation) {
-            continue; // Insufficient clearance from obstacle
-          }
-
-          const peakDelta = passingOffset - ASSIGNED_LANE_OFFSET;
-          let isPlanSafe = true;
-
-          // Simulate and verify complete path from sStart to sEnd before turning
-          for (let testS = sStart; testS <= sEnd; testS += 0.15) {
-            const u = Math.min(1.0, Math.max(0.0, testS / totalLength));
-            const basePt = curve.getPointAt(u);
-            const tangent = curve.getTangentAt(u).normalize();
-            const normal = new THREE.Vector3(tangent.z, 0, -tangent.x);
-
-            let diversionDelta = 0;
-            if (testS <= sStart) {
-              diversionDelta = 0;
-            } else if (testS <= sObs) {
-              const span = Math.max(0.01, sObs - sStart);
-              const p = (testS - sStart) / span;
-              diversionDelta = peakDelta * Math.sin((Math.PI / 2) * p) ** 2;
-            } else {
-              const span = Math.max(0.01, sEnd - sObs);
-              const q = (testS - sObs) / span;
-              diversionDelta = peakDelta * Math.cos((Math.PI / 2) * q) ** 2;
-            }
-
-            const totalOffset = ASSIGNED_LANE_OFFSET + diversionDelta;
-            const candPt = basePt.clone().add(normal.clone().multiplyScalar(totalOffset));
-
-            // 1. Must be strictly on drivable asphalt road surface with safety margin 0.08m (never grass, curb, sidewalk, building)
-            if (!isPointOnDrivableRoad(candPt.x, candPt.z, mapData, 0.08)) {
-              isPlanSafe = false;
-              break;
-            }
-
-            // 2. Wide clearance around target obstacle near apex
-            if (Math.abs(testS - sObs) < 0.8) {
-              const distToTargetObs = candPt.distanceTo(obs.pos3D);
-              if (distToTargetObs < requiredSeparation) {
-                isPlanSafe = false;
-                break;
-              }
-            }
-
-            // 3. Collision-free against all other obstacles, predicting their paths and never forcing anyone to react
-            const tReach = Math.max(0, (testS - sStart) / Math.max(0.6, actualSpeedRef.current || 1.2));
-            for (const other of scannedObstacles) {
-              if (other.id === obs.id) continue;
-              const otherPredictedPos = other.isDynamic
-                ? other.pos3D.clone().add(other.vel3D.clone().multiplyScalar(tReach))
-                : other.pos3D;
-              const otherRadius = other.radius;
-              const extraBuffer = other.type === 'person' ? 0.40 : (other.type === 'car' ? 0.35 : 0.30);
-              const distToOther = candPt.distanceTo(otherPredictedPos);
-              if (distToOther < robotRadius + otherRadius + extraBuffer) {
-                isPlanSafe = false;
-                break;
-              }
-
-              // Oncoming vehicle conflict check in passing corridor (never cut off oncoming traffic)
-              if (other.relForwardVel < -0.10 &&
-                  other.longitudinalDelta > -1.0 && other.longitudinalDelta < 14.0 &&
-                  Math.abs(other.sideDot - passingOffset) < 0.85) {
-                isPlanSafe = false;
-                break;
-              }
-
-              // Pedestrian in or near passing corridor
-              if (other.type === 'person' &&
-                  other.longitudinalDelta > -1.0 && other.longitudinalDelta < (sEnd - sStart) + 2.0 &&
-                  Math.abs(other.sideDot - passingOffset) < 0.80) {
-                isPlanSafe = false;
-                break;
-              }
-            }
-
-            if (!isPlanSafe) break;
-          }
-
-          if (isPlanSafe) {
-            return {
-              sStart,
-              sObstacle: sObs,
-              diversionEndS: sEnd,
-              peakAmplitude: peakDelta,
-              targetPassingOffset: passingOffset,
-              requiredSeparation,
-            };
-          }
-        }
-
-        return null;
-      };
-
-      if (primaryBarricade) {
-        const barricade = primaryBarricade;
-
-        // Static road barricades block the entire roadway: never allow driving around or overtaking
-        shouldCourteousStandOff = true;
-        isOvertakeFeasible = false;
-        setIsOvertaking(false);
-        setIsBarricadeBlocked(true);
-
-        // Immediate rerouting trigger: as soon as barricade is detected ahead (<= 7.5m),
-        // trigger onBarricadeBlocked immediately so an alternate road route is calculated without waiting or freezing
-        if (barricade.longitudinalDelta <= 7.5 && onBarricadeBlocked) {
-          if (!barricadeInspectionRef.current || barricadeInspectionRef.current.blockerId !== barricade.id) {
-            barricadeInspectionRef.current = {
-              blockerId: barricade.id,
-              inspectionTimer: 0,
-              stage: 'rerouting',
-              loggedApproach: true,
-              loggedViewing: true,
-              loggedReroute: true,
-            };
-            if (addExplanation) {
-              addExplanation(`🚧 Road barricade detected blocking route (${barricade.longitudinalDelta.toFixed(1)}m ahead). Calculating and following safe alternate road route.`);
-            }
-            onBarricadeBlocked(currentPos, barricade.pos3D);
-          }
-        }
-
-        // Smoothly approach without coming to a dead stop while transitioning to the alternate route
-        // Maintain continuous forward momentum (targetSpeed >= 0.55 m/s)
-        const approachSpeed = Math.max(0.55, Math.min(targetSpeed, cruiseSpeed * 0.45));
-        targetSpeed = approachSpeed;
-        currentStandoffLabel = 'ROAD BARRICADE DETECTED • REROUTING VIA OPEN ROADS';
-        setBarricadeStatusLabel('ROAD BARRICADE DETECTED • REROUTING VIA OPEN ROADS');
-      } else {
-        // No physical barricade is blocking the road ahead: immediately reset barricade states
-        if (isBarricadeBlocked || barricadeInspectionRef.current !== null) {
-          setIsBarricadeBlocked(false);
-          setBarricadeStatusLabel('');
-          barricadeInspectionRef.current = null;
-        }
-
-        if (primaryDirectObstacle) {
-          const obs = primaryDirectObstacle;
-
-          // Check if obstacle is genuinely blocking the lane (stationary or slow)
-          const isGenuinelyBlocked =
-            obs.type === 'static' ||
-            !obs.isMoving ||
-            obs.speed < 0.35 ||
-            (obs.relForwardVel < 0.20 && obs.longitudinalDelta < 13.0);
-
-          if (!isGenuinelyBlocked) {
-            // Normal vehicle or pedestrian traveling in the driving lane ahead:
-            // Maintain safe following distance and pace smoothly behind them
-            setIsFollowingObstacle(true);
-            setIsOvertaking(false);
-            shouldCourteousStandOff = false;
-
-            const leadSpeed = Math.max(0.2, obs.speed || (obs.relForwardVel + actualSpeedRef.current));
-            const desiredFollowGap = 3.6; // 3.6m safe following distance
-
-            if (obs.longitudinalDelta < desiredFollowGap) {
-              // Smoothly modulate speed to give lead space while keeping rolling momentum
-              const slowDownFactor = THREE.MathUtils.clamp(obs.longitudinalDelta / desiredFollowGap, 0.45, 0.85);
-              targetSpeed = Math.max(0.40, Math.min(targetSpeed, leadSpeed * slowDownFactor));
-              setFollowingDistanceLabel(`GIVING LEAD SPACE (${obs.longitudinalDelta.toFixed(1)}m) • PACING BEHIND`);
-            } else if (obs.longitudinalDelta < desiredFollowGap + 2.5) {
-              // In safe following envelope: pace smoothly behind the lead vehicle
-              const paceFactor = THREE.MathUtils.clamp((obs.longitudinalDelta - desiredFollowGap) / 2.0, 0.70, 1.0);
-              targetSpeed = Math.max(0.45, Math.min(targetSpeed, leadSpeed * paceFactor));
-              setFollowingDistanceLabel(`SAFE FOLLOWING DISTANCE (${obs.longitudinalDelta.toFixed(1)}m) • PACING`);
-            } else {
-              setFollowingDistanceLabel('');
-            }
-          } else {
-            // Blue route has a stopped or parked obstruction ahead
-            const isAlreadyDivertingForThisObs = activeDiversionRef.current && activeDiversionRef.current.obstacleId === obs.id;
-
-            if (isAlreadyDivertingForThisObs) {
-              isOvertakeFeasible = true;
-              setIsOvertaking(true);
-              setIsFollowingObstacle(false);
-              shouldCourteousStandOff = false;
-              targetSpeed = Math.min(cruiseSpeed * 0.50, 1.65);
-              setFollowingDistanceLabel('SLOW & SMOOTH OVERTAKE • WIDE CLEARANCE');
-            } else {
-              const safePlan = calculateSafeDiversionPlan(obs);
-
-              if (safePlan) {
-                // Safe gap exists on the road: smoothly execute orange diversion route
-                activeDiversionRef.current = {
-                  obstacleId: obs.id,
-                  sStart: safePlan.sStart,
-                  sObstacle: safePlan.sObstacle,
-                  peakAmplitude: safePlan.peakAmplitude,
-                  clearanceMeters: safePlan.requiredSeparation,
-                  diversionEndS: safePlan.diversionEndS,
-                  targetPassingOffset: safePlan.targetPassingOffset,
-                  createdAt: Date.now(),
-                };
-                if (isReversingRef.current) {
-                  isReversingRef.current = false;
-                  setIsReversing(false);
-                }
-                isOvertakeFeasible = true;
-                setIsOvertaking(true);
-                setIsFollowingObstacle(false);
-                shouldCourteousStandOff = false;
-                targetSpeed = Math.min(cruiseSpeed * 0.50, 1.65);
-                setFollowingDistanceLabel('SLOW & SMOOTH OVERTAKE • WIDE CLEARANCE');
-                if (addExplanation) {
-                  addExplanation(`⚡ Road blocked ahead (${obs.longitudinalDelta.toFixed(1)}m). Executing slow, smooth orange diversion with wide clearance.`);
-                }
-              } else {
-                // Non-barricade obstacle: never claim road barricade
-                if (obs.type === 'static' || !obs.isMoving || obs.speed < 0.20) {
-                  if (!isReversingRef.current && reverseCooldownElapsed && obs.longitudinalDelta < 2.0) {
-                    isReversingRef.current = true;
-                    setIsReversing(true);
-                    conflictingObsIdRef.current = obs.id;
-                    reverseTargetSRef.current = Math.max(0.2, s - 1.6);
-                    if (addExplanation) {
-                      addExplanation('🛡️ Creating safe turning clearance: Gently backing up to initiate smooth diversion.');
-                    }
-                  } else {
-                    targetSpeed = Math.max(0.40, Math.min(targetSpeed, cruiseSpeed * 0.35));
-                    currentStandoffLabel = 'OBSTACLE AHEAD • SAFE CLEARANCE MAINTAINED';
-                  }
-                } else {
-                  // Lead vehicle/person moving: pace smoothly behind them, maintaining safe buffer
-                  shouldCourteousStandOff = false;
-                  setIsFollowingObstacle(true);
-                  const leadSpeed = Math.max(0.35, obs.speed || (obs.relForwardVel + actualSpeedRef.current));
-                  targetSpeed = Math.max(0.40, Math.min(targetSpeed, leadSpeed * 0.85));
-                  currentStandoffLabel = 'SAFE FOLLOWING DISTANCE • PACING BEHIND';
-                }
-              }
+          const obsTarget = obs.path[Math.min(obs.currentIndex, obs.path.length - 1)];
+          for (const p of upcomingPath) {
+            if ((p.x === obs.pos.x && p.y === obs.pos.y) || (p.x === obsTarget.x && p.y === obsTarget.y)) {
+              onObstacleDetected(obs.pos);
+              return; // Pause movement this frame
             }
           }
         }
       }
 
-      // Update or retire active diversion:
-      // "Keep this yellow line visible for the entire diversion. Remove it only after the robot has fully rejoined the blue route."
-      if (activeDiversionRef.current) {
-        const div = activeDiversionRef.current;
-        const hasPassedObstacle = s >= div.sObstacle + 0.3;
-        const hasRejoinedBlue = s >= div.diversionEndS - 0.25;
-
-        if (hasPassedObstacle && hasRejoinedBlue) {
-          activeDiversionRef.current = null;
-          if (diversionRouteRef) {
-            diversionRouteRef.current = [];
-          }
-        }
-      }
-
-      // Check if robot is actively executing a safe yellow diversion
-      const isOvertakingActive = isOvertakeFeasible || activeDiversionRef.current !== null;
-
-      // ── Step 3: Motion & Emergency Fallback State Machine ──
-      // Step 3: Predictive Collision Prevention & Forward Corridor Envelope
-      const robotRadius = 0.40;
-      const robotHeading = new THREE.Vector3(
-        Math.sin(ref.current.rotation.y),
-        0,
-        Math.cos(ref.current.rotation.y)
-      );
-      const robotLateral = new THREE.Vector3(
-        robotHeading.z,
-        0,
-        -robotHeading.x
-      );
-
-      let criticalDeadlockObs: ScannedObs | null = null;
-      let forwardCorridorSpeedCap = cruiseSpeed;
-
-      for (const obs of scannedObstacles) {
-        // Exclude the obstacle currently being diverted around so its forward position doesn't freeze the robot!
-        if (activeDiversionRef.current && activeDiversionRef.current.obstacleId === obs.id) {
-          continue;
-        }
-
-        const obsRadius = obs.radius;
-        const distCenter = currentPos.distanceTo(obs.pos3D);
-        const edgeDist = Math.max(0, distCenter - (robotRadius + obsRadius));
-
-        const toObs = new THREE.Vector3().subVectors(obs.pos3D, currentPos);
-        const fwdDist = toObs.dot(robotHeading);
-        const latDist = Math.abs(toObs.dot(robotLateral));
-
-        // A. Predictive CPA Collision Warning Envelope:
-        // Continuously predict possible collisions before they occur and choose a safe response
-        if (obs.timeAtCpa > 0.05 && obs.timeAtCpa <= 3.8 && obs.minCpaDist < (robotRadius + obsRadius + 0.65)) {
-          const timeFactor = Math.min(1.0, obs.timeAtCpa / 3.8);
-          const cpaSpeedCap = Math.max(0, (obs.minCpaDist - (robotRadius + obsRadius + 0.20)) * 1.6 * timeFactor);
-          if (cpaSpeedCap < forwardCorridorSpeedCap) {
-            forwardCorridorSpeedCap = cpaSpeedCap;
-          }
-        }
-
-        // B. Forward Corridor Safety Envelope:
-        // Scan forward corridor (fwdDist in [0.05, 5.5m], latDist < 1.15m)
-        if (fwdDist > 0.05 && fwdDist < 5.5 && latDist < 1.15) {
-          // If following a lead moving obstacle, pacing logic controls speed smoothly; don't clamp to 0 unless critically close
-          const minStopThreshold = (obs.isMoving && obs.speed > 0.20) ? 0.38 : 0.60;
-          if (edgeDist <= minStopThreshold) {
-            forwardCorridorSpeedCap = (obs.isMoving && obs.speed > 0.20) ? Math.max(0.35, obs.speed * 0.70) : 0;
-          } else if (edgeDist < 2.0) {
-            const speedCap = THREE.MathUtils.clamp((edgeDist - minStopThreshold) * 1.4, 0.35, cruiseSpeed);
-            if (speedCap < forwardCorridorSpeedCap) {
-              forwardCorridorSpeedCap = speedCap;
-            }
-          }
-        }
-
-        // C. Emergency proximity trigger: if clearance is critically breached in forward corridor for a stopped obstacle
-        if (!obs.isMoving && fwdDist > -0.15 && fwdDist < 2.0 && latDist < 0.90 && edgeDist < 0.60) {
-          criticalDeadlockObs = obs;
-        }
-      }
-
-      if (!isReversingRef.current && !isYieldWaitingRef.current && criticalDeadlockObs && reverseCooldownElapsed) {
-        isReversingRef.current = true;
-        setIsReversing(true);
-        conflictingObsIdRef.current = criticalDeadlockObs.id;
-        reverseTargetSRef.current = Math.max(0.2, s - 1.8);
-        if (addExplanation) {
-          addExplanation('🛡️ Proximity buffer: Gently reversing to establish safe turning clearance.');
-        }
-      }
-
-      if (isReversingRef.current) {
-        targetSpeed = -0.55;
-        shouldCourteousStandOff = true;
-        if (!currentStandoffLabel) {
-          currentStandoffLabel = 'REVERSING • CREATING SAFE TURNING ROOM';
-        }
-
-        // While reversing, continuously check if enough turning room has been created to immediately execute diversion:
-        if (primaryDirectObstacle) {
-          const recheckPlan = calculateSafeDiversionPlan(primaryDirectObstacle);
-          if (recheckPlan && primaryDirectObstacle.longitudinalDelta >= 1.6) {
-            // Turning room created! Immediately transition into the safe yellow diversion:
-            isReversingRef.current = false;
-            setIsReversing(false);
-            activeDiversionRef.current = {
-              obstacleId: primaryDirectObstacle.id,
-              sStart: recheckPlan.sStart,
-              sObstacle: recheckPlan.sObstacle,
-              peakAmplitude: recheckPlan.peakAmplitude,
-              clearanceMeters: recheckPlan.requiredSeparation,
-              diversionEndS: recheckPlan.diversionEndS,
-              targetPassingOffset: recheckPlan.targetPassingOffset,
-              createdAt: Date.now(),
-            };
-            isOvertakeFeasible = true;
-            shouldCourteousStandOff = false;
-            targetSpeed = Math.min(cruiseSpeed * 0.50, 1.65);
-            if (addExplanation) {
-              addExplanation('⚡ Turning clearance achieved: Executing safe orange diversion bypass.');
-            }
-          }
-        }
-
-        const backedUpFarEnough = s <= reverseTargetSRef.current + 0.05 || s <= 0.05;
-        if (backedUpFarEnough && isReversingRef.current) {
-          isReversingRef.current = false;
-          setIsReversing(false);
-          lastReverseEndTimeRef.current = Date.now();
-          // Immediately check if diversion can be started now:
-          if (primaryDirectObstacle) {
-            const finalPlan = calculateSafeDiversionPlan(primaryDirectObstacle);
-            if (finalPlan) {
-              activeDiversionRef.current = {
-                obstacleId: primaryDirectObstacle.id,
-                sStart: finalPlan.sStart,
-                sObstacle: finalPlan.sObstacle,
-                peakAmplitude: finalPlan.peakAmplitude,
-                clearanceMeters: finalPlan.requiredSeparation,
-                diversionEndS: finalPlan.diversionEndS,
-                targetPassingOffset: finalPlan.targetPassingOffset,
-                createdAt: Date.now(),
-              };
-              isOvertakeFeasible = true;
-              shouldCourteousStandOff = false;
-              targetSpeed = Math.min(cruiseSpeed * 0.50, 1.65);
-            } else {
-              targetSpeed = Math.max(0.45, Math.min(targetSpeed, cruiseSpeed * 0.40));
-            }
-          }
-        }
-      } else if (isYieldWaitingRef.current) {
-        targetSpeed = 0.40;
-        yieldWaitTimerRef.current += delta;
-        shouldCourteousStandOff = true;
-        currentStandoffLabel = 'YIELDING • PREPARING TO PROCEED';
-
-        if (yieldWaitTimerRef.current > 0.4) {
-          isYieldWaitingRef.current = false;
-          setIsYieldWaiting(false);
-          lastReverseEndTimeRef.current = Date.now();
-          conflictingObsIdRef.current = null;
-          targetSpeed = cruiseSpeed;
-        }
-      } else {
-        if (isOvertakingActive) {
-          // Slowly and smoothly overtake using a planned orange diversion route, maintaining wide clearance throughout
-          targetSpeed = Math.min(cruiseSpeed * 0.50, 1.65);
-          const logTime = Date.now();
-          if (logTime - lastOvertakeLogTime.current > 4000 && addExplanation) {
-            lastOvertakeLogTime.current = logTime;
-            addExplanation('⚡ Safe Diversion: Slowly and smoothly overtaking obstruction along orange route with wide clearance.');
-          }
-        } else if (!shouldCourteousStandOff) {
-          // Normal patrol along the blue route
-          const distToEnd = totalLength - s;
-          if (distToEnd < 2.0) {
-            targetSpeed = THREE.MathUtils.lerp(0.35, cruiseSpeed, Math.max(0.1, distToEnd / 2.0));
-          } else {
-            targetSpeed = cruiseSpeed;
-          }
-        }
-
-        // Apply strict forward corridor safety speed envelope for OTHER obstacles
-        if (!isReversingRef.current && forwardCorridorSpeedCap < targetSpeed) {
-          targetSpeed = forwardCorridorSpeedCap;
-          if (forwardCorridorSpeedCap <= 0.05) {
-            shouldCourteousStandOff = true;
-            if (!currentStandoffLabel) {
-              currentStandoffLabel = 'SAFETY CLEARANCE • BUFFER MAINTAINED';
-            }
-          }
-        }
-      }
-
-      // ── Physical Lateral & Orientation Control (Lookahead Steering) ──
-      // Evaluated before longitudinal dynamics so vehicle anticipates turns and dampens speed gently
-      const lookaheadDist = activeDiversionRef.current ? 1.25 : 0.85;
-      const lookaheadS = Math.min(totalLength, Math.max(0, distanceTraveledRef.current + lookaheadDist));
-      const lookaheadU = lookaheadS / totalLength;
-      const lookaheadBasePos = curve.getPointAt(lookaheadU);
-      const lookaheadTangent = curve.getTangentAt(lookaheadU).normalize();
-      const lookaheadNormal = new THREE.Vector3(lookaheadTangent.z, 0, -lookaheadTangent.x);
-
-      let lookaheadOffset = getDrivableOffsetAt(lookaheadS);
-      let lookaheadTarget = lookaheadBasePos.clone().add(
-        lookaheadNormal.clone().multiplyScalar(lookaheadOffset)
-      );
-      if (!isPointOnDrivableRoad(lookaheadTarget.x, lookaheadTarget.z, mapData, 0.18)) {
-        for (let scale = 0.85; scale >= 0.2; scale -= 0.15) {
-          const testPos = lookaheadBasePos.clone().add(
-            lookaheadNormal.clone().multiplyScalar(lookaheadOffset * scale)
-          );
-          if (isPointOnDrivableRoad(testPos.x, testPos.z, mapData, 0.18)) {
-            lookaheadTarget = testPos;
-            break;
-          }
-        }
-      }
-
-      const forwardVector = new THREE.Vector3().subVectors(lookaheadTarget, currentPos);
-      let yawDiff = 0;
-      if (forwardVector.lengthSq() > 0.001) {
-        const targetYaw = Math.atan2(forwardVector.x, forwardVector.z);
-        let diff = targetYaw - ref.current.rotation.y;
-        while (diff < -Math.PI) diff += Math.PI * 2;
-        while (diff > Math.PI) diff -= Math.PI * 2;
-        yawDiff = diff;
-        // Physically realistic, gradual steering (rate capped at 1.65 rad/s ~ 94 deg/s)
-        const maxTurnRate = 1.65;
-        const turnDelta = THREE.MathUtils.clamp(diff, -maxTurnRate * safeDelta, maxTurnRate * safeDelta);
-        ref.current.rotation.y += turnDelta;
-      }
-
-      // Smooth cornering speed dampening: when steering into sharp curves or diversions,
-      // gently reduce targetSpeed beforehand instead of abrupt deceleration
-      if (Math.abs(yawDiff) > 0.22 && targetSpeed > 0) {
-        const curveSeverity = Math.min(1.0, (Math.abs(yawDiff) - 0.22) / 0.80);
-        const cornerDamping = THREE.MathUtils.lerp(1.0, 0.45, curveSeverity);
-        targetSpeed *= cornerDamping;
-      }
-
-      // Maintain continuous forward turning velocity through curves and intersections (never freeze or stall at speed 0)
-      if (Math.abs(yawDiff) > 0.45) {
-        targetSpeed = Math.max(0.40, Math.min(targetSpeed, 0.70));
-      }
-
-      // ── Physical Longitudinal Dynamics (Gentle Acceleration & Controlled Braking) ──
-      // "It must never jump, teleport, snap to a new position, or suddenly change direction."
-      // "Every movement must be continuous and physically believable, using smooth steering, gradual turning, gentle acceleration, and controlled braking."
-      if (targetSpeed > actualSpeedRef.current) {
-        const maxAccel = 1.6; // m/s^2 gentle, realistic acceleration
-        actualSpeedRef.current = Math.min(targetSpeed, actualSpeedRef.current + maxAccel * safeDelta);
-      } else if (targetSpeed < actualSpeedRef.current) {
-        const maxBrake = 2.4; // m/s^2 controlled, smooth braking without jerky stops
-        actualSpeedRef.current = Math.max(targetSpeed, actualSpeedRef.current - maxBrake * safeDelta);
-      }
-
-      // ── Continuous Distance Integration ──
-      if (Math.abs(actualSpeedRef.current) > 0.01) {
-        if (!isMovingRef.current) { isMovingRef.current = true; setIsMoving(true); }
-        distanceTraveledRef.current = Math.max(0, Math.min(totalLength, distanceTraveledRef.current + actualSpeedRef.current * safeDelta));
-      } else {
+      if (dist < 0.05) {
         if (isMovingRef.current) { isMovingRef.current = false; setIsMoving(false); }
-      }
-
-      // ── Exact Road Surface Trajectory Tracking ──
-      const currentU = Math.min(1.0, Math.max(0.0, distanceTraveledRef.current / totalLength));
-      const baseSplinePos = curve.getPointAt(currentU);
-      const baseSplineTangent = curve.getTangentAt(currentU).normalize();
-      const baseSplineNormal = new THREE.Vector3(baseSplineTangent.z, 0, -baseSplineTangent.x);
-
-      let exactOffset = getDrivableOffsetAt(distanceTraveledRef.current);
-      let targetWithCurvedDiversion = baseSplinePos.clone().add(
-        baseSplineNormal.clone().multiplyScalar(exactOffset)
-      );
-
-      // Verify and guarantee robot chassis stays strictly on drivable road surface (margin = 0.20m from curbs/edges/buildings)
-      if (!isPointOnDrivableRoad(targetWithCurvedDiversion.x, targetWithCurvedDiversion.z, mapData, 0.20)) {
-        for (let scale = 0.85; scale >= 0.2; scale -= 0.15) {
-          const testPos = baseSplinePos.clone().add(
-            baseSplineNormal.clone().multiplyScalar(exactOffset * scale)
-          );
-          if (isPointOnDrivableRoad(testPos.x, testPos.z, mapData, 0.20)) {
-            targetWithCurvedDiversion = testPos;
-            exactOffset *= scale;
-            break;
+        if (currentIndex < path.length - 1) {
+          const curr = path[currentIndex];
+          const next = path[currentIndex + 1];
+          if (curr.x === next.x && curr.y === next.y) {
+             pauseTimeRef.current = 2.5; // Pause for 2.5 seconds
+          }
+          onReachNode(currentIndex + 1);
+        }
+        else if (currentIndex === path.length - 1) {
+          if (!hasCompletedRef.current) {
+            hasCompletedRef.current = true;
+            onMissionComplete();
           }
         }
-      }
-
-      smoothedLateralOffsetRef.current = exactOffset;
-
-      // ── Kinematic Position Continuity: Zero Snapping / Zero Teleportation ──
-      // Physical vehicle position displacement per frame is bounded by current vehicle velocity.
-      const stepDist = currentPos.distanceTo(targetWithCurvedDiversion);
-      const maxDisplacementPerFrame = (Math.abs(actualSpeedRef.current) + 0.25) * safeDelta + 0.015;
-      if (stepDist > maxDisplacementPerFrame) {
-        // Smoothly close any residual gap over consecutive frames at physical vehicle speed
-        const moveDir = new THREE.Vector3().subVectors(targetWithCurvedDiversion, currentPos).normalize();
-        currentPos.add(moveDir.multiplyScalar(maxDisplacementPerFrame));
       } else {
-        currentPos.copy(targetWithCurvedDiversion);
-      }
-      currentPos.y = 0.22;
-
-      // ── Soft Continuous Hull Repulsion Buffer (No Teleporting Repulsion) ──
-      for (const obs of scannedObstacles) {
-        const obsRadius = obs.radius || (obs.type === 'car' ? 0.45 : (obs.type === 'static' ? 0.50 : 0.32));
-        const minSafeDist = robotRadius + obsRadius + 0.35; // 35cm buffer outside physical radii (~1.25m center-to-center)
-        const distCenter = currentPos.distanceTo(obs.pos3D);
-        if (distCenter < minSafeDist && distCenter > 0.001) {
-          const pushDir = new THREE.Vector3().subVectors(currentPos, obs.pos3D).normalize();
-          const overlap = minSafeDist - distCenter;
-          const pushDist = Math.min(overlap, overlap * safeDelta * 3.0 + 0.015);
-          currentPos.add(pushDir.multiplyScalar(pushDist));
-        }
-      }
-
-      // --- Update Navigation Route Lines ---
-      // (1) Continuous Blue Route Line: Always displays the full normal patrol route ahead on the robot's assigned side of the road (+0.35m)
-      // Must NEVER go onto sidewalks, grass, buildings, or any non-drivable area
-      if (drivableRouteRef) {
-        const bluePts: number[] = [];
-        const sampleStep = 0.20;
-        for (let testS = s; testS <= totalLength; testS += sampleStep) {
-          const u = testS / totalLength;
-          const basePt = curve.getPointAt(u);
-          const tangent = curve.getTangentAt(u).normalize();
-          const normal = new THREE.Vector3(tangent.z, 0, -tangent.x);
-
-          let validOffset = ASSIGNED_LANE_OFFSET;
-          let testPt = basePt.clone().add(normal.clone().multiplyScalar(validOffset));
-
-          // Ensure marking NEVER goes onto sidewalks, grass, buildings, or any non-drivable area
-          if (!isPointOnDrivableRoad(testPt.x, testPt.z, mapData, 0.18)) {
-            let found = false;
-            for (let off = ASSIGNED_LANE_OFFSET * 0.75; Math.abs(off) > 0.04; off *= 0.6) {
-              const alt = basePt.clone().add(normal.clone().multiplyScalar(off));
-              if (isPointOnDrivableRoad(alt.x, alt.z, mapData, 0.18)) {
-                testPt = alt;
-                found = true;
-                break;
-              }
-            }
-            if (!found && isPointOnDrivableRoad(basePt.x, basePt.z, mapData, 0.15)) {
-              testPt = basePt.clone();
-            }
-          }
-          bluePts.push(testPt.x, 0.18, testPt.z);
-        }
-        if (upcomingLoopPoints3D && upcomingLoopPoints3D.length > 0) {
-          for (let i = 0; i < upcomingLoopPoints3D.length; i++) {
-            const pt3d = upcomingLoopPoints3D[i];
-            if (isPointOnDrivableRoad(pt3d.x, pt3d.z, mapData, 0.18)) {
-              if (i === 0 && bluePts.length >= 3) {
-                const lastX = bluePts[bluePts.length - 3];
-                const lastZ = bluePts[bluePts.length - 1];
-                if (Math.hypot(pt3d.x - lastX, pt3d.z - lastZ) < 0.25) continue;
-              }
-              bluePts.push(pt3d.x, 0.18, pt3d.z);
-            }
-          }
-        }
-        if (bluePts.length >= 6) {
-          drivableRouteRef.current = bluePts;
-        }
-      }
-
-      // (2) Temporary Orange Diversion Line:
-      // Show radiant orange diversion route from robot's position, around obstacle, and merging back to blue route.
-      // Must NEVER go onto sidewalks, grass, buildings, or any non-drivable area
-      if (diversionRouteRef) {
-        if (activeDiversionRef.current) {
-          const activeDiv = activeDiversionRef.current;
-          const orangePts: number[] = [];
-          // Starts at robot's current 3D position (elevated to 0.20m above road surface)
-          orangePts.push(currentPos.x, 0.20, currentPos.z);
-          const step = 0.15;
-          for (let testS = s + step; testS <= activeDiv.diversionEndS; testS += step) {
-            const u = Math.min(1.0, testS / totalLength);
-            const basePt = curve.getPointAt(u);
-            const tangent = curve.getTangentAt(u).normalize();
-            const normal = new THREE.Vector3(tangent.z, 0, -tangent.x);
-            const off = getDrivableOffsetAt(testS);
-            let divPt = basePt.clone().add(normal.clone().multiplyScalar(off));
-
-            // Strictly clamp points to ensure orange line remains 100% on drivable road
-            if (!isPointOnDrivableRoad(divPt.x, divPt.z, mapData, 0.18)) {
-              for (let scale = 0.9; scale >= 0.3; scale -= 0.1) {
-                const alt = basePt.clone().add(normal.clone().multiplyScalar(off * scale));
-                if (isPointOnDrivableRoad(alt.x, alt.z, mapData, 0.18)) {
-                  divPt = alt;
-                  break;
-                }
-              }
-            }
-            orangePts.push(divPt.x, 0.20, divPt.z);
-          }
-          // Seamlessly reconnects back onto the blue route at the assigned lane center
-          const endU = Math.min(1.0, activeDiv.diversionEndS / totalLength);
-          const endBase = curve.getPointAt(endU);
-          const endTangent = curve.getTangentAt(endU).normalize();
-          const endNormal = new THREE.Vector3(endTangent.z, 0, -endTangent.x);
-          let endPt = endBase.clone().add(endNormal.clone().multiplyScalar(ASSIGNED_LANE_OFFSET));
-          if (!isPointOnDrivableRoad(endPt.x, endPt.z, mapData, 0.18)) {
-            endPt = endBase.clone();
-          }
-          orangePts.push(endPt.x, 0.20, endPt.z);
-
-          if (orangePts.length >= 6) {
-            diversionRouteRef.current = orangePts;
-          } else {
-            diversionRouteRef.current = [];
-          }
+        if (!isMovingRef.current) { isMovingRef.current = true; setIsMoving(true); }
+        const moveDist = speed * delta;
+        if (moveDist >= dist) {
+          currentPos.copy(targetVector);
         } else {
-          diversionRouteRef.current = [];
+          const direction = new THREE.Vector3().subVectors(targetVector, currentPos).normalize();
+          currentPos.add(direction.multiplyScalar(moveDist));
         }
-      }
-
-      // State updates for UI badges
-      setIsCourteousStandoff(shouldCourteousStandOff);
-      setStandoffReason(currentStandoffLabel);
-      isCourteousStandoffRef.current = shouldCourteousStandOff;
-
-      const isFollowing = shouldCourteousStandOff && primaryAheadObs !== null;
-      setIsFollowingObstacle(isFollowing);
-      if (primaryAheadObs) {
-        setFollowingDistanceLabel(`${Math.max(0.1, primaryAheadObs.longitudinalDelta).toFixed(1)}m`);
-      }
-
-      setIsOvertaking(isOvertakingActive);
-      setIsSlowCaution(isOvertakingActive || targetSpeed < cruiseSpeed * 0.85);
-      setIsWaiting(shouldCourteousStandOff || (targetSpeed === 0 && Math.abs(actualSpeedRef.current) < 0.1));
-
-      // Waypoint & Mission Completion Tracking
-      if (waypointDistances.length > 0) {
-        for (let i = currentIndex; i < waypointDistances.length; i++) {
-          if (distanceTraveledRef.current >= waypointDistances[i] - 0.2) {
-            onReachNode(i);
-          }
-        }
-      }
-
-      if (distanceTraveledRef.current >= totalLength - 0.15) {
-        if (!hasCompletedRef.current) {
-          hasCompletedRef.current = true;
-          onMissionComplete();
+        const rotDirection = new THREE.Vector3().subVectors(targetVector, currentPos);
+        if (rotDirection.lengthSq() > 0.01) {
+          const targetRotation = Math.atan2(rotDirection.x, rotDirection.z);
+          let diff = targetRotation - ref.current.rotation.y;
+          while (diff < -Math.PI) diff += Math.PI * 2;
+          while (diff > Math.PI) diff -= Math.PI * 2;
+          ref.current.rotation.y += diff * delta * 10;
         }
       }
     } else {
       if (isMovingRef.current) { isMovingRef.current = false; setIsMoving(false); }
-      actualSpeedRef.current = 0;
-      // Stably hold physical position without moving, lerping, or snapping
-      // Always display clear navigation line showing full planned route ahead even when paused or idle
-      if (drivableRouteRef && curve) {
-        const s = distanceTraveledRef.current;
-        const ASSIGNED_LANE_OFFSET = 0.35;
-        const idleDiversions: { sObstacle: number; peakAmplitude: number }[] = [];
-        const allObs: { pos: THREE.Vector3; id: string }[] = [];
-        if (staticObstacles && staticObstacles.length > 0) {
-          for (let idx = 0; idx < staticObstacles.length; idx++) {
-            const [bx, , bz] = getGridPosition(staticObstacles[idx], gridSize, 0.05, isMapView);
-            allObs.push({ pos: new THREE.Vector3(bx, currentPos.y, bz), id: `s-${idx}` });
-          }
-        }
-        if (dynamicObstaclesRef && dynamicObstaclesRef.current) {
-          for (const d of dynamicObstaclesRef.current) {
-            if (d.type !== 'person' && (!d.isMoving || (d.velocity && d.velocity.length() < 0.08))) {
-              const pos3d = d.pos3D || (() => {
-                const [ox, , oz] = getGridPosition(d.pos, gridSize, 0.05, isMapView);
-                return new THREE.Vector3(ox, currentPos.y, oz);
-              })();
-              allObs.push({ pos: pos3d, id: d.id });
-            }
-          }
-        }
-
-        for (const obs of allObs) {
-          let bestDistSq = 9999;
-          let sObstacle = s;
-          let tangentAtObs = curve.getTangentAt(0);
-          let ptAtObs = curve.getPointAt(0);
-          for (let testS = 0; testS <= totalLength; testS += 0.35) {
-            const u = testS / totalLength;
-            const pt = curve.getPointAt(u);
-            const dSq = pt.distanceToSquared(obs.pos);
-            if (dSq < bestDistSq) {
-              bestDistSq = dSq;
-              sObstacle = testS;
-              ptAtObs = pt;
-              tangentAtObs = curve.getTangentAt(u);
-            }
-          }
-          if (bestDistSq < 0.85 * 0.85 && sObstacle > s - 1.0 && sObstacle < s + 8.0) {
-            const normAtObs = new THREE.Vector3(tangentAtObs.z, 0, -tangentAtObs.x).normalize();
-            const toObs = new THREE.Vector3().subVectors(obs.pos, ptAtObs);
-            const sideDot = toObs.dot(normAtObs);
-            // Obstacle blocks assigned right lane
-            if (sideDot > -0.15) {
-              const obsRadius = 0.55;
-              const robotRadius = 0.40;
-              const minSafetySeparation = obsRadius + robotRadius + 0.45;
-              const targetPassingOffset = Math.max(-1.15, Math.min(-0.70, sideDot - minSafetySeparation));
-              if (targetPassingOffset >= -1.25) {
-                idleDiversions.push({
-                  sObstacle,
-                  peakAmplitude: targetPassingOffset - ASSIGNED_LANE_OFFSET
-                });
-              }
-            }
-          }
-        }
-
-        // Build continuous blue line along assigned lane
-        const bluePts: number[] = [];
-        const sampleStep = 0.20;
-        for (let testS = s; testS <= totalLength; testS += sampleStep) {
-          const u = testS / totalLength;
-          const basePt = curve.getPointAt(u);
-          const tangent = curve.getTangentAt(u).normalize();
-          const normal = new THREE.Vector3(tangent.z, 0, -tangent.x);
-          const bluePt = basePt.clone().add(normal.clone().multiplyScalar(ASSIGNED_LANE_OFFSET));
-          bluePts.push(bluePt.x, 0.18, bluePt.z);
-        }
-        if (upcomingLoopPoints3D && upcomingLoopPoints3D.length > 0) {
-          for (let i = 0; i < upcomingLoopPoints3D.length; i++) {
-            bluePts.push(upcomingLoopPoints3D[i].x, 0.18, upcomingLoopPoints3D[i].z);
-          }
-        }
-        if (bluePts.length >= 6) {
-          drivableRouteRef.current = bluePts;
-        }
-
-        // Build temporary orange diversion line if active or idle diversion exists
-        if (diversionRouteRef) {
-          if (activeDiversionRef.current || idleDiversions.length > 0) {
-            const div = activeDiversionRef.current || idleDiversions[0];
-            const orangePts: number[] = [];
-            const halfSpan = Math.max(3.2, Math.min(5.5, div.sObstacle - s));
-            const divStartS = Math.max(0, s);
-            const divEndS = Math.min(totalLength, div.sObstacle + halfSpan);
-            orangePts.push(currentPos.x, 0.20, currentPos.z);
-            for (let testS = s + 0.15; testS <= divEndS; testS += 0.15) {
-              const u = Math.min(1.0, testS / totalLength);
-              const basePt = curve.getPointAt(u);
-              const tangent = curve.getTangentAt(u).normalize();
-              const normal = new THREE.Vector3(tangent.z, 0, -tangent.x);
-              let deltaOff = 0;
-              if (testS <= divStartS) {
-                deltaOff = 0;
-              } else if (testS <= div.sObstacle) {
-                const p = (testS - divStartS) / Math.max(0.01, div.sObstacle - divStartS);
-                deltaOff = div.peakAmplitude * Math.sin((Math.PI / 2) * p) ** 2;
-              } else if (testS < divEndS) {
-                const q = (testS - div.sObstacle) / Math.max(0.01, divEndS - div.sObstacle);
-                deltaOff = div.peakAmplitude * Math.cos((Math.PI / 2) * q) ** 2;
-              }
-              const off = Math.max(-1.15, Math.min(1.15, ASSIGNED_LANE_OFFSET + deltaOff));
-              const divPt = basePt.clone().add(normal.clone().multiplyScalar(off));
-              orangePts.push(divPt.x, 0.20, divPt.z);
-            }
-            // Seamlessly reconnects back onto the blue route at the assigned lane center
-            const endU = Math.min(1.0, divEndS / totalLength);
-            const endBase = curve.getPointAt(endU);
-            const endTangent = curve.getTangentAt(endU).normalize();
-            const endNormal = new THREE.Vector3(endTangent.z, 0, -endTangent.x);
-            const endPt = endBase.clone().add(endNormal.clone().multiplyScalar(ASSIGNED_LANE_OFFSET));
-            orangePts.push(endPt.x, 0.20, endPt.z);
-
-            diversionRouteRef.current = orangePts;
-          } else {
-            diversionRouteRef.current = [];
-          }
-        }
-      }
-    }
-
-    // ── Live Autonomous Patrol Status Evaluation ──
-    // Show an object-related status only when needed for the robot's current action:
-    // - IDLE: paused at patrol destination
-    // - DIVERSION: avoiding an obstacle along the diversion route
-    // - ROAD BARRICADE DETECTED: detected a barricade and rerouting
-    // - MOVING: normal driving along the patrol route
-    let currentStatus: RobotLiveStatus;
-    if (isPausedAtDestination) {
-      currentStatus = 'IDLE';
-    } else if (hasBarricadeAhead && isBarricadeBlocked) {
-      currentStatus = 'ROAD BARRICADE DETECTED';
-    } else if (isOvertaking || activeDiversionRef.current !== null) {
-      currentStatus = 'DIVERSION';
-    } else {
-      currentStatus = 'MOVING';
-    }
-
-    if (liveStatusRef.current !== currentStatus) {
-      liveStatusRef.current = currentStatus;
-      setLiveStatus(currentStatus);
+      currentPos.lerp(targetVector, 0.2);
     }
   });
 
   const startPos = getGridPosition(path[0] || { x: 0, y: 0, f: 0 }, gridSize, 0.22, isMapView);
   return (
     <group ref={ref} position={startPos}>
-      <DetailedRobot 
-        isMoving={isMoving} 
-        isEmergency={isEmergency} 
-        isSlowCaution={isSlowCaution} 
-        isWaiting={isWaiting} 
-        isCourteousStandoff={isCourteousStandoff}
-        standoffLabel={standoffReason}
-        isFollowingObstacle={isFollowingObstacle}
-        isOvertaking={isOvertaking}
-        followingDistanceLabel={followingDistanceLabel}
-        isReversing={isReversing}
-        isYieldWaiting={isYieldWaiting}
-        isBarricadeBlocked={isBarricadeBlocked}
-        barricadeLabel={barricadeStatusLabel}
-        liveStatus={liveStatus}
-      />
+      <DetailedRobot isMoving={isMoving} isEmergency={isEmergency} />
     </group>
   );
 };
 
-const DrivablePathLine = ({ 
-  drivableRouteRef,
-  diversionRouteRef,
-  drivableRouteColorsRef: _colorsRef,
-  path,
-  gridSize,
-  isMapView,
-  color = "#00d2ff", 
-  lineWidth = 8.0, 
-  opacity = 1.0 
-}: { 
-  drivableRouteRef: React.MutableRefObject<number[]>;
-  diversionRouteRef?: React.MutableRefObject<number[]>;
-  drivableRouteColorsRef?: React.MutableRefObject<number[]>;
-  path: GridPoint[];
-  gridSize: GridPoint;
-  isMapView: boolean;
-  color?: string; 
-  lineWidth?: number; 
-  opacity?: number; 
-}) => {
-  const { size } = useThree();
-
-  // (1) Blue Normal Patrol Route Line (Continuous along assigned side of the road)
-  // Drawn above road surface, thick, high-contrast, never occluded by robot, obstacles, shadows, or camera angle
-  const blueLineGeom = useMemo(() => new LineGeometry(), []);
-  const blueLineMat = useMemo(() => new LineMaterial({
-    color: new THREE.Color(color).getHex(),
-    linewidth: lineWidth,
-    resolution: new THREE.Vector2(size.width, size.height),
-    transparent: true,
-    opacity: opacity,
-    depthTest: false,
-    depthWrite: false,
-  }), [lineWidth, opacity, size.width, size.height, color]);
-
-  const blueGlowMat = useMemo(() => new LineMaterial({
-    color: new THREE.Color('#0284c7').getHex(),
-    linewidth: lineWidth * 2.2,
-    resolution: new THREE.Vector2(size.width, size.height),
-    transparent: true,
-    opacity: 0.55,
-    depthTest: false,
-    depthWrite: false,
-  }), [lineWidth, size.width, size.height]);
-
-  const blueLineObj = useMemo(() => {
-    const obj = new Line2(blueLineGeom, blueLineMat);
-    obj.renderOrder = 101;
-    return obj;
-  }, [blueLineGeom, blueLineMat]);
-  const blueGlowObj = useMemo(() => {
-    const obj = new Line2(blueLineGeom, blueGlowMat);
-    obj.renderOrder = 100;
-    return obj;
-  }, [blueLineGeom, blueGlowMat]);
-
-  // (2) Radiant Orange Temporary Diversion Line (Appears ONLY for active safe diversion)
-  // Drawn above blue route line, thick, high-contrast, and never hidden
-  const orangeLineGeom = useMemo(() => new LineGeometry(), []);
-  const orangeLineMat = useMemo(() => new LineMaterial({
-    color: new THREE.Color('#f97316').getHex(),
-    linewidth: lineWidth * 1.25,
-    resolution: new THREE.Vector2(size.width, size.height),
-    transparent: true,
-    opacity: 1.0,
-    depthTest: false,
-    depthWrite: false,
-  }), [lineWidth, size.width, size.height]);
-
-  const orangeGlowMat = useMemo(() => new LineMaterial({
-    color: new THREE.Color('#ea580c').getHex(),
-    linewidth: lineWidth * 2.6,
-    resolution: new THREE.Vector2(size.width, size.height),
-    transparent: true,
-    opacity: 0.70,
-    depthTest: false,
-    depthWrite: false,
-  }), [lineWidth, size.width, size.height]);
-
-  const orangeLineObj = useMemo(() => {
-    const obj = new Line2(orangeLineGeom, orangeLineMat);
-    obj.renderOrder = 103;
-    return obj;
-  }, [orangeLineGeom, orangeLineMat]);
-  const orangeGlowObj = useMemo(() => {
-    const obj = new Line2(orangeLineGeom, orangeGlowMat);
-    obj.renderOrder = 102;
-    return obj;
-  }, [orangeLineGeom, orangeGlowMat]);
-
-  // Initial fallback points along assigned lane from path before dynamic simulation frames begin
-  const fallbackPoints = useMemo(() => {
-    if (path.length < 2) return [];
-    const pts: number[] = [];
-    for (let i = 0; i < path.length; i++) {
-      const [x, , z] = getGridPosition(path[i], gridSize, 0.18, isMapView);
-      let nx = 0;
-      let nz = 0;
-      if (i > 0) {
-        const dx = path[i].x - path[i-1].x;
-        const dy = path[i].y - path[i-1].y;
-        const len = Math.hypot(dx, dy);
-        if (len > 0.01) {
-          nx = dy / len;
-          nz = -dx / len;
-        }
-      }
-      pts.push(x + nx * 0.35, 0.18, z + nz * 0.35);
-    }
-    return pts;
-  }, [path, gridSize, isMapView]);
-
-  useFrame(() => {
-    blueLineMat.resolution.set(size.width, size.height);
-    blueGlowMat.resolution.set(size.width, size.height);
-    orangeLineMat.resolution.set(size.width, size.height);
-    orangeGlowMat.resolution.set(size.width, size.height);
-
-    // Update Continuous Blue Normal Patrol Route Line
-    const bluePts = (drivableRouteRef.current && drivableRouteRef.current.length >= 6) 
-      ? drivableRouteRef.current 
-      : fallbackPoints;
-
-    if (bluePts && bluePts.length >= 6) {
-      blueLineGeom.setPositions(bluePts);
-      blueLineObj.computeLineDistances();
-      blueGlowObj.computeLineDistances();
-      blueLineObj.visible = true;
-      blueGlowObj.visible = true;
-    } else {
-      blueLineObj.visible = false;
-      blueGlowObj.visible = false;
-    }
-
-    // Update Temporary Orange Diversion Line (Only visible during active diversion)
-    const orangePts = diversionRouteRef && diversionRouteRef.current;
-    if (orangePts && orangePts.length >= 6) {
-      orangeLineGeom.setPositions(orangePts);
-      orangeLineObj.computeLineDistances();
-      orangeGlowObj.computeLineDistances();
-      orangeLineObj.visible = true;
-      orangeGlowObj.visible = true;
-    } else {
-      orangeLineObj.visible = false;
-      orangeGlowObj.visible = false;
-    }
+const PathLine = ({ path, currentIndex, gridSize, isMapView, color = "#00ffff", opacity = 0.8 }: { path: GridPoint[], currentIndex: number, gridSize: GridPoint, isMapView: boolean, color?: string, opacity?: number }) => {
+  const remainingPath = path.slice(currentIndex);
+  if (remainingPath.length < 2) return null;
+  const points = remainingPath.map(p => {
+    const [x, y, z] = getGridPosition(p, gridSize, 0.1, isMapView);
+    return new THREE.Vector3(x, y, z);
   });
 
   return (
-    <group>
-      <primitive object={blueGlowObj} />
-      <primitive object={blueLineObj} />
-      <primitive object={orangeGlowObj} />
-      <primitive object={orangeLineObj} />
-    </group>
+    <Line points={points} color={color} lineWidth={4} opacity={opacity} transparent />
   );
 };
 
@@ -3395,6 +1262,21 @@ const EnvironmentMap = React.memo(({ mapData, isNight, isTargeting, onMapClick }
       <Box args={[wallThickness, wallHeight, compSizeY]} position={[-halfX - wallThickness/2, wallHeight/2, 0]} castShadow receiveShadow>
         <meshStandardMaterial color={wallColor} />
       </Box>
+
+      {/* ASPIRE Text on the inner front wall */}
+      <Text
+        position={[0, wallHeight/2 + 0.5, -halfY + 0.1]}
+        rotation={[0, 0, 0]}
+        fontSize={8}
+        fontWeight="900"
+        color="#0ea5e9"
+        anchorX="center"
+        anchorY="middle"
+        outlineWidth={0.2}
+        outlineColor="#ffffff"
+      >
+        ASPIRE
+      </Text>
     </group>
   );
 });
@@ -3406,52 +1288,10 @@ interface SimulationViewProps {
   selectedStrategyId?: string;
 }
 
-const PATROL_CHECKPOINTS = [
-  'Administrative Building',
-  'Library',
-  'Auditorium',
-  'Sports Ground',
-  'Security Room'
-];
-
-const RoomsRender = React.memo(({
-  rooms,
-  gridSize,
-  onSelectRoom,
-}: {
-  rooms?: Room[];
-  gridSize: GridPoint;
-  onSelectRoom: (room: Room) => void;
-}) => {
-  if (!rooms) return null;
-  return (
-    <>
-      {rooms.map((room: Room) => {
-        const width = (room.end.x - room.start.x + 1) * 0.75;
-        const depth = (room.end.y - room.start.y + 1) * 0.75;
-        const height = 3;
-        const x = (room.start.x + room.end.x) / 2 - gridSize.x / 2;
-        const z = (room.start.y + room.end.y) / 2 - gridSize.y / 2;
-        return (
-          <group
-            key={room.id}
-            position={[x, height / 2, z]}
-            onClick={(e) => {
-              e.stopPropagation();
-              onSelectRoom(room);
-            }}
-          >
-            <BuildingModel room={room} width={width} height={height} depth={depth} />
-          </group>
-        );
-      })}
-    </>
-  );
-});
 
 export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispatchMission, selectedStrategyId }) => {
   const [path, setPath] = useState<GridPoint[]>([]);
-  const [activePathColor, setActivePathColor] = useState<string>('#38bdf8');
+  const [activePathColor, setActivePathColor] = useState<string>('#00ffff');
   const [speedLimit, setSpeedLimit] = useState(50);
   const [isCTROpen, setIsCTROpen] = useState(false);
   const [ctrMessages, setCtrMessages] = useState<{sender: 'user'|'robot', text: string}[]>([{sender: 'robot', text: 'Hello! I am your autonomous service robot. How can I assist you today?'}]);
@@ -3475,57 +1315,67 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
   const [isEmergencyTargeting, setIsEmergencyTargeting] = useState(false);
   const [isPlacingBlocker, setIsPlacingBlocker] = useState(false);
   const [isPlacingCrowd, setIsPlacingCrowd] = useState(false);
+  const [isIdleMode, setIsIdleMode] = useState(false);
   const [userBlockers, setUserBlockers] = useState<GridPoint[]>([]);
   const [crowds, setCrowds] = useState<GridPoint[]>([]);
-  const [isFollowingAlternateRoute, setIsFollowingAlternateRoute] = useState(false);
-
-  const allStaticObstacles = useMemo(() => {
-    return [...(mapData?.obstacles || []), ...userBlockers];
-  }, [mapData?.obstacles, userBlockers]);
 
   const [policeState, setPoliceState] = useState<PoliceState>({ active: false, path: [], targetPos: null, phase: 'idle' });
   const policeStateRef = useRef<PoliceState>(policeState);
   useEffect(() => { policeStateRef.current = policeState; }, [policeState]);
 
-  // Update path dynamically when idle if obstacles block initial route
+  // Recalculate path dynamically if obstacles are added while moving
   useEffect(() => {
-    if (!isPlaying && path.length > 0 && mapData) {
-       const currentLoc = path[0];
+    if (isPlaying && path.length > 0 && currentPosIndex < path.length && mapData) {
+       const currentLoc = path[currentPosIndex];
        const targetLoc = path[path.length - 1];
        const allObstacles = [...(mapData.obstacles || []), ...userBlockers];
-       const isBlocked = path.some(p => 
+       // Check if current path is blocked
+       const isBlocked = path.slice(currentPosIndex).some(p => 
           userBlockers.some(b => b.x === p.x && b.y === p.y && b.f === p.f)
        );
        if (isBlocked) {
-         const newPath = calculatePath(currentLoc, targetLoc, allObstacles, mapData, true);
+         const newPath = calculatePath(currentLoc, targetLoc, allObstacles, mapData);
          if (newPath.length > 0) {
            setPath(newPath);
            setCurrentPosIndex(0);
+           addExplanation("Road blocked! Rerouting to destination...");
+         } else {
+           const homeRoom = mapData.rooms?.find(r => r.name.toLowerCase().includes('generator')) || mapData.rooms?.[0];
+           let homePath: GridPoint[] = [];
+           if (homeRoom) {
+               homePath = calculatePath(currentLoc, homeRoom.door || homeRoom.start, allObstacles, mapData);
+           }
+           if (homePath.length > 0) {
+               setPath(homePath);
+               setCurrentPosIndex(0);
+               setRobotState('returning_home');
+               addExplanation("Road to destination is completely blocked! Returning to base.");
+           } else {
+               const evadePath = calculateEvadePath(currentLoc, allObstacles, mapData);
+               if (evadePath.length > 0) {
+                 setPath(evadePath);
+                 setCurrentPosIndex(0);
+                 setRobotState('evading_obstacle');
+                 addExplanation("Road completely blocked! Moving to give space for obstacles...");
+               } else {
+                 setIsPlaying(false);
+                 setRobotState('idle');
+                 addExplanation("Road completely blocked and cannot evade! Halting.");
+               }
+           }
          }
        }
+
     }
-  }, [userBlockers, isPlaying]);
+  }, [userBlockers]);
   
   const [dynamicObstacles, setDynamicObstacles] = useState<DynamicObstacle[]>([]);
   const dynamicObstaclesRef = useRef<DynamicObstacle[]>([]);
-  useEffect(() => { dynamicObstaclesRef.current = dynamicObstacles; }, [dynamicObstacles]);
-
-  // Real-time dynamic drivable route polyline coordinates (flat [x, y, z, ...])
-  const drivableRouteRef = useRef<number[]>([]);
-  const drivableRouteColorsRef = useRef<number[]>([]);
-  const diversionRouteRef = useRef<number[]>([]);
   const isRecalculating = useRef(false);
 
   const [battery, setBattery] = useState(100);
-  const [robotState, setRobotState] = useState<RobotState>('patrol');
-  const [isOn, setIsOn] = useState(true);
-  const patrolIndexRef = useRef(0);
-  const [patrolCountdown, setPatrolCountdown] = useState<number | null>(null);
-  const [currentPatrolTarget, setCurrentPatrolTarget] = useState<string>(PATROL_CHECKPOINTS[0]);
-  const patrolTimerRef = useRef<any>(null);
-
-  const isPausedAtDestination = patrolCountdown !== null;
-
+  const [robotState, setRobotState] = useState<RobotState>('off');
+  const [isOn, setIsOn] = useState(false);
   const [activeCCTab, setActiveCCTab] = useState<'dashboard' | 'tools' | 'locations'>('dashboard');
   const [modalType, setModalType] = useState<'food' | 'medical' | null>(null);
 
@@ -3544,228 +1394,28 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
   const currentTaskIndexRef = useRef(0);
   const emergencyTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Dispatch smooth continuous patrol leg to an assigned checkpoint with zero teleportation
-  const dispatchPatrolCheckpoint = (checkpointIndex: number) => {
-    if (!mapData || !mapData.rooms || mapData.rooms.length === 0) return;
-    const safeIdx = checkpointIndex % PATROL_CHECKPOINTS.length;
-    patrolIndexRef.current = safeIdx;
-    const targetName = PATROL_CHECKPOINTS[safeIdx];
-    setCurrentPatrolTarget(targetName);
-
-    const lower = targetName.toLowerCase();
-    const targetRoom = 
-      mapData.rooms.find(r => r.name.toLowerCase() === lower) ||
-      mapData.rooms.find(r => r.name.toLowerCase().includes(lower)) ||
-      mapData.rooms[0];
-
-    if (!targetRoom) return;
-
-    // Use current physical robot location (or start) snapped to the nearest road network
-    const rawLoc = (robotPosRef.current && mapData) 
-      ? getGridPointFromVector3(robotPosRef.current, mapData.gridSize) 
-      : (path.length > 0 ? path[path.length - 1] : mapData.start);
-    const currentLoc = getNearestRoadPoint(rawLoc, mapData);
-
-    const rawTarget = targetRoom.door || targetRoom.start;
-    const targetLoc = getNearestRoadPoint(rawTarget, mapData);
-
-    const allObstacles = [...(mapData.obstacles || []), ...userBlockers];
-    let patrolPath = calculatePath(currentLoc, targetLoc, allObstacles, mapData, true);
-    if (patrolPath.length < 2) {
-      // If direct route is obstructed, try alternate road detour around obstacles
-      patrolPath = calculateLongPath(currentLoc, targetLoc, allObstacles, mapData, true);
-    }
-    if (patrolPath.length < 2) {
-      // Checkpoint may be completely enclosed; advance to next checkpoint in continuous sequence
-      addExplanation(`⚠️ Checkpoint "${targetName}" obstructed. Selecting next open patrol destination.`);
-      const nextIdx = (checkpointIndex + 1) % PATROL_CHECKPOINTS.length;
-      if (nextIdx !== checkpointIndex) {
-        dispatchPatrolCheckpoint(nextIdx);
-        return;
-      }
-    }
-
-    // ── Pre-Movement Environmental Awareness Scan ──
-    const [currX, , currZ] = getGridPosition(currentLoc, mapData.gridSize, 0.22, isMapView);
-    const currPos3D = new THREE.Vector3(currX, 0.22, currZ);
-
-    const preAssessment = assessPreMovementEnvironment(
-      currPos3D,
-      patrolPath,
-      mapData,
-      dynamicObstaclesRef.current || [],
-      mapData.obstacles || [],
-      userBlockers,
-      getGridPosition,
-      isPointOnDrivableRoad,
-      mapData.gridSize,
-      isMapView
-    );
-
-    let isAlternate = false;
-    if (preAssessment.recommendedAction === 'REROUTE_BARRICADE') {
-      addExplanation(`🚧 Pre-movement scan: Barricade blocks departure corridor. Calculating safe alternate road route.`);
-      const alt = calculateLongPath(currentLoc, targetLoc, allObstacles, mapData, true);
-      if (alt.length >= 2) {
-        patrolPath = alt;
-        isAlternate = true;
-      }
-    } else {
-      addExplanation(`🌐 Pre-movement scan: ${preAssessment.openSpaceSummary}. Road clearance: ${preAssessment.drivableClearance.toFixed(1)}m.`);
-    }
-
-    if (patrolPath.length > 0) {
-      setPath(patrolPath);
-      setCurrentPosIndex(0);
-      setIsFollowingAlternateRoute(isAlternate);
-      setRobotState('patrol');
-      setIsPlaying(true);
-      addExplanation('🚀 Continuous autonomous road patrol engaged. Navigating along drivable corridor.');
-
-      // Place moving obstacles directly on the road in the robot's driving path on this checkpoint leg
-      if (patrolPath.length >= 6) {
-        const M = patrolPath.length;
-        const i1 = Math.max(2, Math.floor(M * 0.30));
-        const p1 = patrolPath.slice(i1);
-
-        const i2 = Math.max(i1 + 3, Math.floor(M * 0.60));
-        const p2 = patrolPath.slice(i2);
-
-        setDynamicObstacles(prev => {
-          return prev.map(o => {
-            if (o.id === 'obs_road_0') {
-              // If already active on the map, maintain continuous motion without snapping or teleporting
-              if (o.pos && (o.path.length - o.currentIndex > 2)) {
-                const targetPt = p1[p1.length - 1];
-                const smoothConnector = calculatePath(o.pos, targetPt, allObstacles, mapData, true);
-                if (smoothConnector && smoothConnector.length >= 2) {
-                  return {
-                    ...o,
-                    path: smoothConnector,
-                    currentIndex: 0,
-                    targetPos: targetPt,
-                    isMoving: true,
-                  };
-                }
-                return o;
-              }
-              if (p1.length >= 2) {
-                return {
-                  ...o,
-                  path: p1,
-                  currentIndex: 0,
-                  pos: p1[0],
-                  targetPos: p1[p1.length - 1],
-                  speed: 2.5,
-                  isMoving: true,
-                  isRoadWalker: true,
-                };
-              }
-            }
-            if (o.id === 'obs_road_1') {
-              if (o.pos && (o.path.length - o.currentIndex > 2)) {
-                const targetPt = p2[p2.length - 1];
-                const smoothConnector = calculatePath(o.pos, targetPt, allObstacles, mapData, true);
-                if (smoothConnector && smoothConnector.length >= 2) {
-                  return {
-                    ...o,
-                    path: smoothConnector,
-                    currentIndex: 0,
-                    targetPos: targetPt,
-                    isMoving: true,
-                  };
-                }
-                return o;
-              }
-              if (p2.length >= 2) {
-                return {
-                  ...o,
-                  path: p2,
-                  currentIndex: 0,
-                  pos: p2[0],
-                  targetPos: p2[p2.length - 1],
-                  speed: 1.35,
-                  isMoving: true,
-                  isRoadWalker: true,
-                };
-              }
-            }
-            return o;
-          });
-        });
-      }
-    }
-  };
-
-  // Precompute continuous multi-destination road route for the full remaining patrol loop
-  const upcomingPatrolPoints3D = useMemo(() => {
-    if (!mapData || !mapData.rooms || mapData.rooms.length === 0) return [];
-    const N = PATROL_CHECKPOINTS.length;
-    const safeIdx = patrolIndexRef.current % N;
-    const allObstacles = [...(mapData.obstacles || []), ...userBlockers];
-
-    const getRoom = (name: string) => {
-      const lower = name.toLowerCase();
-      return mapData.rooms.find(r => r.name.toLowerCase() === lower) ||
-             mapData.rooms.find(r => r.name.toLowerCase().includes(lower)) ||
-             mapData.rooms[0];
-    };
-
-    const flat3DPts: THREE.Vector3[] = [];
-
-    // Chain subsequent destinations in the repeating patrol loop ahead of active checkpoint
-    for (let step = 1; step < N; step++) {
-      const fromIdx = (safeIdx + step) % N;
-      const toIdx = (safeIdx + step + 1) % N;
-      const r1 = getRoom(PATROL_CHECKPOINTS[fromIdx]);
-      const r2 = getRoom(PATROL_CHECKPOINTS[toIdx]);
-      if (!r1 || !r2) continue;
-
-      const d1 = getNearestRoadPoint(r1.door || r1.start, mapData);
-      const d2 = getNearestRoadPoint(r2.door || r2.start, mapData);
-
-      let leg = calculatePath(d1, d2, allObstacles, mapData, true);
-      if (leg.length < 2) {
-        leg = calculatePath(d1, d2, mapData.obstacles || [], mapData, true);
-      }
-
-      // Convert grid waypoints along the road to smooth 3D points on assigned lane (+0.35m)
-      const startIndex = flat3DPts.length > 0 ? 1 : 0;
-      for (let i = startIndex; i < leg.length; i++) {
-        const [x, , z] = getGridPosition(leg[i], mapData.gridSize, 0.18, isMapView);
-        let nx = 0;
-        let nz = 0;
-        if (i > 0) {
-          const dx = leg[i].x - leg[i-1].x;
-          const dy = leg[i].y - leg[i-1].y;
-          const len = Math.hypot(dx, dy);
-          if (len > 0.01) {
-            nx = dy / len;
-            nz = -dx / len;
-          }
-        }
-        let ptX = x + nx * 0.35;
-        let ptZ = z + nz * 0.35;
-        if (!isPointOnDrivableRoad(ptX, ptZ, mapData, 0.18)) {
-          ptX = x;
-          ptZ = z;
-        }
-        flat3DPts.push(new THREE.Vector3(ptX, 0.18, ptZ));
-      }
-    }
-
-    return flat3DPts;
-  }, [mapData, userBlockers, isMapView, currentPatrolTarget]);
-
   useEffect(() => {
     switch(robotState) {
+      case 'patrol':
+        setActivePathColor('#3b82f6'); // blue
+        break;
+      case 'mission':
+        setActivePathColor('#22c55e'); // green
+        break;
       case 'emergency_response':
       case 'emergency_to_ctr':
       case 'ctr_to_emergency':
-        setActivePathColor('#ef4444'); // red for high-priority emergency siren
+        setActivePathColor('#ef4444'); // red
+        break;
+      case 'charging':
+      case 'returning_home':
+        setActivePathColor('#eab308'); // yellow
+        break;
+      case 'evading_obstacle':
+        setActivePathColor('#f97316'); // orange
         break;
       default:
-        setActivePathColor('#38bdf8'); // Always display clear vibrant blue navigation line
+        setActivePathColor('#00ffff'); // cyan
     }
   }, [robotState]);
 
@@ -3853,11 +1503,6 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
 
   const togglePower = () => {
     if (isOn) {
-      if (patrolTimerRef.current) {
-        clearInterval(patrolTimerRef.current);
-        patrolTimerRef.current = null;
-      }
-      setPatrolCountdown(null);
       setIsOn(false);
       addExplanation("Powering OFF. Returning to Robot Home for standby and charging...");
       originalMissionRef.current = null;
@@ -3878,8 +1523,22 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
     } else {
       setIsOn(true);
       setBattery(100);
-      addExplanation("Powering ON. System initialized. Beginning continuous autonomous patrol.");
-      dispatchPatrolCheckpoint(patrolIndexRef.current);
+      addExplanation("Powering ON. System initialized. Beginning patrol immediately.");
+      if (mapData && mapData.rooms && mapData.rooms.length > 0) {
+        const currentLoc = path.length > 0 && currentPosIndex < path.length ? path[currentPosIndex] : mapData.start;
+        const randomRoom = mapData.rooms[Math.floor(Math.random() * mapData.rooms.length)];
+        const patrolPath = calculatePath(currentLoc, randomRoom.door || randomRoom.start, [...(mapData.obstacles || []), ...userBlockers], mapData);
+        if (patrolPath.length > 0) {
+          setPath(patrolPath);
+          setCurrentPosIndex(0);
+          setRobotState('patrol');
+          setIsPlaying(true);
+        } else {
+          setRobotState('idle');
+        }
+      } else {
+        setRobotState('patrol');
+      }
     }
   };
 
@@ -3920,22 +1579,10 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
 
   useEffect(() => {
     if (mapData) {
-      if (dynamicObstaclesRef.current.length === 0) {
-        initializeDynamicObstacles();
-      }
-      if (isOn && path.length === 0) {
-        dispatchPatrolCheckpoint(0);
-      }
+      resetSimulation();
+      // Do not auto-execute here. Wait for remote_execute_mission.
     }
-  }, [mapData, isOn]);
-
-  useEffect(() => {
-    return () => {
-      if (patrolTimerRef.current) {
-        clearInterval(patrolTimerRef.current);
-      }
-    };
-  }, []);
+  }, [mapData]);
 
   const containerRef = useRef<HTMLDivElement>(null);
 
@@ -3990,129 +1637,76 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
     return () => clearInterval(interval);
   }, [isPlaying, mapData]);
 
-  // Autonomous Repeating Patrol Loop Heartbeat
+  const prevIsIdleMode = useRef(isIdleMode);
+
+  // Auto-Patrol Logic
   useEffect(() => {
     let timeout: any;
-    if ((robotState === 'idle' || robotState === 'patrol') && !isPlaying && isOn && patrolCountdown === null) {
+    if (!isIdleMode && (robotState === 'idle' || robotState === 'patrol') && !isPlaying && isOn) {
+      const waitTime = (prevIsIdleMode.current && !isIdleMode) ? 0 : 2500;
       timeout = setTimeout(() => {
         if (!mapData || !mapData.rooms) return;
-        dispatchPatrolCheckpoint(patrolIndexRef.current);
-      }, 300);
+        addExplanation(waitTime === 0 ? 'Idle mode disabled. Resuming patrol immediately.' : 'Idle detected. Initiating autonomous patrol mode.');
+        const currentLoc = path.length > 0 ? path[currentPosIndex] : mapData.start;
+        const randomRoom = mapData.rooms[Math.floor(Math.random() * mapData.rooms.length)];
+        const patrolPath = calculatePath(currentLoc, randomRoom.door || randomRoom.start, [...(mapData.obstacles || []), ...userBlockers], mapData);
+        if (patrolPath.length > 0) {
+          setPath(patrolPath);
+          setCurrentPosIndex(0);
+          setRobotState('patrol');
+          setIsPlaying(true);
+        }
+      }, waitTime);
     }
+    prevIsIdleMode.current = isIdleMode;
     return () => clearTimeout(timeout);
-  }, [robotState, isPlaying, isOn, patrolCountdown, mapData]);
+  }, [robotState, isPlaying, path, currentPosIndex, mapData, isOn, isIdleMode]);
 
-  const initializeDynamicObstacles = (routePath?: GridPoint[]) => {
+  const initializeDynamicObstacles = (robotPath?: GridPoint[]) => {
     if (!mapData || !mapData.roads || mapData.roads.length < 5) return;
     const roads = mapData.roads;
     const obs: DynamicObstacle[] = [];
-    const allObstacles = [...(mapData.obstacles || []), ...userBlockers];
-
-    // Determine the active road path for the robot
-    let activeRoadPath: GridPoint[] = [];
-    if (routePath && routePath.length >= 6) {
-      activeRoadPath = routePath;
-    } else if (path && path.length >= 6) {
-      activeRoadPath = path;
-    } else if (mapData.rooms && mapData.rooms.length > 0) {
-      const rawLoc = robotPosRef.current ? getGridPointFromVector3(robotPosRef.current, mapData.gridSize) : mapData.start;
-      const startLoc = getNearestRoadPoint(rawLoc, mapData);
-      const targetRoom = mapData.rooms[0];
-      const targetLoc = getNearestRoadPoint(targetRoom.door || targetRoom.start, mapData);
-      activeRoadPath = calculatePath(startLoc, targetLoc, allObstacles, mapData, true);
-    }
-
-    // "Place moving obstacles directly on the road, within the robot’s driving path."
-    if (activeRoadPath.length >= 6) {
-      const M = activeRoadPath.length;
-      // 1. Moving vehicle / car directly in driving path ahead
-      const i1 = Math.max(2, Math.floor(M * 0.30));
-      const path1 = activeRoadPath.slice(i1);
-      if (path1.length >= 2) {
-        obs.push({
-          id: 'obs_road_0',
-          type: 'car',
-          pos: path1[0],
-          targetPos: path1[path1.length - 1],
-          path: path1,
-          currentIndex: 0,
-          speed: 2.6,
-          isMoving: true,
-          isRoadWalker: true,
-        });
-      }
-
-      // 2. Moving pedestrian walking directly on the road in the driving path
-      const i2 = Math.max(i1 + 3, Math.floor(M * 0.60));
-      const path2 = activeRoadPath.slice(i2);
-      if (path2.length >= 2) {
-        obs.push({
-          id: 'obs_road_1',
-          type: 'person',
-          pos: path2[0],
-          targetPos: path2[path2.length - 1],
-          path: path2,
-          currentIndex: 0,
-          speed: 1.35,
-          isMoving: true,
-          isRoadWalker: true,
-        });
-      }
-    }
-
-    // Populate remaining campus traffic entities for lively, realistic campus environment
-    const TOTAL_TRAFFIC = 16;
-    const startIndex = obs.length;
-    const CAR_COUNT = 8;
-
-    for (let i = startIndex; i < TOTAL_TRAFFIC; i++) {
-      const isCar = i < CAR_COUNT;
-      let p: GridPoint[] = [];
-      for (let attempt = 0; attempt < 25; attempt++) {
-        const start = roads[Math.floor(Math.random() * roads.length)];
-        const end = roads[Math.floor(Math.random() * roads.length)];
-        if (start.x === end.x && start.y === end.y) continue;
-
-        // Ensure new spawn point is spaced at least 3.5m away from existing entities
-        const [sx, , sz] = getGridPosition(start, mapData.gridSize, 0.05, isMapView);
-        const tooClose = obs.some(o => {
-          if (!o.path || o.path.length === 0) return false;
-          const [ox, , oz] = getGridPosition(o.path[0], mapData.gridSize, 0.05, isMapView);
-          return Math.hypot(sx - ox, sz - oz) < 3.5;
-        });
-        if (tooClose) continue;
-
-        p = calculatePath(start, end, allObstacles, mapData, true);
-        if (p.length >= 3) break;
-      }
-
-      if (p.length >= 2) {
+    
+    // Spawn 15 people and 7 cars walking/driving around
+    for (let i = 0; i < 22; i++) {
+      const start = roads[Math.floor(Math.random() * roads.length)];
+      const end = roads[Math.floor(Math.random() * roads.length)];
+      const path = calculatePath(start, end, [...(mapData.obstacles || []), ...userBlockers], mapData, true);
+      if (path.length > 0) {
         obs.push({
           id: `obs_${i}`,
-          type: isCar ? 'car' : 'person',
-          pos: p[0],
-          targetPos: p[p.length - 1],
-          path: p,
+          type: i < 7 ? 'car' : 'person',
+          pos: path[0],
+          targetPos: end,
+          path,
           currentIndex: 0,
-          speed: isCar ? (2.5 + Math.random() * 0.8) : (1.25 + Math.random() * 0.4),
-          isMoving: true,
-          isRoadWalker: !isCar && (i % 3 !== 0),
+          speed: i < 7 ? 6 : (2 + Math.random() * 2),
+          isMoving: true
         });
       }
     }
 
+    // Add a sudden crosser if we have a valid robot path
+    if (robotPath && robotPath.length > 8) {
+      const crossPoint = robotPath[6]; // Place the person slightly ahead of robot
+      if (crossPoint) {
+        obs.push({
+          id: 'sudden_crosser',
+          type: 'person',
+          pos: crossPoint,
+          targetPos: crossPoint,
+          // They will basically just stand/pace directly on the robot's upcoming path
+          path: [crossPoint, crossPoint],
+          currentIndex: 0,
+          speed: 0.5,
+          isMoving: true
+        });
+      }
+    }
+    
     setDynamicObstacles(obs);
     dynamicObstaclesRef.current = obs;
   };
-
-  // Auto-initialize dynamic traffic when map is ready
-  useEffect(() => {
-    if (mapData && mapData.roads && mapData.roads.length > 5) {
-      if (dynamicObstaclesRef.current.length === 0) {
-        initializeDynamicObstacles();
-      }
-    }
-  }, [mapData]);
 
   const addExplanation = (msg: string) => {
     setAiExplanations(prev => [msg, ...prev].slice(0, 5));
@@ -4249,18 +1843,11 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
 
   const resetSimulation = () => {
     if (!mapData) return;
-    if (patrolTimerRef.current) {
-      clearInterval(patrolTimerRef.current);
-      patrolTimerRef.current = null;
-    }
-    setPatrolCountdown(null);
-
     // Preserve current location if robot is active
     const currentLoc = (path.length > 0 && currentPosIndex < path.length) ? path[currentPosIndex] : mapData.start;
     
     setCurrentPosIndex(0); 
     isRecalculating.current = false;
-    setIsFollowingAlternateRoute(false);
     
     // Only reset battery if it's the very first load or robot is off
     if (path.length === 0 || robotStateRef.current === 'off') {
@@ -4304,8 +1891,9 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
     
     if (initialPath.length > 0 && mapData.tasks && mapData.tasks.length > 0) {
       setPath(initialPath);
-      addExplanation(`Planned route along drivable roads. Estimated distance: ${initialPath.length}m.`);
+      addExplanation(`Planned route to destination. Estimated distance: ${initialPath.length}m.`);
       
+      // dynamic obstacles no longer factored in as they get out of the way
       const isBlocked = false;
       if (isBlocked && dynamicObstaclesRef.current.length > 0) {
          addExplanation("WARNING: Detected dynamic obstacles intersecting optimal path. Using AI dynamic rerouting.");
@@ -4323,23 +1911,17 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
          setIsPlaying(true);
       }
     } else {
-      if (isOn) {
-        dispatchPatrolCheckpoint(patrolIndexRef.current);
-      } else {
-        setPath([]);
-        setRobotState(prev => prev === 'emergency_response' ? prev : 'idle');
-      }
+      setPath([]);
+      setRobotState(prev => prev === 'emergency_response' ? prev : 'idle');
     }
-    if (dynamicObstaclesRef.current.length === 0) {
-      initializeDynamicObstacles(initialPath);
-    }
+    initializeDynamicObstacles(initialPath);
   };
 
   const handleLowBattery = () => {
     if (!mapData || !mapData.rooms) return;
     isRecalculating.current = true;
     setIsPlaying(false);
-    addExplanation('BATTERY CRITICAL: Diverting to charging station...');
+    addExplanation(`BATTERY CRITICAL: Diverting to Generator Room for charging...`);
     
     originalMissionRef.current = { path: [...path], index: currentPosIndex };
     const generatorRoom = mapData.rooms.find(r => r.name.toLowerCase().includes('generator')) || mapData.rooms[0];
@@ -4539,23 +2121,16 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
     if (isRecalculating.current) return;
     isRecalculating.current = true;
     
+    addExplanation(`CRITICAL: Dynamic Obstacle detected at (${obsPos.x}, ${obsPos.y}). Rerouting instantly...`);
+    
     if (!mapData) {
        isRecalculating.current = false;
        return;
     }
-    const currentLoc = (robotPosRef.current && mapData)
-      ? getGridPointFromVector3(robotPosRef.current, mapData.gridSize)
-      : (path[currentPosIndex] || mapData.start);
-    const targetLoc = path.length > 0 ? path[path.length - 1] : (mapData.rooms?.[0]?.door || mapData.start);
+    const currentLoc = path[currentPosIndex];
+    const targetLoc = path[path.length - 1];
     
-    if (currentLoc.x === targetLoc.x && currentLoc.y === targetLoc.y) {
-       isRecalculating.current = false;
-       return;
-    }
-
-    addExplanation(`🧠 AI DIVERSION: Obstacle spotted at (${obsPos.x}, ${obsPos.y}). Deciding quick diversion route...`);
-
-    // Treat obstacle position as impassable for diversion search
+    // We treat the specific position of the dynamic obstacle as a hard blockage for this local recalculation
     const allObstacles = [...(mapData.obstacles || []), ...userBlockers, obsPos];
     
     let intermediateTarget = null;
@@ -4566,21 +2141,19 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
       }
     }
     
-    const isCity = !!(mapData.roads && mapData.roads.length > 0);
-
     let newPath: GridPoint[] = [];
-    if (intermediateTarget && (intermediateTarget.x !== targetLoc.x || intermediateTarget.y !== targetLoc.y)) {
-      const fPath = calculatePath(currentLoc, intermediateTarget, allObstacles, mapData, isCity);
-      const rPath = calculatePath(intermediateTarget, targetLoc, allObstacles, mapData, isCity);
+    if (intermediateTarget) {
+      const fPath = calculatePath(currentLoc, intermediateTarget, allObstacles, mapData);
+      const rPath = calculatePath(intermediateTarget, targetLoc, allObstacles, mapData);
       if (fPath.length > 0 && rPath.length > 0) {
         newPath = [...fPath, fPath[fPath.length - 1], ...rPath.slice(1)];
       }
     } else {
-      newPath = calculatePath(currentLoc, targetLoc, allObstacles, mapData, isCity);
+      newPath = calculatePath(currentLoc, targetLoc, allObstacles, mapData);
     }
     
-    if (newPath.length === 0 && isCity) {
-      if (intermediateTarget && (intermediateTarget.x !== targetLoc.x || intermediateTarget.y !== targetLoc.y)) {
+    if (newPath.length === 0) {
+      if (intermediateTarget) {
          const fPath = calculateLongPath(currentLoc, intermediateTarget, allObstacles, mapData);
          const rPath = calculateLongPath(intermediateTarget, targetLoc, allObstacles, mapData);
          if (fPath.length > 0 && rPath.length > 0) {
@@ -4593,84 +2166,33 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
     
     if (newPath.length > 0) {
       setPath(newPath);
-      // Point immediately to next node (index 1) so robot steers into diversion without hesitation
-      setCurrentPosIndex(newPath.length > 1 ? 1 : 0);
-      setActivePathColor('#38bdf8');
-      setIsPlaying(true);
-      addExplanation(`⚡ Safe orange diversion active (${newPath.length}m). Navigating along open road.`);
-      setTimeout(() => {
-        isRecalculating.current = false;
-      }, 1500);
-    } else {
-      // If road is a straight segment without alternative intersection, agile lateral bypass handles clearance smoothly
-      setTimeout(() => {
-        isRecalculating.current = false;
-      }, 1500);
-    }
-  };
-
-  const handleBarricadeBlocked = (robotWorldPos: THREE.Vector3, _barricadeWorldPos: THREE.Vector3) => {
-    if (!mapData) return;
-
-    // 1. Current physical robot location snapped onto the drivable road network
-    const rawLoc = getGridPointFromVector3(robotWorldPos, mapData.gridSize);
-    const currentLoc = getNearestRoadPoint(rawLoc, mapData);
-
-    // 2. Identify active target destination (MUST remain the exact same destination)
-    let targetLoc: GridPoint;
-    if (path.length > 0) {
-      targetLoc = getNearestRoadPoint(path[path.length - 1], mapData);
-    } else if (robotState === 'patrol') {
-      const lower = currentPatrolTarget.toLowerCase();
-      const targetRoom = 
-        mapData.rooms?.find(r => r.name.toLowerCase() === lower) ||
-        mapData.rooms?.find(r => r.name.toLowerCase().includes(lower)) ||
-        mapData.rooms?.[0];
-      const rawTarget = targetRoom ? (targetRoom.door || targetRoom.start) : mapData.start;
-      targetLoc = getNearestRoadPoint(rawTarget, mapData);
-    } else if (emergencyLocationRef.current) {
-      targetLoc = getNearestRoadPoint(emergencyLocationRef.current, mapData);
-    } else {
-      targetLoc = mapData.start;
-    }
-
-    // 3. Obstacle set including all user road barricades
-    const allObstacles = [...(mapData.obstacles || []), ...userBlockers];
-
-    // 4. Calculate valid alternative road-only route to the SAME destination using 3D A* with requireRoads: true
-    let altPath = calculatePath(currentLoc, targetLoc, allObstacles, mapData, true);
-
-    // 5. If targetLoc itself was directly blocked by a barricade clicked on it, test adjacent road cells to the same destination
-    if (altPath.length < 2) {
-      const candidateTargets = [
-        { x: targetLoc.x + 1, y: targetLoc.y, f: targetLoc.f },
-        { x: targetLoc.x - 1, y: targetLoc.y, f: targetLoc.f },
-        { x: targetLoc.x, y: targetLoc.y + 1, f: targetLoc.f },
-        { x: targetLoc.x, y: targetLoc.y - 1, f: targetLoc.f },
-      ].filter(p => isPointOnDrivableRoad(p.x, p.y, mapData, 0.1) && !allObstacles.some(o => o.x === p.x && o.y === p.y && o.f === p.f));
-      for (const cand of candidateTargets) {
-        altPath = calculatePath(currentLoc, cand, allObstacles, mapData, true);
-        if (altPath.length >= 2) break;
-      }
-    }
-
-    if (altPath.length >= 2) {
-      // Clear any temporary diversion line
-      if (diversionRouteRef) {
-        diversionRouteRef.current = [];
-      }
-      setPath(altPath);
       setCurrentPosIndex(0);
-      setIsFollowingAlternateRoute(true);
       setIsPlaying(true);
-      addExplanation(`✨ Alternate road route active (${altPath.length} nodes). Navigating to destination via open roads.`);
+      addExplanation(`Successfully found alternative route avoiding obstacle! Resuming mission.`);
+      isRecalculating.current = false;
     } else {
-      if (robotState === 'patrol') {
-        addExplanation(`🚧 Road closed by barricade. Advancing to next open patrol destination.`);
-        const nextIdx = (patrolIndexRef.current + 1) % PATROL_CHECKPOINTS.length;
-        dispatchPatrolCheckpoint(nextIdx);
+      const evadePath = calculateEvadePath(currentLoc, allObstacles, mapData);
+      if (evadePath.length > 0) {
+        addExplanation(`Path completely blocked! Evading to give space to obstacle...`);
+        if (robotState !== 'evading_obstacle' && robotState !== 'charging' && robotState !== 'emergency_response') {
+            originalMissionRef.current = { path: [...path], index: currentPosIndex };
+        }
+        setPath(evadePath);
+        setCurrentPosIndex(0);
+        setRobotState('evading_obstacle');
+        setIsPlaying(true);
+        isRecalculating.current = false;
       } else {
-        addExplanation(`⚠️ Road closed in all directions by barricades. Robot holding safe viewing standoff.`);
+        addExplanation(`Trapped by obstacles. Waiting for space to clear...`);
+        if (robotState !== 'evading_obstacle' && robotState !== 'charging' && robotState !== 'emergency_response') {
+            originalMissionRef.current = { path: [...path], index: currentPosIndex };
+        }
+        setRobotState('evading_obstacle');
+        setIsPlaying(false);
+        setTimeout(() => {
+          isRecalculating.current = false;
+          setIsPlaying(true); // retry loop
+        }, 3000);
       }
     }
   };
@@ -4678,11 +2200,21 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
 
   const startSimulation = () => { 
     if (mapData && path.length > 0) {
-      setRobotState('patrol');
+      setRobotState(prev => {
+         if (prev === 'emergency_response') return prev;
+         return (prev === 'idle') ? 'patrol' : prev; // default to patrol instead of mission
+      });
+      
+      // Hide the popup if we are starting a movement during an emergency
+      setRobotState(prev => {
+         if (prev === 'emergency_response') {
+           window.dispatchEvent(new CustomEvent('local_emergency_request', { detail: null }));
+         }
+         return prev;
+      });
+      
       setIsPlaying(true);
-      addExplanation('Executing autonomous patrol. Moving along planned road route.');
-    } else if (mapData) {
-      dispatchPatrolCheckpoint(patrolIndexRef.current);
+      addExplanation('Executing mission. Moving to target.');
     }
   };
 
@@ -4753,81 +2285,40 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
       originalMissionRef.current = null;
     } else {
       if (mapData && mapData.tasks && currentTaskIndexRef.current < mapData.tasks.length - 1) {
+        const prevTask = mapData.tasks[currentTaskIndexRef.current];
         currentTaskIndexRef.current += 1;
         const nextTask = mapData.tasks[currentTaskIndexRef.current];
         
+        addExplanation(`Reached ${prevTask.locationName}. Task complete. Next: ${nextTask.locationName}. Calculating route...`);
+        
         setIsPlaying(false);
-        setIsFollowingAlternateRoute(false);
-        addExplanation('📍 Waypoint reached. Pausing exactly 5.0 seconds for inspection before proceeding.');
-
-        if (patrolTimerRef.current) {
-          clearInterval(patrolTimerRef.current);
-          patrolTimerRef.current = null;
-        }
-
-        setPatrolCountdown(5.0);
-        const pauseStartTime = Date.now();
-        const PAUSE_DURATION_MS = 5000;
-
-        patrolTimerRef.current = setInterval(() => {
-          const elapsedMs = Date.now() - pauseStartTime;
-          const remainingSec = Math.max(0, (PAUSE_DURATION_MS - elapsedMs) / 1000);
-          setPatrolCountdown(remainingSec);
-
-          if (elapsedMs >= PAUSE_DURATION_MS) {
-            clearInterval(patrolTimerRef.current);
-            patrolTimerRef.current = null;
-            setPatrolCountdown(null);
-
-            const rawLoc = (robotPosRef.current && mapData)
-              ? getGridPointFromVector3(robotPosRef.current, mapData.gridSize)
-              : (path.length > 0 ? path[path.length - 1] : mapData.start);
-            const currentLoc = getNearestRoadPoint(rawLoc, mapData);
-            const targetLoc = getNearestRoadPoint(nextTask.location, mapData);
-            const nextPath = calculatePath(currentLoc, targetLoc, [...(mapData.obstacles || []), ...userBlockers], mapData, true);
-            if (nextPath.length > 0) {
-              setPath(nextPath);
-              setCurrentPosIndex(0);
-              setRobotState(prev => prev === 'mission' ? 'mission' : 'patrol');
-              setIsPlaying(true);
-              addExplanation('🚀 Resuming navigation along designated route.');
-            } else {
-              addExplanation('Route calculation obstructed. Proceeding to next open patrol checkpoint.');
-              dispatchPatrolCheckpoint((patrolIndexRef.current + 1) % PATROL_CHECKPOINTS.length);
-            }
+        isRecalculating.current = true;
+        
+        setTimeout(() => {
+          const currentLoc = path.length > 0 ? path[path.length - 1] : mapData.start;
+          const nextPath = calculatePath(currentLoc, nextTask.location, [...(mapData.obstacles || []), ...userBlockers], mapData);
+          
+          if (nextPath.length > 0) {
+            setPath(nextPath);
+            setCurrentPosIndex(0);
+            setRobotState(prev => prev === 'mission' ? 'mission' : 'patrol');
+            setIsPlaying(true);
+            addExplanation(`Resuming mission to ${nextTask.locationName}.`);
+          } else {
+            addExplanation(`Route calculation to ${nextTask.locationName} failed.`);
+            setRobotState('idle');
           }
-        }, 100);
+          isRecalculating.current = false;
+        }, 800);
       } else {
-        // Continuous Repeating Patrol Loop: Pause exactly 5.0 seconds at destination, then smoothly advance
         setIsPlaying(false);
-        setIsFollowingAlternateRoute(false);
-        addExplanation('📍 Patrol destination reached. Pausing 5.0 seconds for inspection in IDLE state.');
-
-        if (patrolTimerRef.current) {
-          clearInterval(patrolTimerRef.current);
-          patrolTimerRef.current = null;
+        if (isIdleMode) {
+          setRobotState('idle');
+          addExplanation('Mission complete. Idle mode active, standing by.');
+        } else {
+          setRobotState('patrol');
+          addExplanation('Mission complete. Waiting 2.5s before returning to patrol mode.');
         }
-
-        setPatrolCountdown(5.0);
-        const pauseStartTime = Date.now();
-        const PAUSE_DURATION_MS = 5000; // Exactly 5.0 seconds
-
-        patrolTimerRef.current = setInterval(() => {
-          const elapsedMs = Date.now() - pauseStartTime;
-          const remainingSec = Math.max(0, (PAUSE_DURATION_MS - elapsedMs) / 1000);
-          setPatrolCountdown(remainingSec);
-
-          if (elapsedMs >= PAUSE_DURATION_MS) {
-            clearInterval(patrolTimerRef.current);
-            patrolTimerRef.current = null;
-            setPatrolCountdown(null);
-
-            // Advance smoothly to next checkpoint in continuous repeating loop
-            const nextIdx = (patrolIndexRef.current + 1) % PATROL_CHECKPOINTS.length;
-            addExplanation('⏱️ Inspection pause complete. Returning to MOVING state and continuing autonomous patrol.');
-            dispatchPatrolCheckpoint(nextIdx);
-          }
-        }, 100);
       }
     }
   };
@@ -5108,7 +2599,23 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
               handleEmergencyCall(gridP);
             }} 
           />
-          <RoomsRender rooms={rooms} gridSize={gridSize} onSelectRoom={setSelectedRoom} />
+          {useMemo(() => rooms?.map((room: Room) => {
+            const width = (room.end.x - room.start.x + 1) * 0.75;
+            const depth = (room.end.y - room.start.y + 1) * 0.75;
+            const height = 3;
+            const x = (room.start.x + room.end.x) / 2 - gridSize.x / 2;
+            const z = (room.start.y + room.end.y) / 2 - gridSize.y / 2;
+            return (
+              <group key={room.id} position={[x, height / 2, z]} onClick={(e) => { e.stopPropagation(); setSelectedRoom(room); }}>
+                <BuildingModel room={room} width={width} height={height} depth={depth} />
+                <Html position={[0, height / 2 + 1.5, 0]} center style={{ pointerEvents: 'none' }}>
+                  <div className="text-[10px] font-bold text-white bg-black/80 px-2 py-1 rounded shadow-lg whitespace-nowrap">
+                    {room.name}
+                  </div>
+                </Html>
+              </group>
+            );
+          }), [rooms, gridSize, setSelectedRoom])}
           <RoadsRender roads={mapData.roads || []} gridSize={gridSize} />
           <BlockersRender blockers={userBlockers} gridSize={gridSize} roads={mapData.roads || []} />
           <CrowdsRender crowds={crowds} gridSize={gridSize} />
@@ -5119,29 +2626,19 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
              <SciFiGate position={getGridPosition({ x: 62, y: 86, f: 0 }, gridSize, 0)} scale={3} />
           )}
 
-          {/* Continuous Clear Drivable Blue Route Line & Temporary Orange Diversion Line */}
-          <DrivablePathLine 
-            drivableRouteRef={drivableRouteRef} 
-            diversionRouteRef={diversionRouteRef}
-            drivableRouteColorsRef={drivableRouteColorsRef}
-            path={path} 
-            gridSize={gridSize} 
-            isMapView={isMapView} 
-            color={activePathColor} 
-            lineWidth={8.0} 
-            opacity={1.0} 
-          />
+          {/* Active Path */}
+          {path.length > 0 && (
+            <PathLine path={path} currentIndex={currentPosIndex} gridSize={gridSize} isMapView={isMapView} color={activePathColor} opacity={0.9} />
+          )}
           
           {dynamicObstacles.map((obs, idx) => (
             <MovingEntity 
-              key={obs.id || idx} 
+              key={idx} 
               obstacle={obs} 
               gridSize={gridSize} 
               isMapView={isMapView} 
               robotPosRef={robotPosRef}
               allObstaclesRef={dynamicObstaclesRef}
-              mapData={mapData}
-              userBlockers={userBlockers}
             />
           ))}
 
@@ -5154,23 +2651,12 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
               isMapView={isMapView} 
               speed={(robotState === 'emergency_response' ? 25 : 10) * (speedLimit / 50)} 
               dynamicObstaclesRef={dynamicObstaclesRef}
-              staticObstacles={allStaticObstacles}
-              drivableRouteRef={drivableRouteRef}
-              diversionRouteRef={diversionRouteRef}
-              drivableRouteColorsRef={drivableRouteColorsRef}
-              upcomingLoopPoints3D={robotState === 'patrol' ? upcomingPatrolPoints3D : []}
               onReachNode={handleReachNode}
               onMissionComplete={handleMissionComplete}
               onObstacleDetected={handleObstacleDetected}
-              onBarricadeBlocked={handleBarricadeBlocked}
               robotPosRef={robotPosRef}
               robotRotRef={robotRotRef}
               isEmergency={robotState === 'emergency_response' || robotState === 'emergency_to_ctr' || robotState === 'ctr_to_emergency'}
-              addExplanation={addExplanation}
-              mapData={mapData}
-              isPausedAtDestination={isPausedAtDestination}
-              isFollowingAlternateRoute={isFollowingAlternateRoute}
-              userBlockers={userBlockers}
             />
           )}
         </Canvas>
@@ -5267,13 +2753,43 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
                 <div className="flex items-center justify-between">
                   <h4 className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Mission Telemetry</h4>
                   <div className="flex gap-2">
-                    <div 
-                      className="px-3 py-1.5 rounded-lg text-[10px] font-mono font-bold flex items-center gap-1.5 border border-cyan-500/40 bg-cyan-500/10 text-cyan-300 shadow-[0_0_12px_rgba(6,182,212,0.25)] select-none"
-                      title="Autonomous Patrol Mode Active"
+                    <button
+                      onClick={() => {
+                        const nextIdle = !isIdleMode;
+                        setIsIdleMode(nextIdle);
+                        if (nextIdle) {
+                          if (mapData && mapData.rooms && mapData.rooms.length > 0) {
+                            let nearestRoom = mapData.rooms[0];
+                            let minDist = Infinity;
+                            const currentLoc = path.length > 0 && currentPosIndex < path.length ? path[currentPosIndex] : mapData.start;
+                            mapData.rooms.forEach(r => {
+                                const dist = Math.abs(r.door.x - currentLoc.x) + Math.abs(r.door.y - currentLoc.y);
+                                if (dist < minDist) { minDist = dist; nearestRoom = r; }
+                            });
+                            const allObstacles = [...(mapData.obstacles || []), ...userBlockers];
+                            const parkPath = calculatePath(currentLoc, nearestRoom.door || nearestRoom.start, allObstacles, mapData);
+                            if (parkPath.length > 0) {
+                               setPath(parkPath);
+                               setCurrentPosIndex(0);
+                               setIsPlaying(true);
+                               setRobotState('idle'); 
+                               addExplanation(`Idle mode activated. Parking safely at ${nearestRoom.name}.`);
+                            } else {
+                               setIsPlaying(false);
+                               setRobotState('idle');
+                               addExplanation("Idle mode activated. Halting immediately.");
+                            }
+                          }
+                        } else {
+                          setRobotState('patrol');
+                          addExplanation("Idle mode deactivated. Resuming patrol.");
+                        }
+                      }}
+                      className={`px-3 py-1.5 rounded-lg text-[10px] font-bold flex items-center gap-1.5 transition-colors border ${isIdleMode ? 'bg-gray-500/20 text-white border-gray-500/50' : 'bg-transparent text-gray-500 border-white/10 hover:bg-white/5'}`}
+                      title="Toggle Idle Mode"
                     >
-                      <span className="w-2 h-2 rounded-full bg-cyan-400 animate-pulse"></span>
-                      AUTONOMOUS PATROL
-                    </div>
+                      <Pause className="w-3.5 h-3.5" /> IDLE
+                    </button>
                     <button 
                       onClick={togglePower}
                       className={`px-3 py-1.5 rounded-lg text-[10px] font-bold transition-colors border ${isOn ? 'bg-red-500/10 text-red-400 border-red-500/30 hover:bg-red-500/20' : 'bg-green-500/10 text-green-400 border-green-500/30 hover:bg-green-500/20'}`}
@@ -5296,11 +2812,13 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
                   <div className="bg-white/5 border border-white/10 rounded-xl p-3 shadow-inner flex flex-col justify-center">
                     <span className="text-[9px] font-bold text-gray-400 uppercase tracking-widest block mb-1">STATUS</span>
                     <span className={`text-sm font-black uppercase tracking-wider truncate ${
-                      patrolCountdown !== null ? 'text-emerald-400 animate-pulse' :
                       robotState === 'charging' ? 'text-yellow-400' : 
-                      'text-cyan-400'
+                      robotState === 'patrol' ? 'text-blue-400' : 
+                      robotState === 'mission' ? 'text-green-400' : 
+                      robotState === 'emergency_response' ? 'text-red-500 animate-pulse' : 
+                      'text-gray-300'
                     }`}>
-                      {patrolCountdown !== null ? `IDLE (${patrolCountdown.toFixed(1)}s)` : 'AUTONOMOUS PATROL'}
+                      {robotState.replace('_', ' ')}
                     </span>
                   </div>
                   <div className="bg-white/5 border border-white/10 rounded-xl p-3 shadow-inner">
@@ -5310,44 +2828,6 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
                   <div className="bg-white/5 border border-white/10 rounded-xl p-3 shadow-inner">
                     <span className="text-[9px] font-bold text-gray-400 uppercase tracking-widest block mb-1">ETA</span>
                     <span className="text-lg font-black text-white">{path.length > 0 ? Math.ceil((path.length - currentPosIndex) * 0.5) : '--'} <span className="text-[10px] font-bold text-gray-500">min</span></span>
-                  </div>
-
-                  {/* Autonomous Navigation System Status Card */}
-                  <div className="col-span-2 bg-gradient-to-r from-sky-950/40 via-sky-900/20 to-blue-950/40 border border-sky-500/30 rounded-xl p-3 shadow-inner flex items-center justify-between">
-                    <div>
-                      <span className="text-[9px] font-bold text-sky-400 uppercase tracking-widest block">
-                        AUTONOMOUS NAVIGATION
-                      </span>
-                      <span className="text-sm font-black text-white tracking-wide">
-                        PATROL GUIDANCE ACTIVE
-                      </span>
-                    </div>
-                    {patrolCountdown !== null ? (
-                      <span className="px-3 py-1 bg-sky-500/20 text-sky-300 border border-sky-500/40 rounded-lg text-xs font-mono font-black animate-pulse shadow-[0_0_12px_rgba(56,189,248,0.4)]">
-                        PAUSING: {patrolCountdown.toFixed(1)}s
-                      </span>
-                    ) : (
-                      <span className="px-2.5 py-1 bg-sky-500/20 text-sky-300 border border-sky-500/30 rounded-lg text-xs font-mono font-bold">
-                        CRUISING
-                      </span>
-                    )}
-                  </div>
-
-                  {/* Real-world Navigation Path Legend Card */}
-                  <div className="col-span-2 bg-slate-900/70 border border-white/10 rounded-xl p-2.5 shadow-inner flex flex-col gap-1.5">
-                    <span className="text-[9px] font-bold text-gray-400 uppercase tracking-widest">
-                      Active Trajectory Legend
-                    </span>
-                    <div className="flex items-center justify-between gap-2 text-[10px] font-mono font-bold">
-                      <div className="flex items-center gap-2">
-                        <span className="w-5 h-1.5 rounded-full bg-[#38bdf8] shadow-[0_0_8px_#38bdf8]"></span>
-                        <span className="text-sky-300">Normal Route</span>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <span className="w-5 h-1.5 rounded-full bg-[#f97316] shadow-[0_0_8px_#f97316]"></span>
-                        <span className="text-orange-400">Temporary Diversion</span>
-                      </div>
-                    </div>
                   </div>
                 </div>
 
