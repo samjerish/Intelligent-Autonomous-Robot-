@@ -2439,7 +2439,7 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
       : (path.length > 0 ? path[path.length - 1] : mapData.start);
     
     // Save original mission if we are not already in temporary detour state
-    if (robotState !== 'reversing' && robotState !== 'waiting_for_clearance' && robotState !== 'evading_obstacle' && robotState !== 'charging' && robotState !== 'emergency_response') {
+    if (robotState !== 'evading_obstacle' && robotState !== 'charging' && robotState !== 'emergency_response') {
       originalMissionRef.current = { path: [...path], index: currentPosIndex };
     }
     
@@ -2941,12 +2941,13 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
           
           {dynamicObstacles.map((obs, idx) => (
             <MovingEntity 
-              key={idx} 
+              key={obs.id || idx} 
               obstacle={obs} 
               gridSize={gridSize} 
               isMapView={isMapView} 
               robotPosRef={robotPosRef}
               allObstaclesRef={dynamicObstaclesRef}
+              robotStateRef={robotStateRef}
             />
           ))}
 
@@ -2957,7 +2958,7 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
               isPlaying={isPlaying} 
               gridSize={gridSize} 
               isMapView={isMapView} 
-              speed={(robotState === 'emergency_response' ? 25 : 10) * (speedLimit / 50)} 
+              speed={(robotState === 'emergency_response' ? 25 : (robotState === 'reversing' ? 6 : 10)) * (speedLimit / 50)} 
               dynamicObstaclesRef={dynamicObstaclesRef}
               onReachNode={handleReachNode}
               onMissionComplete={handleMissionComplete}
@@ -2965,6 +2966,7 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
               robotPosRef={robotPosRef}
               robotRotRef={robotRotRef}
               isEmergency={robotState === 'emergency_response' || robotState === 'emergency_to_ctr' || robotState === 'ctr_to_emergency'}
+              robotState={robotState}
             />
           )}
         </Canvas>
