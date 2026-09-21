@@ -99,39 +99,90 @@ const CameraController = ({ isFollowing, robotPosRef, robotRotRef, controlsRef, 
   return null;
 };
 
-const MovingEntity = ({ obstacle, gridSize, isMapView, robotPosRef, allObstaclesRef }: { obstacle: DynamicObstacle, gridSize: GridPoint, isMapView: boolean, robotPosRef?: React.MutableRefObject<THREE.Vector3 | null>, allObstaclesRef?: React.MutableRefObject<DynamicObstacle[]> }) => {
+const getGridPosition = (gridPoint: GridPoint, gridSize: GridPoint, height = 0.5, _isMapView = false): [number, number, number] => {
+  const offsetX = (gridSize.x * CELL_SIZE) / 2;
+  const offsetZ = (gridSize.y * CELL_SIZE) / 2;
+  return [
+    (gridPoint.x * CELL_SIZE) - offsetX + (CELL_SIZE / 2),
+    height,
+    (gridPoint.y * CELL_SIZE) - offsetZ + (CELL_SIZE / 2)
+  ];
+};
+
+const getGridPointFromVector3 = (point: THREE.Vector3, gridSize: GridPoint): GridPoint => {
+  const offsetX = (gridSize.x * CELL_SIZE) / 2;
+  const offsetZ = (gridSize.y * CELL_SIZE) / 2;
+  const gridX = Math.floor((point.x + offsetX) / CELL_SIZE);
+  const gridZ = Math.floor((point.z + offsetZ) / CELL_SIZE);
+  const clampedX = Math.max(0, Math.min(gridSize.x - 1, gridX));
+  const clampedZ = Math.max(0, Math.min(gridSize.y - 1, gridZ));
+  return { x: clampedX, y: clampedZ, f: 0 };
+};
+
+const MovingEntity = ({ 
+  obstacle, 
+  gridSize, 
+  isMapView, 
+  robotPosRef, 
+  allObstaclesRef,
+  robotStateRef
+}: { 
+  obstacle: DynamicObstacle;
+  gridSize: GridPoint;
+  isMapView: boolean;
+  robotPosRef?: React.MutableRefObject<THREE.Vector3 | null>;
+  allObstaclesRef?: React.MutableRefObject<DynamicObstacle[]>;
+  robotStateRef?: React.MutableRefObject<RobotState>;
+}) => {
   const ref = useRef<THREE.Group>(null);
   
   useFrame((_state, delta) => {
     if (!ref.current || obstacle.path.length === 0 || !obstacle.isMoving) return;
     const currentPos = ref.current.position;
+    obstacle.currentPosVector = currentPos.clone();
+    obstacle.pos = getGridPointFromVector3(currentPos, gridSize);
     
-    // Anti-overlap: Yield to robot
+    const targetNode = obstacle.path[Math.min(obstacle.currentIndex, obstacle.path.length - 1)];
+    const [tx, ty, tz] = getGridPosition(targetNode, gridSize, obstacle.type === 'car' ? 0.2 : 0.5, isMapView);
+    const targetVector = new THREE.Vector3(tx, ty, tz);
+    const moveDir = new THREE.Vector3().subVectors(targetVector, currentPos).normalize();
+
+    // 1. Cooperative Yielding to Robot:
+    // If the robot is backing up or waiting for clearance, the robot has yielded to let the obstacle pass!
+    // Obstacle should only pause if very close to a non-yielding robot and driving/walking directly towards it.
     if (robotPosRef && robotPosRef.current) {
-      if (currentPos.distanceTo(robotPosRef.current) < 2.5) {
-        return; // Stop moving, wait for robot to pass
+      const isRobotYielding = robotStateRef && (robotStateRef.current === 'reversing' || robotStateRef.current === 'waiting_for_clearance');
+      const distToRobot = currentPos.distanceTo(robotPosRef.current);
+      
+      if (!isRobotYielding && distToRobot < (obstacle.type === 'car' ? 1.5 : 0.9)) {
+        const toRobot = new THREE.Vector3().subVectors(robotPosRef.current, currentPos).normalize();
+        if (moveDir.dot(toRobot) > 0.3) {
+          return; // Pause and let active robot pass
+        }
       }
     }
     
-    const targetNode = obstacle.path[Math.min(obstacle.currentIndex, obstacle.path.length - 1)];
-    
-    // Anti-overlap: Yield to other obstacles
+    // 2. Headway & Anti-Overlap with Other Dynamic Obstacles:
+    // Uses real-time 3D vector positions to prevent cars and people from dog-piling or clipping
     if (allObstaclesRef && allObstaclesRef.current) {
-       const isBlockedByAnother = allObstaclesRef.current.some(other => 
-           other.id !== obstacle.id && 
-           other.pos.x === targetNode.x && 
-           other.pos.y === targetNode.y && 
-           other.pos.f === targetNode.f
-       );
-       // Basic tie-breaker: obstacle with lower ID yields
-       if (isBlockedByAnother && obstacle.id > allObstaclesRef.current.find(o => o.pos.x === targetNode.x && o.pos.y === targetNode.y)?.id!) {
-           return;
-       }
+      const minHeadway = obstacle.type === 'car' ? 1.8 : 1.0;
+      for (const other of allObstaclesRef.current) {
+        if (other.id === obstacle.id || !other.currentPosVector) continue;
+        const distToOther = currentPos.distanceTo(other.currentPosVector);
+        if (distToOther < minHeadway) {
+          const toOther = new THREE.Vector3().subVectors(other.currentPosVector, currentPos).normalize();
+          // If the other obstacle is in our forward path cone, hold back to maintain headway
+          if (moveDir.dot(toOther) > 0.35) {
+            return;
+          }
+          // Break deadlocks if two obstacles are very close in the same node
+          if (distToOther < 0.6 && obstacle.id > other.id) {
+            return;
+          }
+        }
+      }
     }
 
-    const [tx, ty, tz] = getGridPosition(targetNode, gridSize, obstacle.type === 'car' ? 0.2 : 0.5, isMapView);
-    const targetVector = new THREE.Vector3(tx, ty, tz);
-    
     const dist = currentPos.distanceTo(targetVector);
     if (dist < 0.05) {
       if (obstacle.currentIndex < obstacle.path.length - 1) {
@@ -192,25 +243,6 @@ const MovingEntity = ({ obstacle, gridSize, isMapView, robotPosRef, allObstacles
   );
 };
 
-const getGridPosition = (gridPoint: GridPoint, gridSize: GridPoint, height = 0.5, _isMapView = false): [number, number, number] => {
-  const offsetX = (gridSize.x * CELL_SIZE) / 2;
-  const offsetZ = (gridSize.y * CELL_SIZE) / 2;
-  return [
-    (gridPoint.x * CELL_SIZE) - offsetX + (CELL_SIZE / 2),
-    height,
-    (gridPoint.y * CELL_SIZE) - offsetZ + (CELL_SIZE / 2)
-  ];
-};
-
-const getGridPointFromVector3 = (point: THREE.Vector3, gridSize: GridPoint): GridPoint => {
-  const offsetX = (gridSize.x * CELL_SIZE) / 2;
-  const offsetZ = (gridSize.y * CELL_SIZE) / 2;
-  const gridX = Math.floor((point.x + offsetX) / CELL_SIZE);
-  const gridZ = Math.floor((point.z + offsetZ) / CELL_SIZE);
-  const clampedX = Math.max(0, Math.min(gridSize.x - 1, gridX));
-  const clampedZ = Math.max(0, Math.min(gridSize.y - 1, gridZ));
-  return { x: clampedX, y: clampedZ, f: 0 };
-};
 
 const RoadsRender = ({ roads, gridSize }: { roads: GridPoint[], gridSize: GridPoint }) => {
   if (!roads || roads.length === 0) return null;
@@ -1173,7 +1205,8 @@ export const DetailedRobot = ({ isMoving, showFeatures = false, activeFeature = 
 
 const Robot = ({
   path, currentIndex, isPlaying, gridSize, isMapView, speed, dynamicObstaclesRef,
-  onReachNode, onMissionComplete, onObstacleDetected, robotPosRef, robotRotRef, isEmergency = false
+  onReachNode, onMissionComplete, onObstacleDetected, robotPosRef, robotRotRef, isEmergency = false,
+  robotState
 }: {
   path: GridPoint[];
   currentIndex: number;
@@ -1188,6 +1221,7 @@ const Robot = ({
   robotPosRef: React.MutableRefObject<THREE.Vector3 | null>;
   robotRotRef: React.MutableRefObject<number>;
   isEmergency?: boolean;
+  robotState?: RobotState;
 }) => {
   const ref = useRef<THREE.Group>(null);
   const isMovingRef = useRef(false);
@@ -1225,18 +1259,35 @@ const Robot = ({
 
     if (isPlaying) {
       // --- Sensor Logic: Check for dynamic obstacles ahead ---
-      if (dynamicObstaclesRef && dynamicObstaclesRef.current.length > 0) {
+      // When reversing or waiting for clearance, do not trigger obstacle alarms on obstacles we are clearing from
+      if (robotState !== 'reversing' && robotState !== 'waiting_for_clearance' && dynamicObstaclesRef && dynamicObstaclesRef.current.length > 0) {
         const upcomingPath = path.slice(currentIndex, currentIndex + 4);
         for (const obs of dynamicObstaclesRef.current) {
           const obsTarget = obs.path[Math.min(obs.currentIndex, obs.path.length - 1)];
+          let detected = false;
           for (const p of upcomingPath) {
             if ((p.x === obs.pos.x && p.y === obs.pos.y) || (p.x === obsTarget.x && p.y === obsTarget.y)) {
-              onObstacleDetected(obs.pos);
-              return; // Pause movement this frame
+              detected = true;
+              break;
             }
+          }
+          if (!detected && obs.currentPosVector) {
+            const d = currentPos.distanceTo(obs.currentPosVector);
+            if (d < 1.6) {
+              const forwardDir = new THREE.Vector3().subVectors(targetVector, currentPos).normalize();
+              const toObs = new THREE.Vector3().subVectors(obs.currentPosVector, currentPos).normalize();
+              if (forwardDir.dot(toObs) > 0.2) {
+                detected = true;
+              }
+            }
+          }
+          if (detected) {
+            onObstacleDetected(obs.pos);
+            return; // Pause movement this frame
           }
         }
       }
+
 
       if (dist < 0.05) {
         if (isMovingRef.current) { isMovingRef.current = false; setIsMoving(false); }
@@ -1484,6 +1535,7 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
   const turnOffAfterEmergencyRef = useRef(false);
   const currentTaskIndexRef = useRef(0);
   const emergencyTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const clearanceCheckRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
     switch(robotState) {
@@ -1503,7 +1555,11 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
         setActivePathColor('#eab308'); // yellow
         break;
       case 'evading_obstacle':
+      case 'reversing':
         setActivePathColor('#f97316'); // orange
+        break;
+      case 'waiting_for_clearance':
+        setActivePathColor('#a855f7'); // purple
         break;
       default:
         setActivePathColor('#00ffff'); // cyan
@@ -1758,38 +1814,53 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
     const roads = mapData.roads;
     const obs: DynamicObstacle[] = [];
     
-    // Spawn 15 people and 7 cars walking/driving around
-    for (let i = 0; i < 22; i++) {
-      const start = roads[Math.floor(Math.random() * roads.length)];
-      const end = roads[Math.floor(Math.random() * roads.length)];
+    // Spawn a balanced, realistic set: 3 cars and 6 pedestrians with spaced-out routes
+    const totalEntities = 9;
+    for (let i = 0; i < totalEntities; i++) {
+      const isCar = i < 3;
+      // Pick start and end nodes with reasonable separation to prevent bunching
+      let start = roads[Math.floor(Math.random() * roads.length)];
+      let end = roads[Math.floor(Math.random() * roads.length)];
+      for (let attempt = 0; attempt < 5; attempt++) {
+        if (Math.abs(start.x - end.x) + Math.abs(start.y - end.y) >= 6) break;
+        end = roads[Math.floor(Math.random() * roads.length)];
+      }
+
       const path = calculatePath(start, end, [...(mapData.obstacles || []), ...userBlockers], mapData, true);
-      if (path.length > 0) {
+      if (path.length > 1) {
         obs.push({
           id: `obs_${i}`,
-          type: i < 7 ? 'car' : 'person',
+          type: isCar ? 'car' : 'person',
           pos: path[0],
           targetPos: end,
           path,
           currentIndex: 0,
-          speed: i < 7 ? 6 : (2 + Math.random() * 2),
+          speed: isCar ? 5.5 : (1.8 + Math.random() * 0.8),
           isMoving: true
         });
       }
     }
 
-    // Add a sudden crosser if we have a valid robot path
+    // Add dynamic pedestrian crosser if we have an active robot path
     if (robotPath && robotPath.length > 8) {
-      const crossPoint = robotPath[6]; // Place the person slightly ahead of robot
+      const crossPoint = robotPath[6];
       if (crossPoint) {
+        const crossNeighbors = roads.filter(r => 
+          (Math.abs(r.x - crossPoint.x) + Math.abs(r.y - crossPoint.y) === 1) &&
+          (r.x !== crossPoint.x || r.y !== crossPoint.y)
+        );
+        const crossStart = crossNeighbors[0] || crossPoint;
+        const crossEnd = crossNeighbors[crossNeighbors.length - 1] || crossPoint;
+        const crossPath = [crossStart, crossPoint, crossEnd];
+
         obs.push({
           id: 'sudden_crosser',
           type: 'person',
-          pos: crossPoint,
-          targetPos: crossPoint,
-          // They will basically just stand/pace directly on the robot's upcoming path
-          path: [crossPoint, crossPoint],
+          pos: crossStart,
+          targetPos: crossEnd,
+          path: crossPath,
           currentIndex: 0,
-          speed: 0.5,
+          speed: 1.6,
           isMoving: true
         });
       }
