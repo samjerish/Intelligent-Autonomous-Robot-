@@ -224,7 +224,19 @@ const RoadsRender = ({ roads, gridSize }: { roads: GridPoint[], gridSize: GridPo
   );
 };
 
-const TrafficBarricade = ({ position, rotationY, length = 1 }: { position: [number, number, number], rotationY: number, length?: number }) => {
+const TrafficBarricade = ({
+  position,
+  rotationY,
+  length = 1,
+  onContextMenu,
+  isPlacingBlocker,
+}: {
+  position: [number, number, number];
+  rotationY: number;
+  length?: number;
+  onContextMenu?: () => void;
+  isPlacingBlocker?: boolean;
+}) => {
   const lightRef1 = useRef<THREE.Mesh>(null);
   const lightRef2 = useRef<THREE.Mesh>(null);
   
@@ -245,7 +257,45 @@ const TrafficBarricade = ({ position, rotationY, length = 1 }: { position: [numb
   const topW = 0.8 * length;
 
   return (
-    <group position={position} rotation={[0, rotationY, 0]} scale={1.15}>
+    <group
+      position={position}
+      rotation={[0, rotationY, 0]}
+      scale={1.15}
+      onClick={(e) => {
+        // Prevent click from propagating to map underneath
+        e.stopPropagation();
+      }}
+      onContextMenu={(e) => {
+        e.nativeEvent?.preventDefault();
+        e.stopPropagation();
+        if (onContextMenu) onContextMenu();
+      }}
+      onPointerOver={(e) => {
+        if (isPlacingBlocker) {
+          e.stopPropagation();
+          document.body.style.cursor = 'pointer';
+        }
+      }}
+      onPointerOut={() => {
+        if (isPlacingBlocker) {
+          document.body.style.cursor = 'crosshair';
+        }
+      }}
+    >
+      {/* Invisible hit box for comfortable raycasting and right-click detection */}
+      <Box
+        args={[baseW, 1.2, 0.8]}
+        position={[0, 0.5, 0]}
+        onClick={(e) => { e.stopPropagation(); }}
+        onContextMenu={(e) => {
+          e.nativeEvent?.preventDefault();
+          e.stopPropagation();
+          if (onContextMenu) onContextMenu();
+        }}
+      >
+        <meshBasicMaterial transparent opacity={0} depthWrite={false} />
+      </Box>
+
       {/* Base */}
       <Box args={[baseW, 0.2, 0.4]} position={[0, 0.1, 0]} castShadow receiveShadow>
          <meshStandardMaterial color="#ea580c" roughness={0.8} />
@@ -284,11 +334,23 @@ const TrafficBarricade = ({ position, rotationY, length = 1 }: { position: [numb
   );
 };
 
-const BlockersRender = ({ blockers, gridSize, roads }: { blockers: GridPoint[], gridSize: GridPoint, roads: GridPoint[] }) => {
+const BlockersRender = ({
+  blockers,
+  gridSize,
+  roads,
+  onRemoveBlockerGroup,
+  isPlacingBlocker,
+}: {
+  blockers: GridPoint[];
+  gridSize: GridPoint;
+  roads: GridPoint[];
+  onRemoveBlockerGroup?: (group: GridPoint[]) => void;
+  isPlacingBlocker?: boolean;
+}) => {
   if (!blockers || blockers.length === 0) return null;
   
   const renderedSet = new Set<string>();
-  const barrierGroups = [];
+  const barrierGroups: { center: GridPoint; length: number; rotationY: number; group: GridPoint[] }[] = [];
 
   for (const b of blockers) {
     const key = `${b.x},${b.y}`;
@@ -337,7 +399,8 @@ const BlockersRender = ({ blockers, gridSize, roads }: { blockers: GridPoint[], 
     barrierGroups.push({
       center: { x: avgX, y: avgY, f: b.f },
       length: group.length,
-      rotationY
+      rotationY,
+      group,
     });
   }
 
@@ -345,7 +408,20 @@ const BlockersRender = ({ blockers, gridSize, roads }: { blockers: GridPoint[], 
     <group>
       {barrierGroups.map((bg, i) => {
         const [x, y, z] = getGridPosition(bg.center as any, gridSize, 0);
-        return <TrafficBarricade key={i} position={[x, y, z]} rotationY={bg.rotationY} length={bg.length} />;
+        return (
+          <TrafficBarricade
+            key={i}
+            position={[x, y, z]}
+            rotationY={bg.rotationY}
+            length={bg.length}
+            isPlacingBlocker={isPlacingBlocker}
+            onContextMenu={() => {
+              if (onRemoveBlockerGroup) {
+                onRemoveBlockerGroup(bg.group);
+              }
+            }}
+          />
+        );
       })}
     </group>
   );
@@ -1216,7 +1292,19 @@ const PathLine = ({ path, currentIndex, gridSize, isMapView, color = "#00ffff", 
 
 
 
-const EnvironmentMap = React.memo(({ mapData, isNight, isTargeting, onMapClick }: { mapData: MapData, isNight: boolean, isTargeting?: boolean, onMapClick?: (p: THREE.Vector3) => void }) => {
+const EnvironmentMap = React.memo(({
+  mapData,
+  isNight,
+  isTargeting,
+  onMapClick,
+  onMapRightClick,
+}: {
+  mapData: MapData;
+  isNight: boolean;
+  isTargeting?: boolean;
+  onMapClick?: (p: THREE.Vector3) => void;
+  onMapRightClick?: (p: THREE.Vector3) => void;
+}) => {
   const { gridSize } = mapData;
   const margin = 10; // Space between grid edge and compound wall
   const compSizeX = gridSize.x + margin * 2;
@@ -1237,6 +1325,13 @@ const EnvironmentMap = React.memo(({ mapData, isNight, isTargeting, onMapClick }
         receiveShadow
         onClick={(e) => {
           if (isTargeting && onMapClick) { e.stopPropagation(); onMapClick(e.point); }
+        }}
+        onContextMenu={(e) => {
+          e.nativeEvent.preventDefault();
+          if (isTargeting && onMapRightClick) {
+            e.stopPropagation();
+            onMapRightClick(e.point);
+          }
         }}
         onPointerOver={() => { if (isTargeting) document.body.style.cursor = 'crosshair'; }}
         onPointerOut={() => { if (isTargeting) document.body.style.cursor = 'auto'; }}
@@ -1695,6 +1790,76 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
   const addExplanation = (msg: string) => {
     setAiExplanations(prev => [msg, ...prev].slice(0, 5));
   };
+
+  const getRoadBlockGroup = useCallback((gridP: GridPoint, roads: GridPoint[]): GridPoint[] => {
+    let toBlock: GridPoint[] = [gridP];
+    if (roads.some(r => r.x === gridP.x && r.y === gridP.y)) {
+      const hasEW = roads.some(r => r.y === gridP.y && (r.x === gridP.x + 1 || r.x === gridP.x - 1));
+      const hasNS = roads.some(r => r.x === gridP.x && (r.y === gridP.y + 1 || r.y === gridP.y - 1));
+      
+      if (hasEW && !hasNS) {
+        let dy = 1;
+        while (roads.some(r => r.x === gridP.x && r.y === gridP.y + dy)) {
+          toBlock.push({ ...gridP, y: gridP.y + dy });
+          dy++;
+        }
+        dy = -1;
+        while (roads.some(r => r.x === gridP.x && r.y === gridP.y + dy)) {
+          toBlock.push({ ...gridP, y: gridP.y + dy });
+          dy--;
+        }
+      } else if (hasNS && !hasEW) {
+        let dx = 1;
+        while (roads.some(r => r.y === gridP.y && r.x === gridP.x + dx)) {
+          toBlock.push({ ...gridP, x: gridP.x + dx });
+          dx++;
+        }
+        dx = -1;
+        while (roads.some(r => r.y === gridP.y && r.x === gridP.x + dx)) {
+          toBlock.push({ ...gridP, x: gridP.x + dx });
+          dx--;
+        }
+      }
+    }
+    return toBlock;
+  }, []);
+
+  const handleRemoveBlockerGroup = useCallback((groupToRemove: GridPoint[]) => {
+    setUserBlockers(prev => {
+      const next = prev.filter(b => !groupToRemove.some(cs => cs.x === b.x && cs.y === b.y && cs.f === b.f));
+      if (next.length !== prev.length) {
+        addExplanation("Road blocker removed. Route opened.");
+      }
+      return next;
+    });
+  }, []);
+
+  const handleRemoveBlockerAt = useCallback((gridP: GridPoint) => {
+    setUserBlockers(prev => {
+      const roads = mapData?.roads || [];
+      // 1. Direct match
+      let target = prev.find(b => b.x === gridP.x && b.y === gridP.y && b.f === gridP.f);
+      // 2. Near match within 2.5 tiles
+      if (!target) {
+        let minDist = 2.5;
+        for (const b of prev) {
+          const d = Math.hypot(b.x - gridP.x, b.y - gridP.y);
+          if (d < minDist) {
+            minDist = d;
+            target = b;
+          }
+        }
+      }
+      if (!target) return prev;
+
+      const toRemove = getRoadBlockGroup(target, roads);
+      const next = prev.filter(b => !toRemove.some(cs => cs.x === b.x && cs.y === b.y && cs.f === b.f));
+      if (next.length !== prev.length) {
+        addExplanation("Road blocker removed. Route opened.");
+      }
+      return next;
+    });
+  }, [mapData, getRoadBlockGroup]);
 
   const resumeMissionTo = (currentLoc: GridPoint, targetLoc: GridPoint) => {
     if (!mapData) return;
@@ -2467,7 +2632,13 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
             )}
           </div>
         </div>
-        <Canvas shadows gl={{ antialias: true }} dpr={[1, 2]}>
+        {isPlacingBlocker && (
+          <div className="absolute top-16 left-1/2 -translate-x-1/2 z-30 bg-orange-950/90 border border-orange-500/60 text-orange-200 px-4 py-2 rounded-full shadow-2xl backdrop-blur-md flex items-center gap-2.5 text-xs font-medium pointer-events-none select-none">
+            <Construction className="w-4 h-4 text-orange-400 shrink-0" />
+            <span><strong className="text-white">Left-Click:</strong> Place Blocker &nbsp;•&nbsp; <strong className="text-white">Right-Click:</strong> Remove Blocker</span>
+          </div>
+        )}
+        <Canvas shadows gl={{ antialias: true }} dpr={[1, 2]} onContextMenu={(e) => e.preventDefault()}>
           {/* Sky background from real time */}
           <color attach="background" args={['#000000']} />
           {/* Camera — adjusted for a clean, isometric-like default view */}
@@ -2530,51 +2701,22 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
                 return;
               }
               if (isPlacingBlocker) {
+                // LEFT CLICK: Always place road blocker (never toggle off)
                 setUserBlockers(prev => {
                   const roads = mapData?.roads || [];
-                  const exists = prev.find(b => b.x === gridP.x && b.y === gridP.y && b.f === gridP.f);
-                  
-                  let toBlock: GridPoint[] = [gridP];
-                  if (roads.some(r => r.x === gridP.x && r.y === gridP.y)) {
-                    const hasEW = roads.some(r => r.y === gridP.y && (r.x === gridP.x + 1 || r.x === gridP.x - 1));
-                    const hasNS = roads.some(r => r.x === gridP.x && (r.y === gridP.y + 1 || r.y === gridP.y - 1));
-                    
-                    if (hasEW && !hasNS) {
-                      let dy = 1;
-                      while (roads.some(r => r.x === gridP.x && r.y === gridP.y + dy)) {
-                        toBlock.push({ ...gridP, y: gridP.y + dy });
-                        dy++;
-                      }
-                      dy = -1;
-                      while (roads.some(r => r.x === gridP.x && r.y === gridP.y + dy)) {
-                        toBlock.push({ ...gridP, y: gridP.y + dy });
-                        dy--;
-                      }
-                    } else if (hasNS && !hasEW) {
-                      let dx = 1;
-                      while (roads.some(r => r.y === gridP.y && r.x === gridP.x + dx)) {
-                        toBlock.push({ ...gridP, x: gridP.x + dx });
-                        dx++;
-                      }
-                      dx = -1;
-                      while (roads.some(r => r.y === gridP.y && r.x === gridP.x + dx)) {
-                        toBlock.push({ ...gridP, x: gridP.x + dx });
-                        dx--;
-                      }
+                  const toBlock = getRoadBlockGroup(gridP, roads);
+                  const newBlockers = [...prev];
+                  let added = false;
+                  toBlock.forEach(cs => {
+                    if (!newBlockers.some(b => b.x === cs.x && b.y === cs.y && b.f === cs.f)) {
+                      newBlockers.push(cs);
+                      added = true;
                     }
+                  });
+                  if (added) {
+                    addExplanation("Road blocker deployed on route.");
                   }
-
-                  if (exists) {
-                    return prev.filter(b => !toBlock.some(cs => cs.x === b.x && cs.y === b.y && cs.f === b.f));
-                  } else {
-                    const newBlockers = [...prev];
-                    toBlock.forEach(cs => {
-                       if (!newBlockers.some(b => b.x === cs.x && b.y === cs.y && b.f === cs.f)) {
-                          newBlockers.push(cs);
-                       }
-                    });
-                    return newBlockers;
-                  }
+                  return newBlockers;
                 });
                 return;
               }
@@ -2582,6 +2724,13 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
               document.body.style.cursor = 'auto';
               handleEmergencyCall(gridP);
             }} 
+            onMapRightClick={(p) => {
+              const gridP = getGridPointFromVector3(p, gridSize);
+              if (isPlacingBlocker) {
+                // RIGHT CLICK: Remove road blocker at clicked point
+                handleRemoveBlockerAt(gridP);
+              }
+            }}
           />
           {useMemo(() => rooms?.map((room: Room) => {
             const width = (room.end.x - room.start.x + 1) * 0.75;
@@ -2601,7 +2750,13 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
             );
           }), [rooms, gridSize, setSelectedRoom])}
           <RoadsRender roads={mapData.roads || []} gridSize={gridSize} />
-          <BlockersRender blockers={userBlockers} gridSize={gridSize} roads={mapData.roads || []} />
+          <BlockersRender
+            blockers={userBlockers}
+            gridSize={gridSize}
+            roads={mapData.roads || []}
+            onRemoveBlockerGroup={handleRemoveBlockerGroup}
+            isPlacingBlocker={isPlacingBlocker}
+          />
           <CrowdsRender crowds={crowds} gridSize={gridSize} />
           <PoliceVehicle policeState={policeState} policeStateRef={policeStateRef} gridSize={gridSize} isMapView={isMapView} onReachDestination={handlePoliceReachDestination} />
 
@@ -2864,7 +3019,9 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
                     </div>
                     <div>
                       <div className="font-bold uppercase tracking-wider text-sm">Place Road Blocker</div>
-                      <div className="text-[10px] opacity-70 mt-0.5 font-mono">Simulate a blocked route</div>
+                      <div className="text-[10px] opacity-70 mt-0.5 font-mono">
+                        {isPlacingBlocker ? 'Left-click: Place • Right-click: Remove' : 'Simulate a blocked route'}
+                      </div>
                     </div>
                   </button>
 
