@@ -2349,21 +2349,103 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
     };
   }, [mapData, isOn, robotState, path, currentPosIndex]);
 
+  const waitForObstacleToClear = () => {
+    if (clearanceCheckRef.current) {
+      clearInterval(clearanceCheckRef.current);
+      clearanceCheckRef.current = null;
+    }
+
+    let checkCount = 0;
+    const maxChecks = 15; // Check every 800ms for up to ~12s
+
+    clearanceCheckRef.current = setInterval(() => {
+      checkCount++;
+      if (!mapData) {
+        if (clearanceCheckRef.current) clearInterval(clearanceCheckRef.current);
+        return;
+      }
+
+      const orig = originalMissionRef.current;
+      const targetLoc = (orig && orig.path.length > 0)
+        ? orig.path[orig.path.length - 1]
+        : (path.length > 0 ? path[path.length - 1] : mapData.start);
+
+      const currentLoc = (path.length > 0 && currentPosIndex < path.length)
+        ? path[currentPosIndex]
+        : (robotPosRef.current ? getGridPointFromVector3(robotPosRef.current, mapData.gridSize) : mapData.start);
+
+      // Check current live dynamic obstacle positions
+      const dynamicPositions = dynamicObstaclesRef.current.map(o => o.pos);
+      const currentObstacles = [...(mapData.obstacles || []), ...userBlockers, ...dynamicPositions];
+
+      // Try forward path to target
+      const forwardPath = calculatePath(currentLoc, targetLoc, currentObstacles, mapData, true);
+
+      if (forwardPath.length > 0) {
+        if (clearanceCheckRef.current) {
+          clearInterval(clearanceCheckRef.current);
+          clearanceCheckRef.current = null;
+        }
+        addExplanation('Obstacle has moved! Road is now clear. Resuming mission forward.');
+        setPath(forwardPath);
+        setCurrentPosIndex(0);
+        setRobotState(orig ? 'mission' : 'patrol');
+        setIsPlaying(true);
+        originalMissionRef.current = null;
+        isRecalculating.current = false;
+        return;
+      }
+
+      if (checkCount >= maxChecks) {
+        if (clearanceCheckRef.current) {
+          clearInterval(clearanceCheckRef.current);
+          clearanceCheckRef.current = null;
+        }
+        // Try detour if route remains obstructed
+        const detourPath = calculateLongPath(currentLoc, targetLoc, currentObstacles, mapData);
+        if (detourPath.length > 0) {
+          addExplanation('Obstacle still present. Taking wide perimeter detour to destination.');
+          setPath(detourPath);
+          setCurrentPosIndex(0);
+          setRobotState(orig ? 'mission' : 'patrol');
+          setIsPlaying(true);
+          originalMissionRef.current = null;
+        } else {
+          addExplanation('Obstacle holding position. Continuing to monitor corridor safely...');
+          // Keep checking
+          setTimeout(() => waitForObstacleToClear(), 1500);
+        }
+        isRecalculating.current = false;
+      }
+    }, 800);
+  };
+
   const handleObstacleDetected = (obsPos: GridPoint) => {
     if (isRecalculating.current) return;
+    if (robotState === 'reversing' || robotState === 'waiting_for_clearance') return;
     isRecalculating.current = true;
-    
-    addExplanation(`CRITICAL: Dynamic Obstacle detected at (${obsPos.x}, ${obsPos.y}). Rerouting instantly...`);
     
     if (!mapData) {
        isRecalculating.current = false;
        return;
     }
-    const currentLoc = path[currentPosIndex];
-    const targetLoc = path[path.length - 1];
+    const currentLoc = (path.length > 0 && currentPosIndex < path.length)
+      ? path[currentPosIndex]
+      : (robotPosRef.current ? getGridPointFromVector3(robotPosRef.current, mapData.gridSize) : mapData.start);
     
-    // We treat the specific position of the dynamic obstacle as a hard blockage for this local recalculation
-    const allObstacles = [...(mapData.obstacles || []), ...userBlockers, obsPos];
+    const orig = originalMissionRef.current;
+    const targetLoc = (orig && orig.path.length > 0)
+      ? orig.path[orig.path.length - 1]
+      : (path.length > 0 ? path[path.length - 1] : mapData.start);
+    
+    // Save original mission if we are not already in temporary detour state
+    if (robotState !== 'reversing' && robotState !== 'waiting_for_clearance' && robotState !== 'evading_obstacle' && robotState !== 'charging' && robotState !== 'emergency_response') {
+      originalMissionRef.current = { path: [...path], index: currentPosIndex };
+    }
+    
+    // Gather all active dynamic obstacles
+    const dynamicPositions = dynamicObstaclesRef.current.map(o => o.pos);
+    const allObstacles = [...(mapData.obstacles || []), ...userBlockers, obsPos, ...dynamicPositions];
     
     let intermediateTarget = null;
     for (let i = currentPosIndex; i < path.length - 1; i++) {
@@ -2375,13 +2457,13 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
     
     let newPath: GridPoint[] = [];
     if (intermediateTarget) {
-      const fPath = calculatePath(currentLoc, intermediateTarget, allObstacles, mapData);
-      const rPath = calculatePath(intermediateTarget, targetLoc, allObstacles, mapData);
+      const fPath = calculatePath(currentLoc, intermediateTarget, allObstacles, mapData, true);
+      const rPath = calculatePath(intermediateTarget, targetLoc, allObstacles, mapData, true);
       if (fPath.length > 0 && rPath.length > 0) {
         newPath = [...fPath, fPath[fPath.length - 1], ...rPath.slice(1)];
       }
     } else {
-      newPath = calculatePath(currentLoc, targetLoc, allObstacles, mapData);
+      newPath = calculatePath(currentLoc, targetLoc, allObstacles, mapData, true);
     }
     
     if (newPath.length === 0) {
@@ -2396,37 +2478,34 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
       }
     }
     
+    // 1. Intelligent bypass around obstacles if road network allows
     if (newPath.length > 0) {
       setPath(newPath);
       setCurrentPosIndex(0);
       setIsPlaying(true);
-      addExplanation(`Successfully found alternative route avoiding obstacle! Resuming mission.`);
+      addExplanation(`Dynamic obstacle detected! Smart lane bypass calculated. Navigating around obstacle...`);
       isRecalculating.current = false;
-    } else {
-      const evadePath = calculateEvadePath(currentLoc, allObstacles, mapData);
-      if (evadePath.length > 0) {
-        addExplanation(`Path completely blocked! Evading to give space to obstacle...`);
-        if (robotState !== 'evading_obstacle' && robotState !== 'charging' && robotState !== 'emergency_response') {
-            originalMissionRef.current = { path: [...path], index: currentPosIndex };
-        }
-        setPath(evadePath);
-        setCurrentPosIndex(0);
-        setRobotState('evading_obstacle');
-        setIsPlaying(true);
-        isRecalculating.current = false;
-      } else {
-        addExplanation(`Trapped by obstacles. Waiting for space to clear...`);
-        if (robotState !== 'evading_obstacle' && robotState !== 'charging' && robotState !== 'emergency_response') {
-            originalMissionRef.current = { path: [...path], index: currentPosIndex };
-        }
-        setRobotState('evading_obstacle');
-        setIsPlaying(false);
-        setTimeout(() => {
-          isRecalculating.current = false;
-          setIsPlaying(true); // retry loop
-        }, 3000);
-      }
+      return;
     }
+    
+    // 2. Obstacle not leaving the way: back up to yield space for obstacle to pass
+    const reversePath = calculateReversePath(currentLoc, obsPos, path, currentPosIndex, allObstacles, mapData, 2);
+    if (reversePath.length > 1) {
+      addExplanation(`Obstacle blocking single lane. Backing up to create space for obstacle to pass...`);
+      setPath(reversePath);
+      setCurrentPosIndex(0);
+      setRobotState('reversing');
+      setIsPlaying(true);
+      isRecalculating.current = false;
+      return;
+    }
+    
+    // 3. If cannot reverse back, hold position safely and wait for obstacle to clear
+    addExplanation(`Corridor blocked ahead. Holding position safely and waiting for obstacle to move...`);
+    setIsPlaying(false);
+    setRobotState('waiting_for_clearance');
+    isRecalculating.current = false;
+    waitForObstacleToClear();
   };
 
 
@@ -2504,6 +2583,13 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
       setIsPlaying(false);
       setRobotState('off');
       addExplanation('Robot safely arrived at Robot Home. Power OFF and charging.');
+    } else if (robotState === 'reversing') {
+      setIsPlaying(false);
+      setRobotState('waiting_for_clearance');
+      addExplanation('Backed up safely. Waiting for obstacle to clear the road...');
+      waitForObstacleToClear();
+    } else if (robotState === 'waiting_for_clearance') {
+      // Already awaiting clearance
     } else if (robotState === 'evading_obstacle') {
       addExplanation('Evaded obstacle. Retrying route to target...');
       const orig = originalMissionRef.current;
