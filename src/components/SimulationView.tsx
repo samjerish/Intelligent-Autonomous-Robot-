@@ -17,7 +17,6 @@ import {
   Sphere,
   Cylinder,
   RoundedBox,
-  Text,
 } from '@react-three/drei';
 import * as THREE from 'three';
 
@@ -1262,21 +1261,6 @@ const EnvironmentMap = React.memo(({ mapData, isNight, isTargeting, onMapClick }
       <Box args={[wallThickness, wallHeight, compSizeY]} position={[-halfX - wallThickness/2, wallHeight/2, 0]} castShadow receiveShadow>
         <meshStandardMaterial color={wallColor} />
       </Box>
-
-      {/* ASPIRE Text on the inner front wall */}
-      <Text
-        position={[0, wallHeight/2 + 0.5, -halfY + 0.1]}
-        rotation={[0, 0, 0]}
-        fontSize={8}
-        fontWeight="900"
-        color="#0ea5e9"
-        anchorX="center"
-        anchorY="middle"
-        outlineWidth={0.2}
-        outlineColor="#ffffff"
-      >
-        ASPIRE
-      </Text>
     </group>
   );
 });
