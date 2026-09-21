@@ -836,15 +836,25 @@ const BuildingModel = React.memo(({ room, width, height, depth }: { room: Room, 
   } else if (type === 'hostel') {
     return (
       <group>
+        {/* Main Walls - matte finish to eliminate harsh specular glare */}
         <Box args={[width, height * 1.2, depth]} position={[0, height * 0.1, 0]} castShadow receiveShadow>
-          <meshStandardMaterial color="#e2e8f0" />
+          <meshStandardMaterial color="#cbd5e1" roughness={0.95} metalness={0.0} />
         </Box>
-        {/* Balconies */}
-        <Box args={[width * 1.05, height * 0.2, depth * 1.05]} position={[0, height * 0.2, 0]} castShadow>
-          <meshStandardMaterial color="#94a3b8" />
+        {/* Lower Balcony Band */}
+        <Box args={[width * 1.04, height * 0.15, depth * 1.04]} position={[0, height * 0.05, 0]} castShadow>
+          <meshStandardMaterial color="#94a3b8" roughness={0.9} metalness={0.0} />
         </Box>
-        <Box args={[width * 1.05, height * 0.2, depth * 1.05]} position={[0, height * 0.6, 0]} castShadow>
-          <meshStandardMaterial color="#94a3b8" />
+        {/* Upper Balcony Band (kept safely below the roof line to prevent coplanar z-fighting) */}
+        <Box args={[width * 1.04, height * 0.15, depth * 1.04]} position={[0, height * 0.4, 0]} castShadow>
+          <meshStandardMaterial color="#94a3b8" roughness={0.9} metalness={0.0} />
+        </Box>
+        {/* Dark Matte Roof Parapet - absorbs light and eliminates all top glare */}
+        <Box args={[width * 1.02, 0.25, depth * 1.02]} position={[0, height * 0.7 + 0.1, 0]} castShadow receiveShadow>
+          <meshStandardMaterial color="#334155" roughness={1.0} metalness={0.0} />
+        </Box>
+        {/* Dark Recessed Roof Surface */}
+        <Box args={[width * 0.94, 0.26, depth * 0.94]} position={[0, height * 0.7 + 0.11, 0]} receiveShadow>
+          <meshStandardMaterial color="#1e293b" roughness={1.0} metalness={0.0} />
         </Box>
       </group>
     );
