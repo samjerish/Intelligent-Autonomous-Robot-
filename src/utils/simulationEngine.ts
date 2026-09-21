@@ -194,6 +194,8 @@ export function calculateEvadePath(start: GridPoint, obstacles: GridPoint[], map
   const { gridSize } = mapData;
   const obstacleSet = new Set(obstacles?.map(o => `${o.x},${o.y},${o.f}`));
   const isObstacle = (x: number, y: number, f: number) => obstacleSet.has(`${x},${y},${f}`);
+  const roadSet = new Set(mapData.roads?.map(r => `${r.x},${r.y},${r.f}`) || []);
+  const isRoad = (x: number, y: number, f: number) => roadSet.size === 0 || roadSet.has(`${x},${y},${f}`);
 
   const queue = [{ pos: start, path: [start] }];
   const visited = new Set<string>();
@@ -236,6 +238,7 @@ export function calculateEvadePath(start: GridPoint, obstacles: GridPoint[], map
       if (
         n.x >= 0 && n.x < gridSize.x &&
         n.y >= 0 && n.y < gridSize.y &&
+        isRoad(n.x, n.y, n.f) &&
         !isObstacle(n.x, n.y, n.f) &&
         !visited.has(`${n.x},${n.y},${n.f}`)
       ) {
@@ -247,3 +250,106 @@ export function calculateEvadePath(start: GridPoint, obstacles: GridPoint[], map
   
   return bestPath;
 }
+
+/**
+ * Calculates a safe reversing path for the robot when blocked by an obstacle that isn't moving.
+ * 1. Prefers reversing along the robot's recent travel path (history nodes), which are guaranteed valid roads.
+ * 2. If historical path nodes aren't available, finds an unblocked road neighbor in the direction away from the obstacle.
+ * Returns an array of GridPoints starting with currentLoc and moving 1-2 steps backward.
+ */
+export function calculateReversePath(
+  currentLoc: GridPoint,
+  obsPos: GridPoint,
+  currentPath: GridPoint[],
+  currentPosIndex: number,
+  obstacles: GridPoint[],
+  mapData: MapData,
+  steps: number = 2
+): GridPoint[] {
+  const obstacleSet = new Set(obstacles?.map(o => `${o.x},${o.y},${o.f}`) || []);
+  const roadSet = new Set(mapData.roads?.map(r => `${r.x},${r.y},${r.f}`) || []);
+  const isRoad = (x: number, y: number, f: number) => roadSet.size === 0 || roadSet.has(`${x},${y},${f}`);
+  const isBlocked = (x: number, y: number, f: number) => obstacleSet.has(`${x},${y},${f}`);
+
+  // Strategy 1: Reverse along recent path history if available
+  if (currentPath && currentPosIndex > 0) {
+    const reverseSteps: GridPoint[] = [currentLoc];
+    for (let s = 1; s <= steps; s++) {
+      const prevIdx = currentPosIndex - s;
+      if (prevIdx >= 0) {
+        const prevNode = currentPath[prevIdx];
+        if (!isBlocked(prevNode.x, prevNode.y, prevNode.f) && isRoad(prevNode.x, prevNode.y, prevNode.f)) {
+          if (prevNode.x !== reverseSteps[reverseSteps.length - 1].x || prevNode.y !== reverseSteps[reverseSteps.length - 1].y) {
+            reverseSteps.push(prevNode);
+          }
+        } else {
+          break;
+        }
+      }
+    }
+    if (reverseSteps.length > 1) {
+      return reverseSteps;
+    }
+  }
+
+  // Strategy 2: Find road neighbors that increase distance from the obstacle
+  const neighbors = [
+    { x: currentLoc.x, y: currentLoc.y - 1, f: currentLoc.f },
+    { x: currentLoc.x, y: currentLoc.y + 1, f: currentLoc.f },
+    { x: currentLoc.x - 1, y: currentLoc.y, f: currentLoc.f },
+    { x: currentLoc.x + 1, y: currentLoc.y, f: currentLoc.f }
+  ];
+
+  const currentDist = Math.abs(currentLoc.x - obsPos.x) + Math.abs(currentLoc.y - obsPos.y);
+
+  const candidateSteps = neighbors
+    .filter(n =>
+      n.x >= 0 && n.x < mapData.gridSize.x &&
+      n.y >= 0 && n.y < mapData.gridSize.y &&
+      isRoad(n.x, n.y, n.f) &&
+      !isBlocked(n.x, n.y, n.f)
+    )
+    .map(n => ({
+      pos: n,
+      dist: Math.abs(n.x - obsPos.x) + Math.abs(n.y - obsPos.y)
+    }))
+    .sort((a, b) => b.dist - a.dist);
+
+  if (candidateSteps.length > 0 && candidateSteps[0].dist >= currentDist) {
+    const step1 = candidateSteps[0].pos;
+    const reversePath: GridPoint[] = [currentLoc, step1];
+
+    if (steps > 1) {
+      const neighbors2 = [
+        { x: step1.x, y: step1.y - 1, f: step1.f },
+        { x: step1.x, y: step1.y + 1, f: step1.f },
+        { x: step1.x - 1, y: step1.y, f: step1.f },
+        { x: step1.x + 1, y: step1.y, f: step1.f }
+      ];
+      const step1Dist = candidateSteps[0].dist;
+      const candidateSteps2 = neighbors2
+        .filter(n =>
+          n.x >= 0 && n.x < mapData.gridSize.x &&
+          n.y >= 0 && n.y < mapData.gridSize.y &&
+          (n.x !== currentLoc.x || n.y !== currentLoc.y) &&
+          isRoad(n.x, n.y, n.f) &&
+          !isBlocked(n.x, n.y, n.f)
+        )
+        .map(n => ({
+          pos: n,
+          dist: Math.abs(n.x - obsPos.x) + Math.abs(n.y - obsPos.y)
+        }))
+        .sort((a, b) => b.dist - a.dist);
+
+      if (candidateSteps2.length > 0 && candidateSteps2[0].dist >= step1Dist) {
+        reversePath.push(candidateSteps2[0].pos);
+      }
+    }
+
+    return reversePath;
+  }
+
+  // Fallback: Road-constrained evasion
+  return calculateEvadePath(currentLoc, obstacles, mapData);
+}
+
