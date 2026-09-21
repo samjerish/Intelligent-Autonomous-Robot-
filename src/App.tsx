@@ -290,9 +290,7 @@ function App() {
       {/* Futuristic Navbar */}
       <nav className="flex items-center justify-between px-6 py-4 border-b border-white/5 bg-black/40 backdrop-blur-md z-40">
         <div className="flex items-center gap-4">
-          <div className="text-cyan-400 font-black tracking-widest text-xl drop-shadow-[0_0_8px_rgba(34,211,238,0.5)]">ASPIRE</div>
-          <div className="w-px h-6 bg-white/10 hidden md:block"></div>
-          <div className="text-[10px] text-gray-400 tracking-[0.2em] uppercase hidden md:block">Intelligent Robotics Environment</div>
+          <div className="text-cyan-400 font-black tracking-widest text-xl drop-shadow-[0_0_8px_rgba(34,211,238,0.5)]">AICPR</div>
         </div>
         
         <div className="flex items-center gap-4">
