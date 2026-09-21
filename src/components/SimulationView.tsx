@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState, useMemo, useCallback } from 'react';
 import type { MapData, GridPoint, Room } from '../types';
-import { calculatePath, calculateLongPath, calculateEvadePath } from '../utils/simulationEngine';
+import { calculatePath, calculateLongPath, calculateEvadePath, calculateReversePath } from '../utils/simulationEngine';
 import { Play, RotateCcw, Activity, ShieldAlert, Crosshair, Maximize, Minimize, Bot, Power, Send, Construction, Pause, Users, Utensils, Cross } from 'lucide-react';
 import { DeliveryModal } from './DeliveryModal';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
@@ -31,11 +31,13 @@ export type DynamicObstacle = {
   currentIndex: number;
   speed: number;
   isMoving: boolean;
+  currentPosVector?: THREE.Vector3;
 };
 
-export type RobotState = 'idle' | 'mission' | 'patrol' | 'charging' | 'emergency_response' | 'emergency_to_ctr' | 'ctr_to_emergency' | 'crowd_control' | 'waiting_for_police' | 'evading_obstacle' | 'returning_home' | 'off';
+export type RobotState = 'idle' | 'mission' | 'patrol' | 'charging' | 'emergency_response' | 'emergency_to_ctr' | 'ctr_to_emergency' | 'crowd_control' | 'waiting_for_police' | 'evading_obstacle' | 'returning_home' | 'off' | 'reversing' | 'waiting_for_clearance';
 
 export type PoliceState = {
+
   active: boolean;
   path: GridPoint[];
   targetPos: GridPoint | null;
