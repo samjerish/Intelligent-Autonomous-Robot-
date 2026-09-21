@@ -894,7 +894,7 @@ const SciFiGate = ({ position, scale = 1, rotation = [0, 0, 0] }: { position: [n
        {/* Title Text */}
        <Html position={[0, 4, 0]} center style={{ pointerEvents: 'none' }}>
           <div className="text-[12px] font-black text-cyan-400 bg-black/80 px-3 py-1 rounded shadow-lg whitespace-nowrap border border-cyan-500/50 uppercase tracking-[0.3em]">
-             ASPIRE GATEWAY
+             GATEWAY
           </div>
        </Html>
     </group>
