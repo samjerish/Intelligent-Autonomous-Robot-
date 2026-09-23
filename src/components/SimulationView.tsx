@@ -587,6 +587,33 @@ const PoliceVehicle = ({ policeState, policeStateRef, gridSize, isMapView, onRea
   );
 };
 
+const ParkTrees = ({ width, height, depth, count }: { width: number; height: number; depth: number; count: number }) => {
+  const trees = useMemo(() => {
+    return [...Array(count)].map((_, i) => {
+      const angle = i * 2.39996;
+      const r = Math.sqrt((i + 1) / (count + 1)) * 0.38;
+      const tx = Math.cos(angle) * r * width;
+      const tz = Math.sin(angle) * r * depth;
+      return { id: i, tx, tz };
+    });
+  }, [width, depth, count]);
+
+  return (
+    <>
+      {trees.map((t) => (
+        <group key={t.id} position={[t.tx, -height / 2 + 0.5, t.tz]}>
+          <Cylinder args={[0.1, 0.1, 0.8]} position={[0, -0.1, 0]}>
+            <meshStandardMaterial color="#78350f" />
+          </Cylinder>
+          <Cylinder args={[0.4, 0.6, 1.2]} position={[0, 0.8, 0]}>
+            <meshStandardMaterial color="#15803d" />
+          </Cylinder>
+        </group>
+      ))}
+    </>
+  );
+};
+
 const BuildingModel = React.memo(({ room, width, height, depth }: { room: Room, width: number, height: number, depth: number }) => {
   const type = room.type || "unknown";
   const nameLow = room.name.toLowerCase();
@@ -836,21 +863,8 @@ const BuildingModel = React.memo(({ room, width, height, depth }: { room: Room, 
         <Box args={[width, 0.2, depth]} position={[0, -height/2 + 0.1, 0]} receiveShadow>
           <meshStandardMaterial color="#22c55e" />
         </Box>
-        {/* Many trees for Eco Park - useMemo so they don't jump around on re-renders */}
-        {useMemo(() => [...Array(nameLow.includes('eco') ? 15 : 4)].map((_, i) => {
-          const tx = (Math.random() - 0.5) * width * 0.8;
-          const tz = (Math.random() - 0.5) * depth * 0.8;
-          return (
-            <group key={i} position={[tx, -height/2 + 0.5, tz]}>
-              <Cylinder args={[0.1, 0.1, 0.8]} position={[0, -0.1, 0]}>
-                 <meshStandardMaterial color="#78350f" />
-              </Cylinder>
-              <Cylinder args={[0.4, 0.6, 1.2]} position={[0, 0.8, 0]}>
-                 <meshStandardMaterial color="#15803d" />
-              </Cylinder>
-            </group>
-          );
-        }), [width, depth, nameLow])}
+        {/* Many trees for Eco Park */}
+        <ParkTrees width={width} height={height} depth={depth} count={nameLow.includes('eco') ? 15 : 4} />
         {/* Butterflies */}
         <Butterflies />
       </group>
@@ -3131,7 +3145,7 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
               }
             }}
           />
-          {useMemo(() => rooms?.map((room: Room) => {
+          {rooms?.map((room: Room) => {
             const width = (room.end.x - room.start.x + 1) * 0.75;
             const depth = (room.end.y - room.start.y + 1) * 0.75;
             const height = 3;
@@ -3147,7 +3161,7 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
                 </Html>
               </group>
             );
-          }), [rooms, gridSize, setSelectedRoom])}
+          })}
           <RoadsRender roads={mapData.roads || []} gridSize={gridSize} />
           <BlockersRender
             blockers={userBlockers}
