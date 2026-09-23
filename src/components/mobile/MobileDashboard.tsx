@@ -1,8 +1,8 @@
 import { useState } from 'react';
-import { Battery, Wifi, Gauge, Navigation, Utensils, Cross } from 'lucide-react';
+import { Battery, Wifi, Gauge, Navigation, Utensils, Cross, Sliders } from 'lucide-react';
 import { DeliveryModal } from '../DeliveryModal';
 
-export function MobileDashboard({ telemetry, isConnected, sendCommand }: any) {
+export function MobileDashboard({ telemetry, isConnected, sendCommand, obstacleCount = 9, onSetObstacleCount }: any) {
   const [modalType, setModalType] = useState<'food' | 'medical' | null>(null);
 
   if (!telemetry) {
@@ -45,14 +45,14 @@ export function MobileDashboard({ telemetry, isConnected, sendCommand }: any) {
         <div className="grid grid-cols-2 gap-3">
           <button 
             onClick={() => setModalType('food')}
-            className="bg-orange-500/10 hover:bg-orange-500/20 border border-orange-500/30 p-4 rounded-xl flex flex-col items-center justify-center gap-2 transition-colors"
+            className="bg-orange-500/10 hover:bg-orange-500/20 border border-orange-500/30 p-4 rounded-xl flex flex-col items-center justify-center gap-2 transition-colors cursor-pointer"
           >
             <Utensils className="w-8 h-8 text-orange-400" />
             <span className="text-orange-400 font-bold text-xs uppercase tracking-wider">Food Delivery</span>
           </button>
           <button 
             onClick={() => setModalType('medical')}
-            className="bg-red-500/10 hover:bg-red-500/20 border border-red-500/30 p-4 rounded-xl flex flex-col items-center justify-center gap-2 transition-colors"
+            className="bg-red-500/10 hover:bg-red-500/20 border border-red-500/30 p-4 rounded-xl flex flex-col items-center justify-center gap-2 transition-colors cursor-pointer"
           >
             <Cross className="w-8 h-8 text-red-400" />
             <span className="text-red-400 font-bold text-xs uppercase tracking-wider">Medical Delivery</span>
@@ -68,10 +68,10 @@ export function MobileDashboard({ telemetry, isConnected, sendCommand }: any) {
             valueClass={getBatteryColor(telemetry.battery)} 
           />
           <StatCard 
-            icon={<Wifi />} 
-            label="SIGNAL" 
-            value={`${telemetry.network.toFixed(0)} dBm`} 
-            valueClass="text-blue-400" 
+            icon={<Sliders />} 
+            label="OBSTACLES" 
+            value={`${obstacleCount} Active`} 
+            valueClass="text-purple-400" 
           />
           <StatCard 
             icon={<Gauge />} 
@@ -85,6 +85,37 @@ export function MobileDashboard({ telemetry, isConnected, sendCommand }: any) {
             value={`${telemetry.position.x.toFixed(0)}, ${telemetry.position.y.toFixed(0)}`} 
             valueClass="text-white font-mono text-xs" 
           />
+        </div>
+
+        {/* Quick Obstacle Density Presets */}
+        <div className="bg-white/5 border border-white/10 rounded-xl p-3 space-y-2">
+          <div className="flex items-center justify-between text-xs font-mono text-gray-400">
+            <span className="flex items-center gap-1.5 text-cyan-400 font-bold">
+              <Sliders className="w-3.5 h-3.5" />
+              CAMPUS TRAFFIC
+            </span>
+            <span className="text-white font-bold">{obstacleCount} Entities</span>
+          </div>
+          <div className="grid grid-cols-4 gap-1.5">
+            {[
+              { label: 'Clear', val: 0 },
+              { label: 'Light (5)', val: 5 },
+              { label: 'Med (10)', val: 10 },
+              { label: 'Heavy (20)', val: 20 },
+            ].map(p => (
+              <button
+                key={p.val}
+                onClick={() => onSetObstacleCount && onSetObstacleCount(p.val)}
+                className={`py-1 rounded text-[10px] font-bold font-mono transition-all ${
+                  obstacleCount === p.val
+                    ? 'bg-cyan-500 text-black shadow-md'
+                    : 'bg-white/5 text-gray-400 hover:text-white hover:bg-white/10'
+                }`}
+              >
+                {p.label}
+              </button>
+            ))}
+          </div>
         </div>
       </div>
 
