@@ -489,9 +489,11 @@ function App() {
         const hostToUse = customHost.trim() || selectedIp || networkIp || window.location.hostname;
         const localPairingUrl = `${window.location.protocol}//${hostToUse}${portPart}/mobile?key=1234`;
         const cloudPairingUrl = tunnelUrl ? `${tunnelUrl}/mobile?key=1234` : '';
-        const activePairingUrl = (isCloudMode && cloudPairingUrl) ? cloudPairingUrl : localPairingUrl;
+        const isCloudReady = isCloudMode && Boolean(tunnelUrl) && (tunnelStatus === 'connected');
+        const activePairingUrl = isCloudMode ? (cloudPairingUrl || '') : localPairingUrl;
 
         const handleCopy = () => {
+          if (!activePairingUrl) return;
           navigator.clipboard.writeText(activePairingUrl);
           setCopiedLink(true);
           setTimeout(() => setCopiedLink(false), 2500);
@@ -513,7 +515,7 @@ function App() {
                       onClick={handleRestartTunnel}
                       disabled={isRestartingTunnel}
                       title="Regenerate Cloud Tunnel URL"
-                      className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-white/5 hover:bg-white/10 text-gray-400 hover:text-white border border-white/10 text-[10px] font-mono transition-all disabled:opacity-50"
+                      className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-white/5 hover:bg-white/10 text-gray-400 hover:text-white border border-white/10 text-[10px] font-mono transition-all disabled:opacity-50 cursor-pointer"
                     >
                       <RefreshCw className={`w-3 h-3 ${isRestartingTunnel ? 'animate-spin text-cyan-400' : ''}`} />
                       <span>{isRestartingTunnel ? 'Regenerating...' : 'New URL'}</span>
@@ -555,40 +557,63 @@ function App() {
               </div>
 
               {/* Mode Description Banner */}
-              <div className="w-full">
+              <div className="w-full space-y-2">
                 {isCloudMode ? (
                   <div className="px-3 py-2 rounded-xl bg-cyan-950/40 border border-cyan-500/30 text-[11px] flex items-center gap-2">
                     {tunnelStatus === 'connected' ? (
                       <>
                         <div className="w-2.5 h-2.5 rounded-full bg-green-400 shrink-0 animate-ping"></div>
                         <span className="text-cyan-200">
-                          <strong className="text-white">Active Global Tunnel:</strong> Works anywhere on cellular 4G/5G or any Wi-Fi without router restrictions.
+                          <strong className="text-white">Active Global Tunnel:</strong> Works anywhere on cellular 4G/5G, Hotspot, or any Wi-Fi without router restrictions.
                         </span>
                       </>
                     ) : (
                       <>
                         <div className="w-2.5 h-2.5 rounded-full bg-yellow-400 shrink-0 animate-spin"></div>
                         <span className="text-yellow-200">
-                          Creating secure Global Tunnel... Scan below or switch to Local Wi-Fi.
+                          Creating secure Global Tunnel to Cloudflare edge... Please wait.
                         </span>
                       </>
                     )}
                   </div>
                 ) : (
-                  <div className="px-3 py-2 rounded-xl bg-slate-900/60 border border-white/10 text-[11px] text-gray-300 flex items-center gap-2">
-                    <Wifi className="w-3.5 h-3.5 text-cyan-400 shrink-0" />
-                    <span>Both phone and computer must be connected to the exact same Wi-Fi router.</span>
-                  </div>
+                  <>
+                    <div className="px-3 py-2 rounded-xl bg-slate-900/60 border border-white/10 text-[11px] text-gray-300 flex items-center gap-2">
+                      <Wifi className="w-3.5 h-3.5 text-cyan-400 shrink-0" />
+                      <span>Both phone and computer must be connected to the exact same Wi-Fi router.</span>
+                    </div>
+                    {(isHotspotDetected || networkIp.startsWith('192.0.0.')) && (
+                      <div className="px-3 py-2 rounded-xl bg-amber-500/10 border border-amber-500/30 text-[11px] text-amber-300 flex items-start gap-2">
+                        <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+                        <span className="leading-snug">
+                          <strong>Cellular Hotspot Detected ({networkIp}):</strong> Hotspot devices isolate connections. Switch to <strong>Any Network (Cloud)</strong> for immediate connection.
+                        </span>
+                      </div>
+                    )}
+                  </>
                 )}
               </div>
 
               {/* QR Code Container */}
-              <div className="bg-white p-4 rounded-2xl shadow-xl flex flex-col items-center border-4 border-cyan-400/30 relative group">
-                <QRCode value={activePairingUrl} size={190} />
-                <div className="mt-2.5 flex items-center justify-between w-full px-1 border-t border-gray-200 pt-2">
-                  <span className="text-[10px] text-gray-500 font-bold uppercase tracking-widest">SECURITY PIN</span>
-                  <span className="text-xs font-mono font-black text-cyan-700 bg-cyan-100 px-2 py-0.5 rounded">1234</span>
-                </div>
+              <div className="bg-white p-4 rounded-2xl shadow-xl flex flex-col items-center justify-center border-4 border-cyan-400/30 relative group min-w-[220px] min-h-[240px]">
+                {isCloudMode && !isCloudReady ? (
+                  <div className="w-[190px] h-[190px] flex flex-col items-center justify-center p-3 text-center bg-slate-900 rounded-xl border border-cyan-500/30">
+                    <RefreshCw className="w-8 h-8 text-cyan-400 animate-spin mb-2" />
+                    <span className="text-xs font-bold text-white uppercase tracking-wider">Starting Cloud Tunnel</span>
+                    <span className="text-[10px] text-cyan-300/80 mt-1 leading-snug">
+                      Connecting to global edge...
+                    </span>
+                    <span className="text-[9px] text-gray-400 mt-2 font-mono">Status: {tunnelStatus}</span>
+                  </div>
+                ) : (
+                  <>
+                    <QRCode value={activePairingUrl || localPairingUrl} size={190} />
+                    <div className="mt-2.5 flex items-center justify-between w-full px-1 border-t border-gray-200 pt-2">
+                      <span className="text-[10px] text-gray-500 font-bold uppercase tracking-widest">SECURITY PIN</span>
+                      <span className="text-xs font-mono font-black text-cyan-700 bg-cyan-100 px-2 py-0.5 rounded">1234</span>
+                    </div>
+                  </>
+                )}
               </div>
 
               {/* URL & Action buttons */}
@@ -597,26 +622,29 @@ function App() {
                   <input 
                     type="text" 
                     readOnly 
-                    value={activePairingUrl} 
+                    value={activePairingUrl || (isCloudMode ? 'Starting secure cloud tunnel...' : localPairingUrl)} 
                     className="flex-1 bg-transparent text-xs text-cyan-300 font-mono focus:outline-none select-all truncate"
                   />
                   <button 
                     onClick={handleCopy}
-                    className="px-3 py-1.5 bg-cyan-500/20 hover:bg-cyan-500/30 border border-cyan-500/40 text-cyan-300 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 shrink-0 cursor-pointer"
+                    disabled={!activePairingUrl}
+                    className="px-3 py-1.5 bg-cyan-500/20 hover:bg-cyan-500/30 border border-cyan-500/40 text-cyan-300 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 shrink-0 cursor-pointer disabled:opacity-50"
                     title="Copy Pairing URL"
                   >
                     {copiedLink ? <Check className="w-3.5 h-3.5 text-green-400" /> : <Copy className="w-3.5 h-3.5" />}
                     <span>{copiedLink ? 'Copied!' : 'Copy'}</span>
                   </button>
-                  <a
-                    href={activePairingUrl}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="p-1.5 bg-white/5 hover:bg-white/10 border border-white/10 text-gray-300 rounded-lg transition-colors shrink-0"
-                    title="Open in new tab"
-                  >
-                    <ExternalLink className="w-4 h-4" />
-                  </a>
+                  {activePairingUrl && (
+                    <a
+                      href={activePairingUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="p-1.5 bg-white/5 hover:bg-white/10 border border-white/10 text-gray-300 rounded-lg transition-colors shrink-0"
+                      title="Open in new tab"
+                    >
+                      <ExternalLink className="w-4 h-4" />
+                    </a>
+                  )}
                 </div>
 
                 {/* Local Wi-Fi Options (Interface switcher & custom host) */}
