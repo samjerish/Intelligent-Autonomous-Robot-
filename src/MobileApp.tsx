@@ -8,7 +8,21 @@ import { MobileEmergencyPanel } from './components/mobile/MobileEmergencyPanel';
 import { Activity, Gamepad2, Map as MapIcon, Terminal, AlertTriangle } from 'lucide-react';
 
 export default function MobileApp() {
-  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [isAuthenticated, setIsAuthenticated] = useState(() => {
+    // Auto-authenticate if key=1234 or auth=1234 in URL, or stored in localStorage
+    const params = new URLSearchParams(window.location.search);
+    const key = params.get('key') || params.get('auth') || params.get('pin');
+    if (key === '1234') {
+      try { localStorage.setItem('pas_mobile_authenticated', 'true'); } catch(e) {}
+      return true;
+    }
+    try {
+      return localStorage.getItem('pas_mobile_authenticated') === 'true';
+    } catch(e) {
+      return false;
+    }
+  });
+
   const [passwordInput, setPasswordInput] = useState('');
   const [error, setError] = useState(false);
   const [activeTab, setActiveTab] = useState('dashboard');
@@ -17,15 +31,20 @@ export default function MobileApp() {
   const [telemetry, setTelemetry] = useState<any>(null);
   const [mapData, setMapData] = useState<any>(null);
   const [pendingEmergency, setPendingEmergency] = useState<{x: number, y: number} | null>(null);
+  const [obstacleCount, setObstacleCount] = useState<number>(9);
 
   useEffect(() => {
-
     fetch(`/api/map`)
       .then(res => res.json())
       .then(data => setMapData(data))
       .catch(err => console.error("Failed to load map data:", err));
 
-    const socket = io(`/`);
+    const socket = io({
+      transports: ['websocket', 'polling'],
+      reconnection: true,
+      reconnectionAttempts: Infinity,
+      reconnectionDelay: 1000
+    });
     socketRef.current = socket;
 
     socket.on('connect', () => {
@@ -40,12 +59,20 @@ export default function MobileApp() {
       setTelemetry(data);
     });
 
+    socket.on('obstacle_count_updated', (data: { count: number }) => {
+      if (typeof data?.count === 'number') {
+        setObstacleCount(data.count);
+      }
+    });
+
     socket.on('init_state', (state: any) => {
       if (state.pendingEmergency !== undefined) setPendingEmergency(state.pendingEmergency);
+      if (state.obstacleCount !== undefined) setObstacleCount(state.obstacleCount);
     });
 
     socket.on('state_updated', (newState: any) => {
       if (newState.pendingEmergency !== undefined) setPendingEmergency(newState.pendingEmergency);
+      if (newState.obstacleCount !== undefined) setObstacleCount(newState.obstacleCount);
     });
 
     return () => {
@@ -65,6 +92,7 @@ export default function MobileApp() {
             onSubmit={(e) => {
               e.preventDefault();
               if (passwordInput === '1234') {
+                try { localStorage.setItem('pas_mobile_authenticated', 'true'); } catch(err) {}
                 setIsAuthenticated(true);
                 setError(false);
               } else {
@@ -77,12 +105,12 @@ export default function MobileApp() {
               type="password"
               value={passwordInput}
               onChange={(e) => setPasswordInput(e.target.value)}
-              placeholder="Enter Password"
+              placeholder="Enter Password (1234)"
               className={`w-full bg-[#020817] border ${error ? 'border-red-500' : 'border-cyan-500/50'} rounded-xl px-4 py-3 text-white text-center text-xl tracking-widest outline-none focus:border-cyan-400 transition-colors mb-4`}
             />
             {error && <p className="text-red-500 text-xs font-bold uppercase text-center mb-4">Incorrect Password</p>}
             
-            <button type="submit" className="w-full bg-cyan-600 hover:bg-cyan-500 text-white font-black uppercase tracking-widest py-3 rounded-xl transition-all shadow-[0_0_15px_rgba(6,182,212,0.3)]">
+            <button type="submit" className="w-full bg-cyan-600 hover:bg-cyan-500 text-white font-black uppercase tracking-widest py-3 rounded-xl transition-all shadow-[0_0_15px_rgba(6,182,212,0.3)] cursor-pointer">
               Connect
             </button>
           </form>
@@ -101,6 +129,12 @@ export default function MobileApp() {
     }
   };
 
+  const handleSetObstacleCount = (count: number) => {
+    const clamped = Math.max(0, Math.min(30, count));
+    setObstacleCount(clamped);
+    sendCommand('set_obstacle_count', { count: clamped });
+  };
+
   const handleEmergencyApprove = () => {
     if (socketRef.current) {
       socketRef.current.emit('update_state', { pendingEmergency: null, emergencyApprove: pendingEmergency });
@@ -111,9 +145,24 @@ export default function MobileApp() {
   const renderContent = () => {
     switch (activeTab) {
       case 'dashboard':
-        return <MobileDashboard telemetry={telemetry} isConnected={isConnected} sendCommand={sendCommand} />;
+        return (
+          <MobileDashboard 
+            telemetry={telemetry} 
+            isConnected={isConnected} 
+            sendCommand={sendCommand} 
+            obstacleCount={obstacleCount} 
+            onSetObstacleCount={handleSetObstacleCount} 
+          />
+        );
       case 'controls':
-        return <MobileControls telemetry={telemetry} sendCommand={sendCommand} />;
+        return (
+          <MobileControls 
+            telemetry={telemetry} 
+            sendCommand={sendCommand} 
+            obstacleCount={obstacleCount} 
+            onSetObstacleCount={handleSetObstacleCount} 
+          />
+        );
       case 'map':
         return <MobileEmergencyMap telemetry={telemetry} mapData={mapData} sendCommand={sendCommand} />;
       case 'terminal':
