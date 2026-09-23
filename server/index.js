@@ -1,8 +1,75 @@
 import express from 'express';
 import cors from 'cors';
 import os from 'os';
+import path from 'path';
+import { fileURLToPath } from 'url';
+import { spawn } from 'child_process';
+import { existsSync } from 'fs';
 import { createServer } from 'http';
 import { Server } from 'socket.io';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const projectRoot = path.resolve(__dirname, '..');
+const cloudflaredBin = path.join(projectRoot, 'bin', 'cloudflared');
+
+let cloudTunnelUrl = null;
+let cloudTunnelStatus = 'initializing';
+let cloudflaredProc = null;
+
+function startCloudTunnel() {
+  if (!existsSync(cloudflaredBin)) {
+    console.log('[Tunnel] Notice: cloudflared binary not found at', cloudflaredBin);
+    cloudTunnelStatus = 'unavailable';
+    return;
+  }
+
+  if (cloudflaredProc) {
+    try { cloudflaredProc.kill(); } catch (e) {}
+    cloudflaredProc = null;
+  }
+
+  cloudTunnelStatus = 'starting';
+  console.log('[Tunnel] Starting Cloudflare Quick Tunnel for Vite (port 5173)...');
+
+  cloudflaredProc = spawn(cloudflaredBin, [
+    'tunnel',
+    '--url', 'http://127.0.0.1:5173',
+    '--protocol', 'http2',
+    '--no-tls-verify'
+  ], {
+    stdio: ['ignore', 'pipe', 'pipe']
+  });
+
+  const urlRegex = /https:\/\/[a-zA-Z0-9-]+\.trycloudflare\.com/;
+
+  const handleOutput = (data) => {
+    const text = data.toString();
+    const match = text.match(urlRegex);
+    if (match && match[0] && match[0] !== cloudTunnelUrl) {
+      cloudTunnelUrl = match[0];
+      cloudTunnelStatus = 'connected';
+      console.log('----------------------------------------------------');
+      console.log('🌐 CLOUDFLARE QUICK TUNNEL READY (ANY DEVICE / NETWORK):');
+      console.log(`   ${cloudTunnelUrl}/mobile?key=1234`);
+      console.log('----------------------------------------------------');
+      io.emit('tunnel_status', { tunnelUrl: cloudTunnelUrl, status: 'connected' });
+    }
+  };
+
+  cloudflaredProc.stdout.on('data', handleOutput);
+  cloudflaredProc.stderr.on('data', handleOutput);
+
+  cloudflaredProc.on('exit', (code) => {
+    console.log('[Tunnel] cloudflared exited with code', code);
+    cloudTunnelUrl = null;
+    cloudTunnelStatus = 'stopped';
+    io.emit('tunnel_status', { tunnelUrl: null, status: 'stopped' });
+  });
+}
+
+// Start tunnel immediately
+startCloudTunnel();
 
 const app = express();
 const port = 3000;
