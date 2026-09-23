@@ -348,21 +348,64 @@ app.get('/api/map', (req, res) => {
 
 app.get('/api/ip', (req, res) => {
   const nets = os.networkInterfaces();
-  let localIp = 'localhost';
+  const interfaces = [];
+  let bestIp = 'localhost';
+  let bestScore = -1;
+
   for (const name of Object.keys(nets)) {
     for (const net of nets[name]) {
       if (net.family === 'IPv4' && !net.internal) {
-        localIp = net.address;
+        let score = 10;
+        const lowerName = name.toLowerCase();
+        // Prioritize Wi-Fi or primary ethernet interfaces
+        if (lowerName.includes('en0') || lowerName.includes('wlan') || lowerName.includes('wi-fi')) {
+          score += 40;
+        } else if (lowerName.includes('eth') || lowerName.includes('en1') || lowerName.includes('ethernet')) {
+          score += 30;
+        }
+
+        // Prioritize typical private IP subnets
+        if (net.address.startsWith('192.168.')) {
+          score += 25;
+        } else if (net.address.startsWith('10.')) {
+          score += 20;
+        } else if (/^172\.(1[6-9]|2[0-9]|3[0-1])\./.test(net.address)) {
+          score += 15;
+        } else if (net.address.startsWith('192.0.')) {
+          score += 15;
+        }
+
+        let label = name;
+        if (lowerName.includes('en0') || lowerName.includes('wlan')) label = `Wi-Fi (${name})`;
+        else if (lowerName.includes('en1') || lowerName.includes('eth')) label = `Ethernet (${name})`;
+
+        interfaces.push({
+          name,
+          label: `${label}: ${net.address}`,
+          address: net.address
+        });
+
+        if (score > bestScore) {
+          bestScore = score;
+          bestIp = net.address;
+        }
       }
     }
   }
-  res.json({ ip: localIp });
+
+  // Fallback to localhost if no external interfaces found
+  if (interfaces.length === 0) {
+    interfaces.push({ name: 'lo', label: 'Localhost: 127.0.0.1', address: 'localhost' });
+  }
+
+  res.json({ ip: bestIp, interfaces });
 });
 
 let appState = {
   history: [],
   currentMission: null,
-  isOn: true
+  isOn: true,
+  obstacleCount: 9
 };
 
 let isStateInitialized = false;
@@ -377,13 +420,22 @@ let telemetry = {
   state: 'Idle'
 };
 
-// Telemetry is now driven entirely by the desktop client via local_telemetry_update event.
+// Telemetry is driven by the desktop client via local_telemetry_update event.
 
 io.on('connection', (socket) => {
+  // Broadcast updated connected device count
+  io.emit('device_count', io.engine.clientsCount);
+
   if (isStateInitialized) {
+    socket.emit('init_state', appState);
+  } else {
     socket.emit('init_state', appState);
   }
   socket.emit('telemetry_update', telemetry);
+
+  socket.on('disconnect', () => {
+    io.emit('device_count', io.engine.clientsCount);
+  });
 
   socket.on('client_ready', (state) => {
     if (!isStateInitialized && state) {
@@ -401,8 +453,20 @@ io.on('connection', (socket) => {
 
   // Mobile Control Events
   socket.on('mobile_command', (data) => {
+    if (data.action === 'set_obstacle_count' && typeof data.count === 'number') {
+      appState.obstacleCount = data.count;
+      io.emit('obstacle_count_updated', { count: data.count });
+    }
     // Relay mobile commands to the desktop client
     socket.broadcast.emit('mobile_command_received', data);
+  });
+
+  // Desktop or Mobile updates obstacle count directly
+  socket.on('set_obstacle_count', (data) => {
+    if (typeof data.count === 'number') {
+      appState.obstacleCount = data.count;
+      io.emit('obstacle_count_updated', { count: data.count });
+    }
   });
 
   // Real-time telemetry update from simulation (Desktop -> Server -> Mobile)
