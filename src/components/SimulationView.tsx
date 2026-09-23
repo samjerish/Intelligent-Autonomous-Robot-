@@ -2152,7 +2152,42 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
       let reply = "I am currently processing your request.";
       const lowerMsg = userMsg.toLowerCase();
       
-      if (lowerMsg.startsWith('go to ') || lowerMsg.startsWith('come to ')) {
+      // Return Home / RTL
+      if (lowerMsg === 'return home' || lowerMsg === 'home' || lowerMsg === 'rtl' || lowerMsg === 'return to base') {
+        const homeRoom = mapData?.rooms?.find(r => r.name.toLowerCase().includes('generator')) || mapData?.rooms?.[0];
+        if (homeRoom && mapData) {
+          const currentLoc = (robotPosRef.current ? getGridPointFromVector3(robotPosRef.current, mapData.gridSize) : null) || (path.length > 0 && currentPosIndex < path.length ? path[currentPosIndex] : mapData.start);
+          const homePath = calculatePath(currentLoc, homeRoom.door || homeRoom.start, [...(mapData.obstacles || []), ...userBlockers], mapData);
+          if (homePath.length > 0) {
+            setPath(homePath);
+            setCurrentPosIndex(0);
+            setRobotState('returning_home');
+            setIsPlaying(true);
+            reply = `Return-to-Base protocol engaged. Navigating to ${homeRoom.name}.`;
+            addExplanation(`Remote command: Navigating to ${homeRoom.name} base station.`);
+          } else {
+            reply = `Base station coordinates currently blocked. Check obstacles.`;
+          }
+        } else {
+          reply = `Base station not located on map.`;
+        }
+      }
+      // Reset Robot
+      else if (lowerMsg === 'reset robot' || lowerMsg === 'reset') {
+        resetSimulation();
+        reply = `Robot simulation reset to default standby coordinates.`;
+        addExplanation(`Remote command: Simulation reset executed.`);
+      }
+      // Delivery Missions (from Mobile Dashboard or console)
+      else if (lowerMsg.startsWith('deliver ') || lowerMsg.includes('delivery') || lowerMsg.includes('food') || lowerMsg.includes('medicine') || lowerMsg.includes('medical')) {
+        if (onDispatchMission) {
+          onDispatchMission(userMsg);
+          reply = `Dispatching mission: "${userMsg}". AI path computation in progress.`;
+          addExplanation(`Mission dispatched: "${userMsg}"`);
+        } else {
+          reply = `Acknowledged delivery mission: "${userMsg}".`;
+        }
+      } else if (lowerMsg.startsWith('go to ') || lowerMsg.startsWith('come to ')) {
         if (robotState === 'emergency_response') {
           const roomName = lowerMsg.replace(/^(go to |come to )/, '').trim();
           const targetRoom = mapData?.rooms?.find(r => r.name.toLowerCase().includes(roomName));
@@ -2162,6 +2197,9 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
           } else {
             reply = `I could not find a location matching "${roomName}".`;
           }
+        } else if (onDispatchMission) {
+          onDispatchMission(userMsg);
+          reply = `Navigating to designated location: "${userMsg}".`;
         } else {
           reply = "Please use the 'User Command' panel to dispatch me to specific locations.";
         }
@@ -2198,19 +2236,14 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
         else if (robotState === 'mission') reply = "I am currently executing a designated mission task.";
         else if (robotState === 'emergency_response') reply = "I am responding to an emergency at a high priority!";
         else if (robotState === 'charging') reply = "I am currently recharging my battery at the Generator Room.";
+        else if (robotState === 'returning_home') reply = "I am currently returning to the base station.";
         else reply = "I am currently idle and awaiting instructions.";
-      } else if (lowerMsg.includes('medicine') || lowerMsg.includes('medical') || lowerMsg.includes('food') || lowerMsg.includes('deliver') || lowerMsg.includes('picked up')) {
-        if (mapData?.tasks && mapData.tasks.length > 0) {
-           reply = `Yes, I am currently handling a mission involving: ${mapData.tasks.map(t => t.locationName).join(', ')}.`;
-        } else {
-           reply = `I do not have any active delivery missions right now. I am in ${robotState} mode.`;
-        }
       } else {
-        if (robotState !== 'emergency_response') {
-           reply = "excute command in the home screen to go to your decieded destination";
+        if (onDispatchMission) {
+          onDispatchMission(userMsg);
+          reply = `Processing mission: "${userMsg}". AI path computation in progress.`;
         } else {
-           reply = `Processing mission: "${userMsg}"`;
-           if (onDispatchMission) onDispatchMission(userMsg);
+          reply = "Execute command in the control center to navigate to your chosen destination.";
         }
       }
       
