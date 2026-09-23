@@ -4,7 +4,7 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "concurrently \"vite --host 0.0.0.0\" \"node server/index.js\" \"node auto-sync.js\"",
+    "dev": "concurrently \"vite --host 0.0.0.0\" \"node --watch server/index.js\" \"node auto-sync.js\"",
     "build": "tsc -b && vite build",
     "lint": "oxlint",
     "preview": "vite preview"
