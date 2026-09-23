@@ -6,10 +6,9 @@ import { SimulationView } from './components/SimulationView';
 
 import { useLocalStorage } from './hooks/useLocalStorage';
 import type { MissionHistoryItem, MissionResult } from './types';
-import { Bot, Power, QrCode, History, Check, Copy, ExternalLink, Wifi, Smartphone, Sliders } from 'lucide-react';
+import { QrCode, History, Check, Copy, ExternalLink, Wifi, Smartphone, Sliders } from 'lucide-react';
 import QRCode from 'react-qr-code';
 import { io } from 'socket.io-client';
-import { Play } from 'lucide-react'; // ensure Play is imported for the execute button
 
 export const AnimatedPASName = () => {
   return (
@@ -34,7 +33,7 @@ function App() {
   const [initialMapData, setInitialMapData] = useState<any>(null);
 
   const [pendingEmergency, setPendingEmergency] = useState<{x: number, y: number} | null>(null);
-  const [isOn, setIsOn] = useState(false);
+  const [, setIsOn] = useState(false);
   const [showQR, setShowQR] = useState(false);
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
   const [isAlarmActive, setIsAlarmActive] = useState(false);
@@ -48,16 +47,6 @@ function App() {
   const [connectedDevices, setConnectedDevices] = useState<number>(1);
   const [copiedLink, setCopiedLink] = useState(false);
   const [obstacleCount, setObstacleCount] = useState<number>(9);
-
-  const togglePowerBroadcast = (turnOn: boolean) => {
-    setIsOn(turnOn);
-    socketRef.current?.emit('update_state', { isOn: turnOn });
-  };
-
-  const executeMissionBroadcast = () => {
-    socketRef.current?.emit('update_state', { executeMission: Date.now() });
-    window.dispatchEvent(new CustomEvent('remote_execute_mission'));
-  };
 
   useEffect(() => {
     // Fetch initial map data on mount so Control Center is always visible

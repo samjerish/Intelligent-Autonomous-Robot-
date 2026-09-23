@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState, useMemo, useCallback } from 'react';
 import type { MapData, GridPoint, Room } from '../types';
 import { calculatePath, calculateLongPath, calculateEvadePath, calculateReversePath } from '../utils/simulationEngine';
-import { Play, RotateCcw, Activity, ShieldAlert, Crosshair, Maximize, Minimize, Bot, Power, Send, Construction, Pause, Users, Utensils, Cross, Sliders, Car, Trash2, Plus, Minus, AlertTriangle } from 'lucide-react';
+import { Play, RotateCcw, Activity, ShieldAlert, Crosshair, Maximize, Minimize, Bot, Power, Send, Construction, Pause, Users, Utensils, Cross, Sliders, Car, Trash2, Plus } from 'lucide-react';
 import { DeliveryModal } from './DeliveryModal';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import {
@@ -1912,13 +1912,14 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
 
   // Manual drive handling for Mobile D-Pad
   const handleManualDrive = (direction: string, manualSpeed: number = 50) => {
+    if (!mapData) return;
     if (!isOnRef.current) {
       addExplanation("Cannot drive robot: Power is OFF. Power ON the robot first.");
       return;
     }
     const currentLoc = (path.length > 0 && currentPosIndex < path.length) 
       ? path[currentPosIndex] 
-      : (robotPosRef.current ? getGridPointFromVector3(robotPosRef.current, mapData?.gridSize || {x:120, y:100, f:1}) : (mapData?.start || {x:61, y:81, f:0}));
+      : (robotPosRef.current ? getGridPointFromVector3(robotPosRef.current, mapData.gridSize || {x:120, y:100, f:1}) : (mapData.start || {x:61, y:81, f:0}));
 
     let dx = 0;
     let dy = 0;
