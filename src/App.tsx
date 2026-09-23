@@ -360,82 +360,56 @@ function App() {
           <div className="text-[10px] text-gray-400 tracking-[0.2em] uppercase hidden md:block">Autonomous Intelligent Campus Patrol Robot</div>
         </div>
         
-        <div className="flex items-center gap-4">
+        <div className="flex items-center gap-3">
+          <div className="hidden sm:flex items-center gap-2 bg-white/5 border border-white/10 px-3 py-1.5 rounded-lg text-xs font-mono">
+            <span className="w-2 h-2 rounded-full bg-cyan-400 animate-pulse"></span>
+            <span className="text-gray-400">Devices:</span>
+            <span className="text-cyan-400 font-bold">{connectedDevices}</span>
+          </div>
+
           <button
             onClick={() => setIsHistoryOpen(!isHistoryOpen)}
-            className="hidden md:flex items-center gap-2 bg-white/5 hover:bg-white/10 border border-white/10 text-cyan-400 px-3 py-1.5 rounded-lg text-xs font-bold uppercase tracking-wider transition-colors"
+            className="flex items-center gap-2 bg-white/5 hover:bg-white/10 border border-white/10 text-cyan-400 px-3 py-1.5 rounded-lg text-xs font-bold uppercase tracking-wider transition-colors"
           >
-            <History className="w-4 h-4" /> History
+            <History className="w-4 h-4" /> <span className="hidden sm:inline">History</span>
           </button>
           <button
             onClick={() => setShowQR(true)}
-            className="hidden md:flex items-center gap-2 bg-white/5 hover:bg-white/10 border border-white/10 text-cyan-400 px-3 py-1.5 rounded-lg text-xs font-bold uppercase tracking-wider transition-colors"
+            className="flex items-center gap-2 bg-cyan-500/10 hover:bg-cyan-500/20 border border-cyan-500/30 text-cyan-400 px-3 py-1.5 rounded-lg text-xs font-bold uppercase tracking-wider transition-all shadow-[0_0_15px_rgba(6,182,212,0.15)]"
           >
-            <QrCode className="w-4 h-4" /> Mobile Connect
+            <QrCode className="w-4 h-4" /> <span>Mobile Connect</span>
           </button>
         </div>
       </nav>
 
       {/* Main Workspace Area */}
       <div className="flex flex-col md:flex-row flex-1 p-2 md:p-6 gap-2 md:gap-6 overflow-hidden">
-        {/* Ambient Grid for App */}
-        {/* Removed outer background grid */}
-        
-
       
       {/* Main Workspace */}
       <main className="flex-1 flex flex-col gap-2 md:gap-6 min-w-0">
         
-        {/* MOBILE REMOTE CONTROL (Only visible on mobile) */}
-        <div className="md:hidden flex flex-col flex-1 bg-[#050505] p-2 gap-8 justify-center overflow-y-auto z-50 rounded-2xl border border-white/10">
-          <div className="text-center mt-2">
-             <Bot className="w-20 h-20 text-cyan-500 mx-auto mb-4 drop-shadow-[0_0_15px_rgba(34,211,238,0.5)]" />
-             <h2 className="text-3xl font-black text-white tracking-widest flex items-center justify-center"><AnimatedPASName /></h2>
-             <p className="text-cyan-500 text-xs mt-2 font-mono uppercase tracking-widest">Remote Control Active</p>
+        {/* Mobile Controller Banner for small screens */}
+        <div className="md:hidden bg-gradient-to-r from-cyan-950/70 via-blue-950/70 to-slate-900/80 border border-cyan-500/30 rounded-xl p-3 flex items-center justify-between shadow-lg backdrop-blur-md">
+          <div className="flex items-center gap-3">
+            <div className="w-8 h-8 rounded-lg bg-cyan-500/20 border border-cyan-500/40 flex items-center justify-center">
+              <Smartphone className="w-4 h-4 text-cyan-400 animate-pulse" />
+            </div>
+            <div>
+              <div className="text-xs font-bold text-white uppercase tracking-wider">PAS-Mobile Controller</div>
+              <div className="text-[10px] text-cyan-300/70 font-mono">Touch drive, sensors, E-STOP & console</div>
+            </div>
           </div>
-          
-          <div className="flex gap-4 w-full px-2">
-            <button 
-              onClick={() => togglePowerBroadcast(true)}
-              className={`flex-1 p-6 rounded-2xl font-bold flex flex-col items-center justify-center gap-3 border-2 transition-all shadow-xl backdrop-blur-md ${isOn ? 'bg-green-500/20 text-green-400 border-green-500/50 shadow-[0_0_30px_rgba(34,197,94,0.3)] scale-105' : 'bg-black/60 text-gray-500 border-white/10 hover:bg-white/5'}`}
-            >
-              <Power className="w-10 h-10" /> <span className="text-lg tracking-widest">POWER ON</span>
-            </button>
-            <button 
-              onClick={() => togglePowerBroadcast(false)}
-              className={`flex-1 p-6 rounded-2xl font-bold flex flex-col items-center justify-center gap-3 border-2 transition-all shadow-xl backdrop-blur-md ${!isOn ? 'bg-red-500/20 text-red-400 border-red-500/50 shadow-[0_0_30px_rgba(239,68,68,0.3)] scale-105' : 'bg-black/60 text-gray-500 border-white/10 hover:bg-white/5'}`}
-            >
-              <Power className="w-10 h-10" /> <span className="text-lg tracking-widest">POWER OFF</span>
-            </button>
-          </div>
-
-          <div className="w-full px-2">
-            <button 
-              onClick={executeMissionBroadcast}
-              className="w-full p-4 rounded-2xl font-bold flex items-center justify-center gap-3 border-2 transition-all shadow-xl backdrop-blur-md bg-blue-500/20 text-blue-400 border-blue-500/50 shadow-[0_0_30px_rgba(59,130,246,0.3)] hover:bg-blue-500/30"
-            >
-              <Play className="w-8 h-8" /> <span className="text-lg tracking-widest">EXECUTE MISSION</span>
-            </button>
-          </div>
-
-          <div className="w-full mt-2 px-2 pb-6 flex justify-center">
-             <button 
-               onClick={() => alert("CTR Mode activated via mobile. Monitor simulation command center for real-time robotic feedback.")}
-               className="text-xs text-gray-500 hover:text-cyan-400 border border-white/10 bg-white/5 hover:bg-cyan-500/10 px-4 py-1.5 rounded-full uppercase tracking-wider flex items-center gap-2 transition-all shadow-lg"
-             >
-                <Bot className="w-4 h-4" /> Connect to Robot (CTR)
-             </button>
-          </div>
+          <a
+            href="/mobile"
+            className="px-3 py-1.5 bg-cyan-500 hover:bg-cyan-400 text-black font-black text-xs uppercase tracking-wider rounded-lg shadow-[0_0_15px_rgba(6,182,212,0.4)] transition-all flex items-center gap-1.5"
+          >
+            Launch <ExternalLink className="w-3.5 h-3.5" />
+          </a>
         </div>
 
-
-        {/* DESKTOP UI (Only visible on desktop) */}
-        <div className="hidden md:flex flex-col gap-6 flex-1 min-w-0">
-
-
-          {/* Main Simulation Area */}
+        {/* Main Simulation Area */}
+        <div className="flex-1 flex flex-col gap-6 min-w-0">
           <div className="flex-1 flex gap-4 min-h-0">
-            {/* Main 3D Simulation Pane */}
             <div className="flex-1 bg-black/40 border border-white/10 rounded-2xl shadow-2xl overflow-hidden relative min-w-0 z-10">
               
               {/* Floating History Sidebar Overlay */}
@@ -467,34 +441,121 @@ function App() {
       </main>
       </div>
 
-      {showQR && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={() => setShowQR(false)}>
-          <div className="bg-[#0f172a] border border-white/10 p-8 rounded-2xl shadow-2xl flex flex-col items-center gap-6" onClick={e => e.stopPropagation()}>
-            <h2 className="text-xl font-bold text-cyan-400 tracking-wider uppercase">Mobile Pairing</h2>
-            <div className="bg-white p-4 rounded-xl shadow-lg flex flex-col items-center">
-              <QRCode value={`${window.location.origin}/mobile`} size={220} />
-              <div className="mt-4 flex flex-col items-center justify-center w-full px-2 gap-2">
-                <span className="text-[10px] text-black/50 font-mono text-center">
-                  {`${window.location.origin}/mobile`}
-                </span>
+      {showQR && (() => {
+        const portPart = window.location.port ? `:${window.location.port}` : '';
+        const hostToUse = customHost.trim() || selectedIp || networkIp || window.location.hostname;
+        const mobilePairingUrl = `${window.location.protocol}//${hostToUse}${portPart}/mobile?key=1234`;
+
+        const handleCopy = () => {
+          navigator.clipboard.writeText(mobilePairingUrl);
+          setCopiedLink(true);
+          setTimeout(() => setCopiedLink(false), 2500);
+        };
+
+        return (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/70 backdrop-blur-md p-4 animate-in fade-in duration-200" onClick={() => setShowQR(false)}>
+            <div className="bg-[#0b1329] border border-cyan-500/30 p-6 sm:p-8 rounded-3xl shadow-[0_0_60px_rgba(6,182,212,0.25)] flex flex-col items-center gap-5 max-w-md w-full" onClick={e => e.stopPropagation()}>
+              
+              {/* Header */}
+              <div className="text-center">
+                <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-cyan-500/10 border border-cyan-500/30 text-cyan-400 text-xs font-mono mb-2">
+                  <Wifi className="w-3.5 h-3.5 animate-pulse" />
+                  <span>LAN REAL-TIME PAIRING</span>
+                </div>
+                <h2 className="text-2xl font-black text-white tracking-wider uppercase">Mobile Connect</h2>
+                <p className="text-xs text-gray-400 mt-1">Connect your phone or tablet on the same Wi-Fi network</p>
               </div>
-              <div className="mt-4 flex items-center justify-between w-full px-2">
-                <span className="text-xs text-black/50 font-bold uppercase tracking-widest">PASSWORD</span>
-                <span className="text-sm font-mono font-bold text-cyan-600">1234</span>
+
+              {/* QR Code Container */}
+              <div className="bg-white p-4 rounded-2xl shadow-xl flex flex-col items-center border-4 border-cyan-400/30 relative group">
+                <QRCode value={mobilePairingUrl} size={200} />
+                <div className="mt-3 flex items-center justify-between w-full px-1 border-t border-gray-200 pt-2">
+                  <span className="text-[10px] text-gray-500 font-bold uppercase tracking-widest">SECURITY PIN</span>
+                  <span className="text-xs font-mono font-black text-cyan-700 bg-cyan-100 px-2 py-0.5 rounded">1234</span>
+                </div>
               </div>
+
+              {/* URL & Action buttons */}
+              <div className="w-full space-y-2">
+                <div className="flex items-center gap-2 bg-black/40 border border-white/10 rounded-xl p-2.5">
+                  <input 
+                    type="text" 
+                    readOnly 
+                    value={mobilePairingUrl} 
+                    className="flex-1 bg-transparent text-xs text-cyan-300 font-mono focus:outline-none select-all truncate"
+                  />
+                  <button 
+                    onClick={handleCopy}
+                    className="px-3 py-1.5 bg-cyan-500/20 hover:bg-cyan-500/30 border border-cyan-500/40 text-cyan-300 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 shrink-0"
+                    title="Copy Pairing URL"
+                  >
+                    {copiedLink ? <Check className="w-3.5 h-3.5 text-green-400" /> : <Copy className="w-3.5 h-3.5" />}
+                    <span>{copiedLink ? 'Copied!' : 'Copy'}</span>
+                  </button>
+                  <a
+                    href={mobilePairingUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="p-1.5 bg-white/5 hover:bg-white/10 border border-white/10 text-gray-300 rounded-lg transition-colors shrink-0"
+                    title="Open Mobile Tab"
+                  >
+                    <ExternalLink className="w-4 h-4" />
+                  </a>
+                </div>
+
+                {/* Network Interface Switcher (if multiple or user needs manual IP) */}
+                {networkInterfaces.length > 1 && (
+                  <div className="flex flex-col gap-1 pt-1">
+                    <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest flex items-center justify-between">
+                      <span>Network Interface</span>
+                      <span className="text-cyan-400 font-mono text-[9px]">{networkInterfaces.length} Available</span>
+                    </label>
+                    <select
+                      value={selectedIp}
+                      onChange={(e) => setSelectedIp(e.target.value)}
+                      className="w-full bg-white/5 border border-white/10 rounded-lg px-2.5 py-1.5 text-xs text-gray-300 font-mono focus:outline-none focus:border-cyan-500/50"
+                    >
+                      {networkInterfaces.map((iface) => (
+                        <option key={iface.address} value={iface.address} className="bg-slate-900 text-white">
+                          {iface.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+
+                {/* Custom Host Override input */}
+                <div className="flex items-center gap-2 pt-1 text-[11px] text-gray-400">
+                  <span className="shrink-0 font-mono">Custom Host:</span>
+                  <input
+                    type="text"
+                    value={customHost}
+                    onChange={(e) => setCustomHost(e.target.value)}
+                    placeholder="e.g. 192.168.1.50 or ngrok.io"
+                    className="flex-1 bg-white/5 border border-white/10 rounded-lg px-2 py-1 text-xs text-white font-mono placeholder:text-gray-600 focus:outline-none focus:border-cyan-500/50"
+                  />
+                </div>
+              </div>
+
+              {/* Status footer */}
+              <div className="flex items-center justify-between w-full border-t border-white/10 pt-3 text-xs">
+                <div className="flex items-center gap-2">
+                  <div className="w-2.5 h-2.5 rounded-full bg-green-400 animate-ping"></div>
+                  <span className="text-gray-400 font-mono">Connected:</span>
+                  <span className="text-green-400 font-bold font-mono">{connectedDevices} Device{connectedDevices > 1 ? 's' : ''}</span>
+                </div>
+                <button 
+                  onClick={() => setShowQR(false)} 
+                  className="px-5 py-1.5 bg-white/10 hover:bg-white/20 border border-white/10 rounded-xl font-bold text-xs uppercase tracking-wider transition-all"
+                >
+                  Close
+                </button>
+              </div>
+
             </div>
-            <p className="text-sm text-gray-400 font-mono text-center max-w-xs">
-              Scan this QR code with your mobile device to securely pair it with this dashboard.
-            </p>
-            <button 
-              onClick={() => setShowQR(false)} 
-              className="mt-2 px-6 py-2 bg-white/10 hover:bg-white/20 border border-white/10 rounded-lg font-bold text-sm uppercase tracking-wider transition-colors"
-            >
-              Close
-            </button>
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* EMERGENCY APPROVAL MODAL */}
       {pendingEmergency && (
