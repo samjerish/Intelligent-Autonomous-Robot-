@@ -1513,6 +1513,9 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
   
   const [dynamicObstacles, setDynamicObstacles] = useState<DynamicObstacle[]>([]);
   const dynamicObstaclesRef = useRef<DynamicObstacle[]>([]);
+  const [dynamicObstacleCount, setDynamicObstacleCount] = useState<number>(9);
+  const dynamicObstacleCountRef = useRef<number>(9);
+  useEffect(() => { dynamicObstacleCountRef.current = dynamicObstacleCount; }, [dynamicObstacleCount]);
   const isRecalculating = useRef(false);
 
   const [battery, setBattery] = useState(100);
@@ -1809,19 +1812,26 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
     return () => clearTimeout(timeout);
   }, [robotState, isPlaying, path, currentPosIndex, mapData, isOn, isIdleMode]);
 
-  const initializeDynamicObstacles = (robotPath?: GridPoint[]) => {
+  const initializeDynamicObstacles = (robotPath?: GridPoint[], targetCount?: number) => {
     if (!mapData || !mapData.roads || mapData.roads.length < 5) return;
     const roads = mapData.roads;
+    const count = targetCount !== undefined ? targetCount : dynamicObstacleCountRef.current;
+
+    if (count <= 0) {
+      setDynamicObstacles([]);
+      dynamicObstaclesRef.current = [];
+      return;
+    }
+
     const obs: DynamicObstacle[] = [];
+    const carCount = count < 3 ? (count > 0 ? 1 : 0) : Math.min(8, Math.max(1, Math.round(count * 0.3)));
     
-    // Spawn a balanced, realistic set: 3 cars and 6 pedestrians with spaced-out routes
-    const totalEntities = 9;
-    for (let i = 0; i < totalEntities; i++) {
-      const isCar = i < 3;
+    for (let i = 0; i < count; i++) {
+      const isCar = i < carCount;
       // Pick start and end nodes with reasonable separation to prevent bunching
       let start = roads[Math.floor(Math.random() * roads.length)];
       let end = roads[Math.floor(Math.random() * roads.length)];
-      for (let attempt = 0; attempt < 5; attempt++) {
+      for (let attempt = 0; attempt < 6; attempt++) {
         if (Math.abs(start.x - end.x) + Math.abs(start.y - end.y) >= 6) break;
         end = roads[Math.floor(Math.random() * roads.length)];
       }
@@ -1829,7 +1839,7 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
       const path = calculatePath(start, end, [...(mapData.obstacles || []), ...userBlockers], mapData, true);
       if (path.length > 1) {
         obs.push({
-          id: `obs_${i}`,
+          id: `obs_${i}_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
           type: isCar ? 'car' : 'person',
           pos: path[0],
           targetPos: end,
@@ -1841,8 +1851,8 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
       }
     }
 
-    // Add dynamic pedestrian crosser if we have an active robot path
-    if (robotPath && robotPath.length > 8) {
+    // Add dynamic pedestrian crosser if we have an active robot path and reasonable obstacle density
+    if (count >= 5 && robotPath && robotPath.length > 8) {
       const crossPoint = robotPath[6];
       if (crossPoint) {
         const crossNeighbors = roads.filter(r => 
@@ -1854,7 +1864,7 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
         const crossPath = [crossStart, crossPoint, crossEnd];
 
         obs.push({
-          id: 'sudden_crosser',
+          id: `sudden_crosser_${Date.now()}`,
           type: 'person',
           pos: crossStart,
           targetPos: crossEnd,
@@ -1868,6 +1878,113 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
     
     setDynamicObstacles(obs);
     dynamicObstaclesRef.current = obs;
+  };
+
+  // Populate dynamic obstacles as soon as campus layout is loaded
+  useEffect(() => {
+    if (mapData && mapData.roads && mapData.roads.length > 0) {
+      initializeDynamicObstacles();
+    }
+  }, [mapData]);
+
+  // Adjust dynamic obstacles count
+  const handleUpdateObstacleCount = (newCount: number) => {
+    const clamped = Math.max(0, Math.min(30, newCount));
+    setDynamicObstacleCount(clamped);
+    initializeDynamicObstacles(path, clamped);
+    window.dispatchEvent(new CustomEvent('local_set_obstacle_count', { detail: { count: clamped } }));
+    addExplanation(`Obstacles adjusted to ${clamped} dynamic entities.`);
+  };
+
+  // Listen for remote obstacle count updates (e.g. from mobile)
+  useEffect(() => {
+    const handleRemoteObstacle = (e: any) => {
+      const count = e.detail?.count;
+      if (typeof count === 'number' && count !== dynamicObstacleCountRef.current) {
+        setDynamicObstacleCount(count);
+        initializeDynamicObstacles(path, count);
+        addExplanation(`Mobile operator set obstacle density to ${count}.`);
+      }
+    };
+    window.addEventListener('remote_set_obstacle_count', handleRemoteObstacle);
+    return () => window.removeEventListener('remote_set_obstacle_count', handleRemoteObstacle);
+  }, [path, mapData, userBlockers]);
+
+  // Manual drive handling for Mobile D-Pad
+  const handleManualDrive = (direction: string, manualSpeed: number = 50) => {
+    if (!isOnRef.current) {
+      addExplanation("Cannot drive robot: Power is OFF. Power ON the robot first.");
+      return;
+    }
+    const currentLoc = (path.length > 0 && currentPosIndex < path.length) 
+      ? path[currentPosIndex] 
+      : (robotPosRef.current ? getGridPointFromVector3(robotPosRef.current, mapData?.gridSize || {x:120, y:100, f:1}) : (mapData?.start || {x:61, y:81, f:0}));
+
+    let dx = 0;
+    let dy = 0;
+    if (direction === 'forward') dy = -3;
+    else if (direction === 'backward') dy = 3;
+    else if (direction === 'left') dx = -3;
+    else if (direction === 'right') dx = 3;
+
+    const targetGrid: GridPoint = {
+      x: Math.max(0, Math.min((mapData?.gridSize?.x || 120) - 1, currentLoc.x + dx)),
+      y: Math.max(0, Math.min((mapData?.gridSize?.y || 100) - 1, currentLoc.y + dy)),
+      f: currentLoc.f
+    };
+
+    const drivePath = calculatePath(currentLoc, targetGrid, [...(mapData?.obstacles || []), ...userBlockers], mapData, false);
+    if (drivePath && drivePath.length > 0) {
+      setPath(drivePath);
+      setCurrentPosIndex(0);
+      setRobotState('mission');
+      setIsPlaying(true);
+      setSpeedLimit(Math.max(1, (manualSpeed / 100) * 8));
+    }
+  };
+
+  const handleManualStop = () => {
+    setIsPlaying(false);
+    setRobotState('idle');
+  };
+
+  // Listen for remote manual driving commands from Mobile controller
+  useEffect(() => {
+    const handleRemoteMove = (e: any) => {
+      const { direction, speed: mSpeed } = e.detail;
+      handleManualDrive(direction, mSpeed);
+    };
+    const handleRemoteStop = () => {
+      handleManualStop();
+    };
+    window.addEventListener('remote_manual_move', handleRemoteMove);
+    window.addEventListener('remote_manual_stop', handleRemoteStop);
+    return () => {
+      window.removeEventListener('remote_manual_move', handleRemoteMove);
+      window.removeEventListener('remote_manual_stop', handleRemoteStop);
+    };
+  }, [path, currentPosIndex, mapData, userBlockers]);
+
+  const handleAddRandomRoadblock = () => {
+    if (!mapData || !mapData.roads || mapData.roads.length === 0) return;
+    const roads = mapData.roads;
+    const randomRoad = roads[Math.floor(Math.random() * roads.length)];
+    const blockGroup = getRoadBlockGroup(randomRoad, roads);
+    setUserBlockers(prev => {
+      const newBlockers = [...prev];
+      for (const b of blockGroup) {
+        if (!newBlockers.some(existing => existing.x === b.x && existing.y === b.y)) {
+          newBlockers.push(b);
+        }
+      }
+      return newBlockers;
+    });
+    addExplanation(`Placed random roadblock at (${randomRoad.x}, ${randomRoad.y})`);
+  };
+
+  const handleClearAllRoadblocks = () => {
+    setUserBlockers([]);
+    addExplanation("All user road blockers have been cleared.");
   };
 
   const addExplanation = (msg: string) => {
