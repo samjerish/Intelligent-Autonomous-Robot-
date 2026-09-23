@@ -408,6 +408,10 @@ let appState = {
   obstacleCount: 9
 };
 
+app.get('/api/state', (req, res) => {
+  res.json(appState);
+});
+
 let isStateInitialized = false;
 
 let telemetry = {
