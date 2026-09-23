@@ -6,7 +6,7 @@ import { SimulationView } from './components/SimulationView';
 
 import { useLocalStorage } from './hooks/useLocalStorage';
 import type { MissionHistoryItem, MissionResult } from './types';
-import { Bot, Power, QrCode, History } from 'lucide-react';
+import { Bot, Power, QrCode, History, Check, Copy, ExternalLink, Wifi, Smartphone, Sliders } from 'lucide-react';
 import QRCode from 'react-qr-code';
 import { io } from 'socket.io-client';
 import { Play } from 'lucide-react'; // ensure Play is imported for the execute button
@@ -41,6 +41,14 @@ function App() {
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const socketRef = useRef<any>(null);
 
+  const [networkIp, setNetworkIp] = useState<string>('');
+  const [networkInterfaces, setNetworkInterfaces] = useState<Array<{ name: string; label: string; address: string }>>([]);
+  const [selectedIp, setSelectedIp] = useState<string>('');
+  const [customHost, setCustomHost] = useState<string>('');
+  const [connectedDevices, setConnectedDevices] = useState<number>(1);
+  const [copiedLink, setCopiedLink] = useState(false);
+  const [obstacleCount, setObstacleCount] = useState<number>(9);
+
   const togglePowerBroadcast = (turnOn: boolean) => {
     setIsOn(turnOn);
     socketRef.current?.emit('update_state', { isOn: turnOn });
@@ -51,8 +59,6 @@ function App() {
     window.dispatchEvent(new CustomEvent('remote_execute_mission'));
   };
 
-
-
   useEffect(() => {
     // Fetch initial map data on mount so Control Center is always visible
     fetch(`/api/map`)
@@ -60,7 +66,26 @@ function App() {
       .then(data => setInitialMapData(data))
       .catch(err => console.error("Failed to load initial map:", err));
 
-    const newSocket = io(`/`);
+    // Fetch network IPs for multi-device mobile pairing
+    fetch(`/api/ip`)
+      .then(res => res.json())
+      .then(data => {
+        if (data.ip) {
+          setNetworkIp(data.ip);
+          setSelectedIp(data.ip);
+        }
+        if (data.interfaces && Array.isArray(data.interfaces)) {
+          setNetworkInterfaces(data.interfaces);
+        }
+      })
+      .catch(err => console.error("Failed to load network IP:", err));
+
+    const newSocket = io({
+      transports: ['websocket', 'polling'],
+      reconnection: true,
+      reconnectionAttempts: Infinity,
+      reconnectionDelay: 1000
+    });
     socketRef.current = newSocket;
 
     newSocket.on('connect', () => {
@@ -73,10 +98,27 @@ function App() {
       });
     });
 
+    newSocket.on('device_count', (count: number) => {
+      if (typeof count === 'number') {
+        setConnectedDevices(count);
+      }
+    });
+
+    newSocket.on('obstacle_count_updated', (data: { count: number }) => {
+      if (typeof data?.count === 'number') {
+        setObstacleCount(data.count);
+        window.dispatchEvent(new CustomEvent('remote_set_obstacle_count', { detail: { count: data.count } }));
+      }
+    });
+
     newSocket.on('init_state', (state: any) => {
       if (state.history) setHistory(state.history);
       if (state.currentMission !== undefined) setCurrentMission(state.currentMission);
       if (state.pendingEmergency !== undefined) setPendingEmergency(state.pendingEmergency);
+      if (state.obstacleCount !== undefined) {
+        setObstacleCount(state.obstacleCount);
+        window.dispatchEvent(new CustomEvent('remote_set_obstacle_count', { detail: { count: state.obstacleCount } }));
+      }
       if (state.isOn !== undefined) {
         setIsOn(state.isOn);
         window.dispatchEvent(new CustomEvent('remote_toggle_power', { detail: { turnOn: state.isOn } }));
@@ -87,6 +129,10 @@ function App() {
       if (newState.history) setHistory(newState.history);
       if (newState.currentMission !== undefined) setCurrentMission(newState.currentMission);
       if (newState.pendingEmergency !== undefined) setPendingEmergency(newState.pendingEmergency);
+      if (newState.obstacleCount !== undefined) {
+        setObstacleCount(newState.obstacleCount);
+        window.dispatchEvent(new CustomEvent('remote_set_obstacle_count', { detail: { count: newState.obstacleCount } }));
+      }
       if (newState.isOn !== undefined) {
         setIsOn(newState.isOn);
         window.dispatchEvent(new CustomEvent('remote_toggle_power', { detail: { turnOn: newState.isOn } }));
@@ -103,9 +149,13 @@ function App() {
     });
 
     newSocket.on('mobile_command_received', (data) => {
-      // Validate token (now fixed for password-based auth)
+      // Validate token (fixed for password-based auth)
       if (data.token !== 'mobile-auth') return;
 
+      if (data.action === 'set_obstacle_count' && typeof data.count === 'number') {
+        setObstacleCount(data.count);
+        window.dispatchEvent(new CustomEvent('remote_set_obstacle_count', { detail: { count: data.count } }));
+      }
       if (data.action === 'toggle_power') {
          setIsOn(data.turnOn);
          socketRef.current?.emit('update_state', { isOn: data.turnOn });
@@ -140,7 +190,10 @@ function App() {
          }
       }
       if (data.action === 'manual_move') {
-         console.log('Mobile moving:', data.direction, data.speed);
+         window.dispatchEvent(new CustomEvent('remote_manual_move', { detail: { direction: data.direction, speed: data.speed } }));
+      }
+      if (data.action === 'manual_stop') {
+         window.dispatchEvent(new CustomEvent('remote_manual_stop'));
       }
       if (data.action === 'set_speed') {
          window.dispatchEvent(new CustomEvent('remote_speed_update', { detail: { speed: data.speed } }));
@@ -148,6 +201,18 @@ function App() {
     });
 
     return () => { newSocket.close(); };
+  }, []);
+
+  useEffect(() => {
+    const handleLocalObstacle = (e: any) => {
+      const count = e.detail?.count;
+      if (typeof count === 'number') {
+        setObstacleCount(count);
+        socketRef.current?.emit('set_obstacle_count', { count });
+      }
+    };
+    window.addEventListener('local_set_obstacle_count', handleLocalObstacle);
+    return () => window.removeEventListener('local_set_obstacle_count', handleLocalObstacle);
   }, []);
 
   useEffect(() => {
