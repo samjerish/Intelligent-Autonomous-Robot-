@@ -2855,7 +2855,7 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
         {/* Top Left Options */}
         <div className="absolute top-4 left-4 z-10 hidden md:flex flex-col gap-2">
           {/* Main Options Row */}
-          <div className="flex gap-2">
+          <div className="flex gap-2 items-center flex-wrap">
             <button
               onClick={() => setIsMapView(!isMapView)}
               className="px-3 py-1.5 rounded-md text-xs font-bold bg-brand text-white shadow-lg hover:bg-blue-600 transition-colors"
@@ -2881,6 +2881,29 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
             >
               CTR (Connect to Robot)
             </button>
+
+            {/* Quick Obstacle Counter */}
+            <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-mono bg-surface/90 text-text border border-border shadow-lg backdrop-blur-md">
+              <Sliders className="w-3.5 h-3.5 text-cyan-400" />
+              <span className="text-gray-400 text-[11px]">Obstacles:</span>
+              <span className="text-cyan-400 font-bold">{dynamicObstacleCount}</span>
+              <div className="flex items-center gap-0.5 ml-1">
+                <button
+                  onClick={() => handleUpdateObstacleCount(dynamicObstacleCount - 1)}
+                  className="w-5 h-5 flex items-center justify-center bg-white/10 hover:bg-white/20 rounded text-white font-bold transition-colors cursor-pointer"
+                  title="Decrease Obstacles"
+                >
+                  -
+                </button>
+                <button
+                  onClick={() => handleUpdateObstacleCount(dynamicObstacleCount + 1)}
+                  className="w-5 h-5 flex items-center justify-center bg-white/10 hover:bg-white/20 rounded text-white font-bold transition-colors cursor-pointer"
+                  title="Increase Obstacles"
+                >
+                  +
+                </button>
+              </div>
+            </div>
 
             <button
               onClick={() => setIsFullscreen(!isFullscreen)}
@@ -3279,55 +3302,156 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
 
             {/* TOOLS TAB */}
             {activeCCTab === 'tools' && (
-              <div className="p-4 space-y-4 animate-in fade-in duration-300">
-                <h4 className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Environment Tools</h4>
-                <div className="flex flex-col gap-3">
-                  <button
-                    onClick={() => setIsEmergencyTargeting(!isEmergencyTargeting)}
-                    className={`w-full p-4 border rounded-xl transition-all flex items-center gap-4 text-left ${isEmergencyTargeting ? 'bg-red-500/20 text-red-400 border-red-500 shadow-[0_0_20px_rgba(239,68,68,0.3)]' : 'bg-white/5 text-gray-400 border-white/10 hover:bg-white/10 hover:text-white'}`}
-                  >
-                    <div className={`p-2 rounded-lg ${isEmergencyTargeting ? 'bg-red-500 text-white' : 'bg-white/10'}`}>
-                      <ShieldAlert className="w-5 h-5" />
-                    </div>
-                    <div>
-                      <div className="font-bold uppercase tracking-wider text-sm">Target Emergency</div>
-                      <div className="text-[10px] opacity-70 mt-0.5 font-mono">Click on map to spawn an emergency</div>
-                    </div>
-                  </button>
-
-                  <button
-                    onClick={() => {
-                      setIsPlacingBlocker(!isPlacingBlocker);
-                      if (!isPlacingBlocker) { setIsEmergencyTargeting(false); setIsPlacingCrowd(false); }
-                    }}
-                    className={`w-full p-4 border rounded-xl transition-all flex items-center gap-4 text-left ${isPlacingBlocker ? 'bg-orange-500/20 text-orange-400 border-orange-500 shadow-[0_0_20px_rgba(249,115,22,0.3)]' : 'bg-white/5 text-gray-400 border-white/10 hover:bg-white/10 hover:text-white'}`}
-                  >
-                    <div className={`p-2 rounded-lg ${isPlacingBlocker ? 'bg-orange-500 text-white' : 'bg-white/10'}`}>
-                      <Construction className="w-5 h-5" />
-                    </div>
-                    <div>
-                      <div className="font-bold uppercase tracking-wider text-sm">Place Road Blocker</div>
-                      <div className="text-[10px] opacity-70 mt-0.5 font-mono">
-                        {isPlacingBlocker ? 'Left-click: Place • Right-click: Remove' : 'Simulate a blocked route'}
+              <div className="p-4 space-y-5 animate-in fade-in duration-300">
+                {/* OBSTACLE DENSITY CONTROLLER */}
+                <div className="bg-white/5 border border-cyan-500/30 rounded-2xl p-4 space-y-3 shadow-lg">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <div className="p-1.5 rounded-lg bg-cyan-500/20 text-cyan-400">
+                        <Sliders className="w-4 h-4" />
                       </div>
+                      <span className="font-bold uppercase tracking-wider text-xs text-white">Obstacle Density</span>
                     </div>
-                  </button>
+                    <span className="px-2.5 py-0.5 rounded-full text-xs font-mono font-bold bg-cyan-500/20 text-cyan-300 border border-cyan-500/40">
+                      {dynamicObstacleCount} Entities
+                    </span>
+                  </div>
 
-                  <button
-                    onClick={() => {
-                      setIsPlacingCrowd(!isPlacingCrowd);
-                      if (!isPlacingCrowd) { setIsEmergencyTargeting(false); setIsPlacingBlocker(false); }
-                    }}
-                    className={`w-full p-4 border rounded-xl transition-all flex items-center gap-4 text-left ${isPlacingCrowd ? 'bg-purple-500/20 text-purple-400 border-purple-500 shadow-[0_0_20px_rgba(168,85,247,0.3)]' : 'bg-white/5 text-gray-400 border-white/10 hover:bg-white/10 hover:text-white'}`}
-                  >
-                    <div className={`p-2 rounded-lg ${isPlacingCrowd ? 'bg-purple-500 text-white' : 'bg-white/10'}`}>
-                      <Users className="w-5 h-5" />
+                  {/* Range Slider */}
+                  <div className="space-y-1">
+                    <div className="flex justify-between text-[10px] text-gray-400 font-mono">
+                      <span>Clear (0)</span>
+                      <span>Moderate (10)</span>
+                      <span>Congested (30)</span>
                     </div>
-                    <div>
-                      <div className="font-bold uppercase tracking-wider text-sm">Place Crowd</div>
-                      <div className="text-[10px] opacity-70 mt-0.5 font-mono">Trigger crowd control mode</div>
+                    <input
+                      type="range"
+                      min={0}
+                      max={30}
+                      step={1}
+                      value={dynamicObstacleCount}
+                      onChange={(e) => handleUpdateObstacleCount(Number(e.target.value))}
+                      className="w-full accent-cyan-400 cursor-pointer h-1.5 bg-white/10 rounded-lg appearance-none"
+                    />
+                  </div>
+
+                  {/* Quick Preset Buttons */}
+                  <div className="grid grid-cols-4 gap-1.5 pt-1">
+                    {[
+                      { label: '0 None', val: 0 },
+                      { label: '5 Light', val: 5 },
+                      { label: '10 Norm', val: 10 },
+                      { label: '20 Heavy', val: 20 },
+                    ].map(p => (
+                      <button
+                        key={p.val}
+                        onClick={() => handleUpdateObstacleCount(p.val)}
+                        className={`py-1 rounded text-[10px] font-bold font-mono transition-all ${
+                          dynamicObstacleCount === p.val 
+                            ? 'bg-cyan-500 text-black shadow-[0_0_10px_rgba(6,182,212,0.4)]' 
+                            : 'bg-white/5 text-gray-400 hover:text-white hover:bg-white/10'
+                        }`}
+                      >
+                        {p.label}
+                      </button>
+                    ))}
+                  </div>
+
+                  {/* Active Entity Composition Breakdown */}
+                  <div className="flex items-center justify-between text-[11px] font-mono text-gray-400 border-t border-white/10 pt-2">
+                    <span className="flex items-center gap-1.5">
+                      <Car className="w-3.5 h-3.5 text-blue-400" />
+                      <span>{dynamicObstacles.filter(o => o.type === 'car').length} Cars</span>
+                    </span>
+                    <span className="flex items-center gap-1.5">
+                      <Users className="w-3.5 h-3.5 text-purple-400" />
+                      <span>{dynamicObstacles.filter(o => o.type === 'person').length} Pedestrians</span>
+                    </span>
+                  </div>
+                </div>
+
+                {/* ROADBLOCK & OBSTRUCTION CONTROLS */}
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <h4 className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Roadblock Tools</h4>
+                    {userBlockers.length > 0 && (
+                      <span className="text-[10px] font-mono text-orange-400 font-bold">
+                        {userBlockers.length} Active Blocker{userBlockers.length > 1 ? 's' : ''}
+                      </span>
+                    )}
+                  </div>
+
+                  <div className="flex flex-col gap-2.5">
+                    <button
+                      onClick={() => {
+                        setIsPlacingBlocker(!isPlacingBlocker);
+                        if (!isPlacingBlocker) { setIsEmergencyTargeting(false); setIsPlacingCrowd(false); }
+                      }}
+                      className={`w-full p-3.5 border rounded-xl transition-all flex items-center gap-3.5 text-left ${isPlacingBlocker ? 'bg-orange-500/20 text-orange-400 border-orange-500 shadow-[0_0_20px_rgba(249,115,22,0.3)]' : 'bg-white/5 text-gray-400 border-white/10 hover:bg-white/10 hover:text-white'}`}
+                    >
+                      <div className={`p-2 rounded-lg ${isPlacingBlocker ? 'bg-orange-500 text-white' : 'bg-white/10'}`}>
+                        <Construction className="w-4 h-4" />
+                      </div>
+                      <div className="flex-1">
+                        <div className="font-bold uppercase tracking-wider text-xs">
+                          {isPlacingBlocker ? 'Click on Road to Place' : 'Place Road Blocker'}
+                        </div>
+                        <div className="text-[10px] opacity-70 mt-0.5 font-mono">
+                          {isPlacingBlocker ? 'Left-click: Add • Right-click: Remove' : 'Manually block a road segment'}
+                        </div>
+                      </div>
+                    </button>
+
+                    <div className="grid grid-cols-2 gap-2">
+                      <button
+                        onClick={handleAddRandomRoadblock}
+                        className="p-2.5 bg-white/5 hover:bg-white/10 border border-white/10 hover:border-orange-500/50 rounded-xl text-xs font-bold text-gray-300 hover:text-orange-400 transition-all flex items-center justify-center gap-1.5"
+                        title="Spawn Random Roadblock"
+                      >
+                        <Plus className="w-3.5 h-3.5" />
+                        <span>Random Block</span>
+                      </button>
+
+                      <button
+                        onClick={handleClearAllRoadblocks}
+                        disabled={userBlockers.length === 0}
+                        className="p-2.5 bg-white/5 hover:bg-red-500/20 border border-white/10 hover:border-red-500/40 rounded-xl text-xs font-bold text-gray-400 hover:text-red-400 disabled:opacity-30 disabled:pointer-events-none transition-all flex items-center justify-center gap-1.5"
+                        title="Clear All Roadblocks"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                        <span>Clear All</span>
+                      </button>
                     </div>
-                  </button>
+
+                    <button
+                      onClick={() => {
+                        setIsPlacingCrowd(!isPlacingCrowd);
+                        if (!isPlacingCrowd) { setIsEmergencyTargeting(false); setIsPlacingBlocker(false); }
+                      }}
+                      className={`w-full p-3.5 border rounded-xl transition-all flex items-center gap-3.5 text-left ${isPlacingCrowd ? 'bg-purple-500/20 text-purple-400 border-purple-500 shadow-[0_0_20px_rgba(168,85,247,0.3)]' : 'bg-white/5 text-gray-400 border-white/10 hover:bg-white/10 hover:text-white'}`}
+                    >
+                      <div className={`p-2 rounded-lg ${isPlacingCrowd ? 'bg-purple-500 text-white' : 'bg-white/10'}`}>
+                        <Users className="w-4 h-4" />
+                      </div>
+                      <div>
+                        <div className="font-bold uppercase tracking-wider text-xs">Place Crowd</div>
+                        <div className="text-[10px] opacity-70 mt-0.5 font-mono">Trigger crowd dispersal protocol</div>
+                      </div>
+                    </button>
+
+                    <button
+                      onClick={() => setIsEmergencyTargeting(!isEmergencyTargeting)}
+                      className={`w-full p-3.5 border rounded-xl transition-all flex items-center gap-3.5 text-left ${isEmergencyTargeting ? 'bg-red-500/20 text-red-400 border-red-500 shadow-[0_0_20px_rgba(239,68,68,0.3)]' : 'bg-white/5 text-gray-400 border-white/10 hover:bg-white/10 hover:text-white'}`}
+                    >
+                      <div className={`p-2 rounded-lg ${isEmergencyTargeting ? 'bg-red-500 text-white' : 'bg-white/10'}`}>
+                        <ShieldAlert className="w-4 h-4" />
+                      </div>
+                      <div>
+                        <div className="font-bold uppercase tracking-wider text-xs">Target Emergency</div>
+                        <div className="text-[10px] opacity-70 mt-0.5 font-mono">Dispatch robot to emergency location</div>
+                      </div>
+                    </button>
+                  </div>
                 </div>
               </div>
             )}
