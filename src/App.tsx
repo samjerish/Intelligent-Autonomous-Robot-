@@ -462,34 +462,108 @@ function App() {
       </div>
 
       {showQR && (() => {
+        const isCloudMode = connectionMode === 'cloud';
         const portPart = window.location.port ? `:${window.location.port}` : '';
         const hostToUse = customHost.trim() || selectedIp || networkIp || window.location.hostname;
-        const mobilePairingUrl = `${window.location.protocol}//${hostToUse}${portPart}/mobile?key=1234`;
+        const localPairingUrl = `${window.location.protocol}//${hostToUse}${portPart}/mobile?key=1234`;
+        const cloudPairingUrl = tunnelUrl ? `${tunnelUrl}/mobile?key=1234` : '';
+        const activePairingUrl = (isCloudMode && cloudPairingUrl) ? cloudPairingUrl : localPairingUrl;
 
         const handleCopy = () => {
-          navigator.clipboard.writeText(mobilePairingUrl);
+          navigator.clipboard.writeText(activePairingUrl);
           setCopiedLink(true);
           setTimeout(() => setCopiedLink(false), 2500);
         };
 
         return (
-          <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/70 backdrop-blur-md p-4 animate-in fade-in duration-200" onClick={() => setShowQR(false)}>
-            <div className="bg-[#0b1329] border border-cyan-500/30 p-6 sm:p-8 rounded-3xl shadow-[0_0_60px_rgba(6,182,212,0.25)] flex flex-col items-center gap-5 max-w-md w-full" onClick={e => e.stopPropagation()}>
+          <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/75 backdrop-blur-md p-4 animate-in fade-in duration-200" onClick={() => setShowQR(false)}>
+            <div className="bg-[#0b1329] border border-cyan-500/30 p-6 sm:p-7 rounded-3xl shadow-[0_0_70px_rgba(6,182,212,0.25)] flex flex-col items-center gap-4 max-w-md w-full" onClick={e => e.stopPropagation()}>
               
               {/* Header */}
-              <div className="text-center">
-                <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-cyan-500/10 border border-cyan-500/30 text-cyan-400 text-xs font-mono mb-2">
-                  <Wifi className="w-3.5 h-3.5 animate-pulse" />
-                  <span>LAN REAL-TIME PAIRING</span>
+              <div className="text-center w-full">
+                <div className="flex items-center justify-between mb-2">
+                  <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-cyan-500/10 border border-cyan-500/30 text-cyan-400 text-xs font-mono">
+                    <Smartphone className="w-3.5 h-3.5" />
+                    <span>PAS-MOBILE CONTROLLER</span>
+                  </div>
+                  {isCloudMode && (
+                    <button
+                      onClick={handleRestartTunnel}
+                      disabled={isRestartingTunnel}
+                      title="Regenerate Cloud Tunnel URL"
+                      className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-white/5 hover:bg-white/10 text-gray-400 hover:text-white border border-white/10 text-[10px] font-mono transition-all disabled:opacity-50"
+                    >
+                      <RefreshCw className={`w-3 h-3 ${isRestartingTunnel ? 'animate-spin text-cyan-400' : ''}`} />
+                      <span>{isRestartingTunnel ? 'Regenerating...' : 'New URL'}</span>
+                    </button>
+                  )}
                 </div>
                 <h2 className="text-2xl font-black text-white tracking-wider uppercase">Mobile Connect</h2>
-                <p className="text-xs text-gray-400 mt-1">Connect your phone or tablet on the same Wi-Fi network</p>
+              </div>
+
+              {/* Mode Switcher Tabs */}
+              <div className="grid grid-cols-2 gap-1 p-1 bg-white/5 border border-white/10 rounded-2xl w-full">
+                <button
+                  type="button"
+                  onClick={() => setConnectionMode('cloud')}
+                  className={`flex items-center justify-center gap-1.5 py-2 px-3 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                    connectionMode === 'cloud'
+                      ? 'bg-cyan-500 text-black shadow-lg shadow-cyan-500/25'
+                      : 'text-gray-400 hover:text-white hover:bg-white/5'
+                  }`}
+                >
+                  <Globe className="w-3.5 h-3.5" />
+                  <span>Any Network (Cloud)</span>
+                  {tunnelStatus === 'connected' && (
+                    <span className="w-2 h-2 rounded-full bg-emerald-950 border border-emerald-400 animate-pulse"></span>
+                  )}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setConnectionMode('local')}
+                  className={`flex items-center justify-center gap-1.5 py-2 px-3 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                    connectionMode === 'local'
+                      ? 'bg-cyan-500 text-black shadow-lg shadow-cyan-500/25'
+                      : 'text-gray-400 hover:text-white hover:bg-white/5'
+                  }`}
+                >
+                  <Wifi className="w-3.5 h-3.5" />
+                  <span>Local Wi-Fi (LAN)</span>
+                </button>
+              </div>
+
+              {/* Mode Description Banner */}
+              <div className="w-full">
+                {isCloudMode ? (
+                  <div className="px-3 py-2 rounded-xl bg-cyan-950/40 border border-cyan-500/30 text-[11px] flex items-center gap-2">
+                    {tunnelStatus === 'connected' ? (
+                      <>
+                        <div className="w-2.5 h-2.5 rounded-full bg-green-400 shrink-0 animate-ping"></div>
+                        <span className="text-cyan-200">
+                          <strong className="text-white">Active Global Tunnel:</strong> Works anywhere on cellular 4G/5G or any Wi-Fi without router restrictions.
+                        </span>
+                      </>
+                    ) : (
+                      <>
+                        <div className="w-2.5 h-2.5 rounded-full bg-yellow-400 shrink-0 animate-spin"></div>
+                        <span className="text-yellow-200">
+                          Creating secure Global Tunnel... Scan below or switch to Local Wi-Fi.
+                        </span>
+                      </>
+                    )}
+                  </div>
+                ) : (
+                  <div className="px-3 py-2 rounded-xl bg-slate-900/60 border border-white/10 text-[11px] text-gray-300 flex items-center gap-2">
+                    <Wifi className="w-3.5 h-3.5 text-cyan-400 shrink-0" />
+                    <span>Both phone and computer must be connected to the exact same Wi-Fi router.</span>
+                  </div>
+                )}
               </div>
 
               {/* QR Code Container */}
               <div className="bg-white p-4 rounded-2xl shadow-xl flex flex-col items-center border-4 border-cyan-400/30 relative group">
-                <QRCode value={mobilePairingUrl} size={200} />
-                <div className="mt-3 flex items-center justify-between w-full px-1 border-t border-gray-200 pt-2">
+                <QRCode value={activePairingUrl} size={190} />
+                <div className="mt-2.5 flex items-center justify-between w-full px-1 border-t border-gray-200 pt-2">
                   <span className="text-[10px] text-gray-500 font-bold uppercase tracking-widest">SECURITY PIN</span>
                   <span className="text-xs font-mono font-black text-cyan-700 bg-cyan-100 px-2 py-0.5 rounded">1234</span>
                 </div>
@@ -501,60 +575,63 @@ function App() {
                   <input 
                     type="text" 
                     readOnly 
-                    value={mobilePairingUrl} 
+                    value={activePairingUrl} 
                     className="flex-1 bg-transparent text-xs text-cyan-300 font-mono focus:outline-none select-all truncate"
                   />
                   <button 
                     onClick={handleCopy}
-                    className="px-3 py-1.5 bg-cyan-500/20 hover:bg-cyan-500/30 border border-cyan-500/40 text-cyan-300 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 shrink-0"
+                    className="px-3 py-1.5 bg-cyan-500/20 hover:bg-cyan-500/30 border border-cyan-500/40 text-cyan-300 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 shrink-0 cursor-pointer"
                     title="Copy Pairing URL"
                   >
                     {copiedLink ? <Check className="w-3.5 h-3.5 text-green-400" /> : <Copy className="w-3.5 h-3.5" />}
                     <span>{copiedLink ? 'Copied!' : 'Copy'}</span>
                   </button>
                   <a
-                    href={mobilePairingUrl}
+                    href={activePairingUrl}
                     target="_blank"
                     rel="noreferrer"
                     className="p-1.5 bg-white/5 hover:bg-white/10 border border-white/10 text-gray-300 rounded-lg transition-colors shrink-0"
-                    title="Open Mobile Tab"
+                    title="Open in new tab"
                   >
                     <ExternalLink className="w-4 h-4" />
                   </a>
                 </div>
 
-                {/* Network Interface Switcher (if multiple or user needs manual IP) */}
-                {networkInterfaces.length > 1 && (
-                  <div className="flex flex-col gap-1 pt-1">
-                    <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest flex items-center justify-between">
-                      <span>Network Interface</span>
-                      <span className="text-cyan-400 font-mono text-[9px]">{networkInterfaces.length} Available</span>
-                    </label>
-                    <select
-                      value={selectedIp}
-                      onChange={(e) => setSelectedIp(e.target.value)}
-                      className="w-full bg-white/5 border border-white/10 rounded-lg px-2.5 py-1.5 text-xs text-gray-300 font-mono focus:outline-none focus:border-cyan-500/50"
-                    >
-                      {networkInterfaces.map((iface) => (
-                        <option key={iface.address} value={iface.address} className="bg-slate-900 text-white">
-                          {iface.label}
-                        </option>
-                      ))}
-                    </select>
+                {/* Local Wi-Fi Options (Interface switcher & custom host) */}
+                {!isCloudMode && (
+                  <div className="space-y-2 pt-1 border-t border-white/5">
+                    {networkInterfaces.length > 1 && (
+                      <div className="flex flex-col gap-1">
+                        <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest flex items-center justify-between">
+                          <span>Network Interface</span>
+                          <span className="text-cyan-400 font-mono text-[9px]">{networkInterfaces.length} Available</span>
+                        </label>
+                        <select
+                          value={selectedIp}
+                          onChange={(e) => setSelectedIp(e.target.value)}
+                          className="w-full bg-white/5 border border-white/10 rounded-lg px-2.5 py-1.5 text-xs text-gray-300 font-mono focus:outline-none focus:border-cyan-500/50"
+                        >
+                          {networkInterfaces.map((iface) => (
+                            <option key={iface.address} value={iface.address} className="bg-slate-900 text-white">
+                              {iface.label}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    )}
+
+                    <div className="flex items-center gap-2 text-[11px] text-gray-400">
+                      <span className="shrink-0 font-mono">Custom Host:</span>
+                      <input
+                        type="text"
+                        value={customHost}
+                        onChange={(e) => setCustomHost(e.target.value)}
+                        placeholder="e.g. 192.168.1.50 or hostname"
+                        className="flex-1 bg-white/5 border border-white/10 rounded-lg px-2 py-1 text-xs text-white font-mono placeholder:text-gray-600 focus:outline-none focus:border-cyan-500/50"
+                      />
+                    </div>
                   </div>
                 )}
-
-                {/* Custom Host Override input */}
-                <div className="flex items-center gap-2 pt-1 text-[11px] text-gray-400">
-                  <span className="shrink-0 font-mono">Custom Host:</span>
-                  <input
-                    type="text"
-                    value={customHost}
-                    onChange={(e) => setCustomHost(e.target.value)}
-                    placeholder="e.g. 192.168.1.50 or ngrok.io"
-                    className="flex-1 bg-white/5 border border-white/10 rounded-lg px-2 py-1 text-xs text-white font-mono placeholder:text-gray-600 focus:outline-none focus:border-cyan-500/50"
-                  />
-                </div>
               </div>
 
               {/* Status footer */}
@@ -571,7 +648,7 @@ function App() {
                 </div>
                 <button 
                   onClick={() => setShowQR(false)} 
-                  className="px-5 py-1.5 bg-white/10 hover:bg-white/20 border border-white/10 rounded-xl font-bold text-xs uppercase tracking-wider transition-all"
+                  className="px-5 py-1.5 bg-white/10 hover:bg-white/20 border border-white/10 rounded-xl font-bold text-xs uppercase tracking-wider transition-all cursor-pointer"
                 >
                   Close
                 </button>
