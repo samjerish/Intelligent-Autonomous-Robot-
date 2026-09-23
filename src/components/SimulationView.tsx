@@ -1428,10 +1428,18 @@ interface SimulationViewProps {
   onEvent: (event: any) => void;
   onDispatchMission?: (missionText: string) => void;
   selectedStrategyId?: string;
+  isOn?: boolean;
+  onPowerChange?: (isOn: boolean) => void;
 }
 
 
-export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispatchMission, selectedStrategyId }) => {
+export const SimulationView: React.FC<SimulationViewProps> = ({ 
+  mapData, 
+  onDispatchMission, 
+  selectedStrategyId,
+  isOn: isOnProp,
+  onPowerChange
+}) => {
   const [path, setPath] = useState<GridPoint[]>([]);
   const [activePathColor, setActivePathColor] = useState<string>('#00ffff');
   const [speedLimit, setSpeedLimit] = useState(50);
@@ -1519,8 +1527,14 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
   const isRecalculating = useRef(false);
 
   const [battery, setBattery] = useState(100);
-  const [robotState, setRobotState] = useState<RobotState>('off');
-  const [isOn, setIsOn] = useState(false);
+  const [robotState, setRobotState] = useState<RobotState>('idle');
+  const [isOn, setIsOn] = useState(isOnProp !== undefined ? isOnProp : true);
+
+  useEffect(() => {
+    if (isOnProp !== undefined && isOnProp !== isOn) {
+      setIsOn(isOnProp);
+    }
+  }, [isOnProp]);
   const [activeCCTab, setActiveCCTab] = useState<'dashboard' | 'tools' | 'locations'>('dashboard');
   const [modalType, setModalType] = useState<'food' | 'medical' | null>(null);
 
@@ -1634,26 +1648,46 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
     const handleRemoteSpeed = (e: any) => {
       setSpeedLimit(e.detail.speed);
     };
+    const handleRemoteCamera = () => {
+      setIsFollowing(prev => {
+        const next = !prev;
+        addExplanation(next ? "Mobile Operator toggled follow camera." : "Mobile Operator switched to free view.");
+        return next;
+      });
+    };
+    const handleRemoteVoice = () => {
+      addExplanation("Mobile Operator triggered audio ping.");
+      if (audioRef.current) {
+        audioRef.current.currentTime = 0;
+        audioRef.current.volume = 1.0;
+        audioRef.current.play().catch(() => {});
+      }
+    };
     window.addEventListener('remote_toggle_power', handleRemoteToggle);
     window.addEventListener('remote_speed_update', handleRemoteSpeed);
+    window.addEventListener('remote_toggle_camera', handleRemoteCamera);
+    window.addEventListener('remote_toggle_voice', handleRemoteVoice);
     return () => {
       window.removeEventListener('remote_toggle_power', handleRemoteToggle);
       window.removeEventListener('remote_speed_update', handleRemoteSpeed);
+      window.removeEventListener('remote_toggle_camera', handleRemoteCamera);
+      window.removeEventListener('remote_toggle_voice', handleRemoteVoice);
     };
   }, []);
 
   const togglePowerBroadcast = (turnOn: boolean) => {
     if (turnOn === isOn) return;
-    fetch(`http://${window.location.hostname}:3000/api/action`, {
+    fetch('/api/action', {
        method: 'POST',
        headers: { 'Content-Type': 'application/json' },
        body: JSON.stringify({ action: 'toggle_power', payload: { turnOn } })
-    });
+    }).catch(() => {});
   };
 
   const togglePower = () => {
     if (isOn) {
       setIsOn(false);
+      onPowerChange?.(false);
       addExplanation("Powering OFF. Returning to Robot Home for standby and charging...");
       originalMissionRef.current = null;
       const homeRoom = mapData?.rooms?.find(r => r.name.toLowerCase().includes('generator')) || mapData?.rooms?.[0];
@@ -1672,6 +1706,7 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
       }
     } else {
       setIsOn(true);
+      onPowerChange?.(true);
       setBattery(100);
       addExplanation("Powering ON. System initialized. Beginning patrol immediately.");
       if (mapData && mapData.rooms && mapData.rooms.length > 0) {
@@ -1917,30 +1952,41 @@ export const SimulationView: React.FC<SimulationViewProps> = ({ mapData, onDispa
       addExplanation("Cannot drive robot: Power is OFF. Power ON the robot first.");
       return;
     }
-    const currentLoc = (path.length > 0 && currentPosIndex < path.length) 
-      ? path[currentPosIndex] 
-      : (robotPosRef.current ? getGridPointFromVector3(robotPosRef.current, mapData.gridSize || {x:120, y:100, f:1}) : (mapData.start || {x:61, y:81, f:0}));
+    const currentLoc = (robotPosRef.current 
+      ? getGridPointFromVector3(robotPosRef.current, mapData.gridSize || { x: 120, y: 100, f: 1 })
+      : ((path.length > 0 && currentPosIndex < path.length) ? path[currentPosIndex] : (mapData.start || { x: 61, y: 81, f: 0 })));
 
     let dx = 0;
     let dy = 0;
-    if (direction === 'forward') dy = -3;
-    else if (direction === 'backward') dy = 3;
-    else if (direction === 'left') dx = -3;
-    else if (direction === 'right') dx = 3;
+    if (direction === 'forward') dy = -1;
+    else if (direction === 'backward') dy = 1;
+    else if (direction === 'left') dx = -1;
+    else if (direction === 'right') dx = 1;
 
-    const targetGrid: GridPoint = {
-      x: Math.max(0, Math.min((mapData?.gridSize?.x || 120) - 1, currentLoc.x + dx)),
-      y: Math.max(0, Math.min((mapData?.gridSize?.y || 100) - 1, currentLoc.y + dy)),
-      f: currentLoc.f
-    };
+    // Try multi-step distances (3, 2, 1) to find the best valid reachable node
+    let drivePath: GridPoint[] = [];
+    const allObstacles = [...(mapData?.obstacles || []), ...userBlockers];
 
-    const drivePath = calculatePath(currentLoc, targetGrid, [...(mapData?.obstacles || []), ...userBlockers], mapData, false);
-    if (drivePath && drivePath.length > 0) {
+    for (const stepSize of [3, 2, 1]) {
+      const targetGrid: GridPoint = {
+        x: Math.max(0, Math.min((mapData?.gridSize?.x || 120) - 1, currentLoc.x + dx * stepSize)),
+        y: Math.max(0, Math.min((mapData?.gridSize?.y || 100) - 1, currentLoc.y + dy * stepSize)),
+        f: currentLoc.f
+      };
+      const p = calculatePath(currentLoc, targetGrid, allObstacles, mapData, false);
+      if (p && p.length > 1) {
+        drivePath = p;
+        break;
+      }
+    }
+
+    if (drivePath.length > 0) {
       setPath(drivePath);
       setCurrentPosIndex(0);
       setRobotState('mission');
       setIsPlaying(true);
-      setSpeedLimit(Math.max(1, (manualSpeed / 100) * 8));
+      // manualSpeed is 10..100, where 50 is normal 1x speed
+      setSpeedLimit(Math.max(10, Math.min(100, manualSpeed)));
     }
   };
 
