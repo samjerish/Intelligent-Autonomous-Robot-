@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Battery, Wifi, Gauge, Navigation, Utensils, Cross, Sliders } from 'lucide-react';
+import { Battery, Gauge, Navigation, Utensils, Cross, Sliders } from 'lucide-react';
 import { DeliveryModal } from '../DeliveryModal';
 
 export function MobileDashboard({ telemetry, isConnected, sendCommand, obstacleCount = 9, onSetObstacleCount }: any) {
