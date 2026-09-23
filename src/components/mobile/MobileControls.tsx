@@ -192,16 +192,27 @@ export function MobileControls({ telemetry, sendCommand, obstacleCount = 9, onSe
 }
 
 function ControlButton({ icon, className, onHold, onRelease }: any) {
+  const handleDown = (e: React.PointerEvent) => {
+    e.preventDefault();
+    onHold();
+  };
+
+  const handleUp = (e: React.PointerEvent) => {
+    e.preventDefault();
+    onRelease();
+  };
+
   return (
     <button
-      onPointerDown={onHold}
-      onPointerUp={onRelease}
-      onPointerLeave={onRelease}
-      onTouchStart={onHold}
-      onTouchEnd={onRelease}
-      className={`w-20 h-20 rounded-full bg-[#0f172a] border border-white/10 flex items-center justify-center text-white active:bg-cyan-500/20 active:border-cyan-500 active:scale-95 transition-all shadow-xl ${className}`}
+      type="button"
+      onPointerDown={handleDown}
+      onPointerUp={handleUp}
+      onPointerCancel={handleUp}
+      onPointerLeave={handleUp}
+      style={{ touchAction: 'none' }}
+      className={`w-20 h-20 select-none rounded-full bg-[#0f172a] border border-white/10 flex items-center justify-center text-white active:bg-cyan-500/20 active:border-cyan-500 active:scale-95 transition-all shadow-xl cursor-pointer ${className}`}
     >
-      <div className="[&>svg]:w-8 [&>svg]:h-8">{icon}</div>
+      <div className="[&>svg]:w-8 [&>svg]:h-8 pointer-events-none">{icon}</div>
     </button>
   );
 }
