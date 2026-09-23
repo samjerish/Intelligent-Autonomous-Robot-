@@ -16,6 +16,8 @@ const cloudflaredBin = path.join(projectRoot, 'bin', 'cloudflared');
 let cloudTunnelUrl = null;
 let cloudTunnelStatus = 'initializing';
 let cloudflaredProc = null;
+let reconnectTimer = null;
+let intentionalStop = false;
 
 function startCloudTunnel() {
   if (!existsSync(cloudflaredBin)) {
@@ -24,26 +26,37 @@ function startCloudTunnel() {
     return;
   }
 
+  if (reconnectTimer) {
+    clearTimeout(reconnectTimer);
+    reconnectTimer = null;
+  }
+
+  intentionalStop = false;
+
   if (cloudflaredProc) {
-    try { cloudflaredProc.kill(); } catch (e) {}
+    const oldProc = cloudflaredProc;
     cloudflaredProc = null;
+    try { oldProc.kill('SIGTERM'); } catch (e) {}
   }
 
   cloudTunnelStatus = 'starting';
   console.log('[Tunnel] Starting Cloudflare Quick Tunnel for Vite (port 5173)...');
 
-  cloudflaredProc = spawn(cloudflaredBin, [
+  const currentProc = spawn(cloudflaredBin, [
     'tunnel',
     '--url', 'http://127.0.0.1:5173',
-    '--protocol', 'http2',
-    '--no-tls-verify'
+    '--no-autoupdate',
+    '--http-host-header', 'localhost:5173'
   ], {
     stdio: ['ignore', 'pipe', 'pipe']
   });
 
+  cloudflaredProc = currentProc;
+
   const urlRegex = /https:\/\/[a-zA-Z0-9-]+\.trycloudflare\.com/;
 
   const handleOutput = (data) => {
+    if (cloudflaredProc !== currentProc) return;
     const text = data.toString();
     const match = text.match(urlRegex);
     if (match && match[0] && match[0] !== cloudTunnelUrl) {
@@ -57,14 +70,21 @@ function startCloudTunnel() {
     }
   };
 
-  cloudflaredProc.stdout.on('data', handleOutput);
-  cloudflaredProc.stderr.on('data', handleOutput);
+  currentProc.stdout.on('data', handleOutput);
+  currentProc.stderr.on('data', handleOutput);
 
-  cloudflaredProc.on('exit', (code) => {
-    console.log('[Tunnel] cloudflared exited with code', code);
-    cloudTunnelUrl = null;
-    cloudTunnelStatus = 'stopped';
-    io.emit('tunnel_status', { tunnelUrl: null, status: 'stopped' });
+  currentProc.on('exit', (code) => {
+    if (cloudflaredProc === currentProc) {
+      console.log('[Tunnel] cloudflared exited with code', code);
+      cloudTunnelStatus = 'reconnecting';
+      io.emit('tunnel_status', { tunnelUrl: cloudTunnelUrl, status: 'reconnecting' });
+      if (!intentionalStop) {
+        console.log('[Tunnel] Scheduling auto-reconnect in 3 seconds...');
+        reconnectTimer = setTimeout(() => {
+          startCloudTunnel();
+        }, 3000);
+      }
+    }
   });
 }
 
@@ -418,38 +438,47 @@ app.get('/api/ip', (req, res) => {
   const interfaces = [];
   let bestIp = 'localhost';
   let bestScore = -1;
+  let isHotspot = false;
 
   for (const name of Object.keys(nets)) {
     for (const net of nets[name]) {
       if (net.family === 'IPv4' && !net.internal) {
         let score = 10;
         const lowerName = name.toLowerCase();
+        const isSingleHost = net.netmask === '255.255.255.255' || net.address.startsWith('192.0.0.');
+
         // Prioritize Wi-Fi or primary ethernet interfaces
         if (lowerName.includes('en0') || lowerName.includes('wlan') || lowerName.includes('wi-fi')) {
-          score += 40;
-        } else if (lowerName.includes('eth') || lowerName.includes('en1') || lowerName.includes('ethernet')) {
           score += 30;
+        } else if (lowerName.includes('eth') || lowerName.includes('en1') || lowerName.includes('ethernet')) {
+          score += 25;
         }
 
-        // Prioritize typical private IP subnets
+        // Prioritize typical LAN subnets (192.168.x.x, 10.x.x.x, 172.16-31.x.x)
         if (net.address.startsWith('192.168.')) {
-          score += 25;
+          score += 50;
         } else if (net.address.startsWith('10.')) {
-          score += 20;
+          score += 45;
         } else if (/^172\.(1[6-9]|2[0-9]|3[0-1])\./.test(net.address)) {
-          score += 15;
-        } else if (net.address.startsWith('192.0.')) {
-          score += 15;
+          score += 40;
+        } else if (isSingleHost) {
+          // Cellular hotspot / point-to-point tethering interface (isolated from LAN)
+          score -= 20;
+          isHotspot = true;
         }
 
         let label = name;
-        if (lowerName.includes('en0') || lowerName.includes('wlan')) label = `Wi-Fi (${name})`;
-        else if (lowerName.includes('en1') || lowerName.includes('eth')) label = `Ethernet (${name})`;
+        if (lowerName.includes('en0') || lowerName.includes('wlan')) {
+          label = isSingleHost ? `Hotspot / Tether (${name})` : `Wi-Fi (${name})`;
+        } else if (lowerName.includes('en1') || lowerName.includes('eth')) {
+          label = `Ethernet (${name})`;
+        }
 
         interfaces.push({
           name,
           label: `${label}: ${net.address}`,
-          address: net.address
+          address: net.address,
+          isHotspot: isSingleHost
         });
 
         if (score > bestScore) {
@@ -462,11 +491,13 @@ app.get('/api/ip', (req, res) => {
 
   // Fallback to localhost if no external interfaces found
   if (interfaces.length === 0) {
-    interfaces.push({ name: 'lo', label: 'Localhost: 127.0.0.1', address: 'localhost' });
+    interfaces.push({ name: 'lo', label: 'Localhost: 127.0.0.1', address: 'localhost', isHotspot: false });
   }
 
   res.json({ 
     ip: bestIp, 
+    hostname: `${os.hostname().replace(/\.local$/, '')}.local`,
+    isHotspotDetected: isHotspot,
     tunnelUrl: cloudTunnelUrl, 
     tunnelStatus: cloudTunnelStatus, 
     interfaces 
