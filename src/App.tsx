@@ -6,7 +6,7 @@ import { SimulationView } from './components/SimulationView';
 
 import { useLocalStorage } from './hooks/useLocalStorage';
 import type { MissionHistoryItem, MissionResult } from './types';
-import { QrCode, History, Check, Copy, ExternalLink, Wifi, Smartphone, Sliders } from 'lucide-react';
+import { QrCode, History, Check, Copy, ExternalLink, Wifi, Smartphone, Sliders, Globe, RefreshCw } from 'lucide-react';
 import QRCode from 'react-qr-code';
 import { io } from 'socket.io-client';
 
@@ -48,6 +48,11 @@ function App() {
   const [copiedLink, setCopiedLink] = useState(false);
   const [obstacleCount, setObstacleCount] = useState<number>(9);
 
+  const [tunnelUrl, setTunnelUrl] = useState<string>('');
+  const [tunnelStatus, setTunnelStatus] = useState<string>('initializing');
+  const [connectionMode, setConnectionMode] = useState<'cloud' | 'local'>('cloud');
+  const [isRestartingTunnel, setIsRestartingTunnel] = useState<boolean>(false);
+
   useEffect(() => {
     // Fetch initial map data on mount so Control Center is always visible
     fetch(`/api/map`)
@@ -55,13 +60,19 @@ function App() {
       .then(data => setInitialMapData(data))
       .catch(err => console.error("Failed to load initial map:", err));
 
-    // Fetch network IPs for multi-device mobile pairing
+    // Fetch network IPs and Cloudflare tunnel for multi-device mobile pairing
     fetch(`/api/ip`)
       .then(res => res.json())
       .then(data => {
         if (data.ip) {
           setNetworkIp(data.ip);
           setSelectedIp(data.ip);
+        }
+        if (data.tunnelUrl) {
+          setTunnelUrl(data.tunnelUrl);
+          setTunnelStatus('connected');
+        } else if (data.tunnelStatus) {
+          setTunnelStatus(data.tunnelStatus);
         }
         if (data.interfaces && Array.isArray(data.interfaces)) {
           setNetworkInterfaces(data.interfaces);
@@ -85,6 +96,15 @@ function App() {
         })(),
         isOn: true
       });
+    });
+
+    newSocket.on('tunnel_status', (data: { tunnelUrl: string; status: string }) => {
+      if (data?.tunnelUrl) {
+        setTunnelUrl(data.tunnelUrl);
+        setTunnelStatus(data.status || 'connected');
+      } else if (data?.status) {
+        setTunnelStatus(data.status);
+      }
     });
 
     newSocket.on('device_count', (count: number) => {
@@ -229,6 +249,17 @@ function App() {
        window.removeEventListener('local_ctr_messages_update', handleLocalCtrUpdate);
     };
   }, []);
+
+  const handleRestartTunnel = async () => {
+    setIsRestartingTunnel(true);
+    setTunnelStatus('starting');
+    try {
+      await fetch('/api/tunnel/restart', { method: 'POST' });
+    } catch (e) {
+      console.error('Failed to restart tunnel:', e);
+    }
+    setTimeout(() => setIsRestartingTunnel(false), 3000);
+  };
 
   const handleEmergencyApprove = () => {
      setPendingEmergency(null);
