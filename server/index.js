@@ -465,7 +465,17 @@ app.get('/api/ip', (req, res) => {
     interfaces.push({ name: 'lo', label: 'Localhost: 127.0.0.1', address: 'localhost' });
   }
 
-  res.json({ ip: bestIp, interfaces });
+  res.json({ 
+    ip: bestIp, 
+    tunnelUrl: cloudTunnelUrl, 
+    tunnelStatus: cloudTunnelStatus, 
+    interfaces 
+  });
+});
+
+app.post('/api/tunnel/restart', (req, res) => {
+  startCloudTunnel();
+  res.json({ status: 'restarting' });
 });
 
 let appState = {
@@ -496,6 +506,9 @@ let telemetry = {
 io.on('connection', (socket) => {
   // Broadcast updated connected device count
   io.emit('device_count', io.engine.clientsCount);
+
+  // Send cloud tunnel status to client
+  socket.emit('tunnel_status', { tunnelUrl: cloudTunnelUrl, status: cloudTunnelStatus });
 
   if (isStateInitialized) {
     socket.emit('init_state', appState);
