@@ -6,7 +6,7 @@ import { SimulationView } from './components/SimulationView';
 
 import { useLocalStorage } from './hooks/useLocalStorage';
 import type { MissionHistoryItem, MissionResult } from './types';
-import { QrCode, History, Check, Copy, ExternalLink, Wifi, Smartphone, Sliders, Globe, RefreshCw } from 'lucide-react';
+import { QrCode, History, Check, Copy, ExternalLink, Wifi, Smartphone, Sliders, Globe, RefreshCw, AlertTriangle } from 'lucide-react';
 import QRCode from 'react-qr-code';
 import { io } from 'socket.io-client';
 
@@ -33,7 +33,7 @@ function App() {
   const [initialMapData, setInitialMapData] = useState<any>(null);
 
   const [pendingEmergency, setPendingEmergency] = useState<{x: number, y: number} | null>(null);
-  const [, setIsOn] = useState(false);
+  const [isOn, setIsOn] = useState(true);
   const [showQR, setShowQR] = useState(false);
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
   const [isAlarmActive, setIsAlarmActive] = useState(false);
@@ -41,9 +41,11 @@ function App() {
   const socketRef = useRef<any>(null);
 
   const [networkIp, setNetworkIp] = useState<string>('');
-  const [networkInterfaces, setNetworkInterfaces] = useState<Array<{ name: string; label: string; address: string }>>([]);
+  const [networkInterfaces, setNetworkInterfaces] = useState<Array<{ name: string; label: string; address: string; isHotspot?: boolean }>>([]);
   const [selectedIp, setSelectedIp] = useState<string>('');
   const [customHost, setCustomHost] = useState<string>('');
+  const [isHotspotDetected, setIsHotspotDetected] = useState<boolean>(false);
+  const [bonjourHost, setBonjourHost] = useState<string>('');
   const [connectedDevices, setConnectedDevices] = useState<number>(1);
   const [copiedLink, setCopiedLink] = useState(false);
   const [obstacleCount, setObstacleCount] = useState<number>(9);
@@ -67,6 +69,12 @@ function App() {
         if (data.ip) {
           setNetworkIp(data.ip);
           setSelectedIp(data.ip);
+        }
+        if (data.hostname) {
+          setBonjourHost(data.hostname);
+        }
+        if (data.isHotspotDetected) {
+          setIsHotspotDetected(true);
         }
         if (data.tunnelUrl) {
           setTunnelUrl(data.tunnelUrl);
@@ -206,6 +214,15 @@ function App() {
       }
       if (data.action === 'set_speed') {
          window.dispatchEvent(new CustomEvent('remote_speed_update', { detail: { speed: data.speed } }));
+      }
+      if (data.action === 'toggle_camera') {
+         window.dispatchEvent(new CustomEvent('remote_toggle_camera'));
+      }
+      if (data.action === 'toggle_voice') {
+         window.dispatchEvent(new CustomEvent('remote_toggle_voice'));
+      }
+      if (data.action === 'dispatch_mission' && data.missionText) {
+         handleGenerate(data.missionText);
       }
     });
 
@@ -447,6 +464,11 @@ function App() {
               {activeMapData ? (
                 <SimulationView 
                   mapData={activeMapData} 
+                  isOn={isOn}
+                  onPowerChange={(newOn: boolean) => {
+                    setIsOn(newOn);
+                    socketRef.current?.emit('update_state', { isOn: newOn });
+                  }}
                   onEvent={() => {}} 
                   onDispatchMission={handleGenerate} 
                 />
