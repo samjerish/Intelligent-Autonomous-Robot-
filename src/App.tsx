@@ -528,10 +528,15 @@ function App() {
 
               {/* Status footer */}
               <div className="flex items-center justify-between w-full border-t border-white/10 pt-3 text-xs">
-                <div className="flex items-center gap-2">
-                  <div className="w-2.5 h-2.5 rounded-full bg-green-400 animate-ping"></div>
-                  <span className="text-gray-400 font-mono">Connected:</span>
-                  <span className="text-green-400 font-bold font-mono">{connectedDevices} Device{connectedDevices > 1 ? 's' : ''}</span>
+                <div className="flex items-center gap-3">
+                  <div className="flex items-center gap-1.5">
+                    <div className="w-2 h-2 rounded-full bg-green-400 animate-ping"></div>
+                    <span className="text-green-400 font-bold font-mono">{connectedDevices} Device{connectedDevices > 1 ? 's' : ''}</span>
+                  </div>
+                  <div className="flex items-center gap-1 text-purple-300 font-mono text-[11px] bg-purple-500/10 border border-purple-500/20 px-2 py-0.5 rounded-md">
+                    <Sliders className="w-3 h-3" />
+                    <span>{obstacleCount} Obs</span>
+                  </div>
                 </div>
                 <button 
                   onClick={() => setShowQR(false)} 
