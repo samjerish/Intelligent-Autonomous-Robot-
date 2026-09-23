@@ -676,10 +676,22 @@ function App() {
                         type="text"
                         value={customHost}
                         onChange={(e) => setCustomHost(e.target.value)}
-                        placeholder="e.g. 192.168.1.50 or hostname"
+                        placeholder={bonjourHost ? `e.g. ${bonjourHost}` : "e.g. 192.168.1.50 or hostname"}
                         className="flex-1 bg-white/5 border border-white/10 rounded-lg px-2 py-1 text-xs text-white font-mono placeholder:text-gray-600 focus:outline-none focus:border-cyan-500/50"
                       />
                     </div>
+                    {bonjourHost && (
+                      <div className="text-[10px] text-gray-400 font-mono flex items-center justify-between">
+                        <span>mDNS Host: <strong className="text-cyan-300">{bonjourHost}</strong></span>
+                        <button
+                          type="button"
+                          onClick={() => setCustomHost(bonjourHost)}
+                          className="text-cyan-400 hover:underline cursor-pointer"
+                        >
+                          Use mDNS
+                        </button>
+                      </div>
+                    )}
                   </div>
                 )}
               </div>

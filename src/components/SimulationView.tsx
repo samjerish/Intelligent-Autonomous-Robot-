@@ -1657,11 +1657,21 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
     };
     const handleRemoteVoice = () => {
       addExplanation("Mobile Operator triggered audio ping.");
-      if (audioRef.current) {
-        audioRef.current.currentTime = 0;
-        audioRef.current.volume = 1.0;
-        audioRef.current.play().catch(() => {});
-      }
+      try {
+        const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+        if (AudioContextClass) {
+          const audioCtx = new AudioContextClass();
+          const osc = audioCtx.createOscillator();
+          const gain = audioCtx.createGain();
+          osc.connect(gain);
+          gain.connect(audioCtx.destination);
+          osc.frequency.setValueAtTime(880, audioCtx.currentTime);
+          gain.gain.setValueAtTime(0.1, audioCtx.currentTime);
+          gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.3);
+          osc.start();
+          osc.stop(audioCtx.currentTime + 0.3);
+        }
+      } catch (e) {}
     };
     window.addEventListener('remote_toggle_power', handleRemoteToggle);
     window.addEventListener('remote_speed_update', handleRemoteSpeed);
