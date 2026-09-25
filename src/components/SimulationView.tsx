@@ -978,7 +978,7 @@ export const DetailedRobot = ({ isMoving, showFeatures = false, activeFeature = 
     clock.current += delta;
     const t = clock.current;
 
-    if (bodyRef.current) bodyRef.current.position.y = 0;
+    if (bodyRef.current) bodyRef.current.position.y = 0.05;
     if (headRef.current) headRef.current.rotation.y = 0;
     if (leftArmRef.current) leftArmRef.current.rotation.x = 0;
     if (rightArmRef.current) rightArmRef.current.rotation.x = 0;
@@ -3060,12 +3060,12 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
           ) : (
             <PerspectiveCamera makeDefault position={[gridSize.x * 0.7, gridSize.y * 0.7, gridSize.y * 0.9]} fov={50} near={0.5} far={2000} />
           )}
-          {/* Lighting — adapts to day/night from real local time */}
-          <ambientLight intensity={isNight ? 0.12 : 0.7} color={isNight ? '#c7d2fe' : '#ffffff'} />
+          {/* Lighting — adapts to day/night with vibrant visibility */}
+          <ambientLight intensity={isNight ? 0.45 : 0.9} color={isNight ? '#c7d2fe' : '#ffffff'} />
           <directionalLight
-            position={isNight ? [-30, 40, -30] : [30, 50, 30]}
-            intensity={isNight ? 0.25 : 2.0}
-            color={isNight ? '#9ca3c8' : '#fff5d0'}
+            position={isNight ? [-30, 40, -30] : [40, 60, 40]}
+            intensity={isNight ? 0.6 : 2.2}
+            color={isNight ? '#a5b4fc' : '#ffffff'}
             castShadow
             shadow-mapSize={[2048, 2048]}
             shadow-camera-near={0.5}
@@ -3075,10 +3075,10 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
             shadow-camera-top={80}
             shadow-camera-bottom={-80}
           />
-          {/* Moon glow at night */}
-          {isNight && <pointLight position={[-20, 25, -15]} intensity={0.6} color="#bfdbfe" />}
-          {/* Day fill light */}
-          {!isNight && <pointLight position={[0, 8, 0]} intensity={0.6} color="#60a5fa" />}
+          {/* Fill lights */}
+          <directionalLight position={[-40, 30, -40]} intensity={0.6} color="#38bdf8" />
+          {isNight && <pointLight position={[-20, 25, -15]} intensity={1.2} color="#bfdbfe" />}
+          {!isNight && <pointLight position={[0, 15, 0]} intensity={0.8} color="#60a5fa" />}
           <CameraController 
             isFollowing={isFollowing} 
             robotPosRef={robotPosRef} 
