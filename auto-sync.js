@@ -21,7 +21,13 @@ async function checkAndSync() {
       console.log(`[Auto-Sync] Successfully synced changes at ${timestamp}`);
     }
   } catch (error) {
-    console.error('[Auto-Sync] Error during sync:', error.message);
+    // Only log meaningful non-network drops or summarized message
+    const msg = error.message || '';
+    if (msg.includes('No route to host') || msg.includes('408') || msg.includes('Could not resolve host')) {
+      console.warn('[Auto-Sync] Network unreachable, will retry next cycle...');
+    } else {
+      console.error('[Auto-Sync] Error during sync:', msg.split('\n')[0]);
+    }
   }
 }
 

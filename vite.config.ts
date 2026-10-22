@@ -18,10 +18,10 @@ export default defineConfig({
         ws: true,
         changeOrigin: true,
         configure: (proxy) => {
-          proxy.on('error', (err) => {
+          proxy.on('error', (err: any) => {
             // Silently suppress ECONNRESET/EADDRNOTAVAIL during server restart/client disconnect
-            if (err.code !== 'ECONNRESET' && err.code !== 'EADDRNOTAVAIL') {
-              console.warn('[vite proxy error]:', err.message);
+            if (err?.code !== 'ECONNRESET' && err?.code !== 'EADDRNOTAVAIL') {
+              console.warn('[vite proxy error]:', err?.message || err);
             }
           });
         },
