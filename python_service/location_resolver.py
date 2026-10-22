@@ -1,7 +1,7 @@
 import math
-from typing import Dict, Any, Optional, Tuple
+from typing import Dict, Any, Optional, Tuple, List
 
-CAMPUS_BUILDINGS = [
+CAMPUS_BUILDINGS: List[Dict[str, Any]] = [
     {"id": "bldg_1", "name": "Staff Quarters", "start": {"x": 2, "y": 2}, "end": {"x": 11, "y": 9}, "type": "hostel", "zone": "Residential Zone", "door": {"x": 7, "y": 10}},
     {"id": "bldg_2", "name": "Medical Center", "start": {"x": 14, "y": 2}, "end": {"x": 21, "y": 9}, "type": "medical", "zone": "Health & Emergency Zone", "door": {"x": 18, "y": 10}},
     {"id": "bldg_3", "name": "Food Court", "start": {"x": 30, "y": 2}, "end": {"x": 41, "y": 11}, "type": "food", "zone": "Student Amenities Zone", "door": {"x": 36, "y": 12}},
@@ -87,16 +87,20 @@ def resolve_location(x: float, y: float, floor: int = 0) -> Dict[str, Any]:
     min_dist = float("inf")
     
     for bldg in CAMPUS_BUILDINGS:
-        cx = (bldg["start"]["x"] + bldg["end"]["x"]) / 2.0
-        cy = (bldg["start"]["y"] + bldg["end"]["y"]) / 2.0
+        start_pt = bldg["start"]
+        end_pt = bldg["end"]
+        cx = (float(start_pt["x"]) + float(end_pt["x"])) / 2.0
+        cy = (float(start_pt["y"]) + float(end_pt["y"])) / 2.0
         dist = math.hypot(x - cx, y - cy)
         if dist < min_dist:
             min_dist = dist
             nearest_bldg = bldg
             
     if nearest_bldg:
-        cx = (nearest_bldg["start"]["x"] + nearest_bldg["end"]["x"]) / 2.0
-        cy = (nearest_bldg["start"]["y"] + nearest_bldg["end"]["y"]) / 2.0
+        start_pt = nearest_bldg["start"]
+        end_pt = nearest_bldg["end"]
+        cx = (float(start_pt["x"]) + float(end_pt["x"])) / 2.0
+        cy = (float(start_pt["y"]) + float(end_pt["y"])) / 2.0
         bearing = get_compass_bearing(cx, cy, x, y)
         dist_meters = round(min_dist, 1)
         

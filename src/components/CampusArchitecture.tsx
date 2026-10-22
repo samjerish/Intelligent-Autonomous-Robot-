@@ -20,7 +20,7 @@ import {
 const CELL_SIZE = 1;
 
 // Helper to calculate world coordinates from grid point
-export const getGridPosition = (gridPoint: GridPoint, gridSize: GridPoint, height = 0.5, _isMapView = false): [number, number, number] => {
+const getGridPosition = (gridPoint: GridPoint, gridSize: GridPoint, height = 0.5, _isMapView = false): [number, number, number] => {
   const offsetX = (gridSize.x * CELL_SIZE) / 2;
   const offsetZ = (gridSize.y * CELL_SIZE) / 2;
   const x = gridPoint.x * CELL_SIZE - offsetX + CELL_SIZE / 2;

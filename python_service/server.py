@@ -131,9 +131,10 @@ def simulate_fire_incident(req: SimulateRequest):
     cv2.ellipse(synth_frame, (320, 220), (55, 85), 0, 0, 360, (0, 190, 255), -1)
     cv2.ellipse(synth_frame, (320, 200), (30, 50), 0, 0, 360, (50, 240, 255), -1)
     
+    h_type = req.hazard_type or "fire_and_smoke"
     det_res = {
-        "has_fire": "fire" in req.hazard_type,
-        "has_smoke": "smoke" in req.hazard_type,
+        "has_fire": "fire" in h_type,
+        "has_smoke": "smoke" in h_type,
         "is_emergency": True,
         "max_confidence": float(req.confidence or 0.94),
         "detections": [{
@@ -154,7 +155,7 @@ def simulate_fire_incident(req: SimulateRequest):
     cv2.putText(synth_frame, tag, (225, 122), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 2)
     
     _, buffer = cv2.imencode('.jpg', synth_frame, [int(cv2.IMWRITE_JPEG_QUALITY), 80])
-    b64_image = base64.b64encode(buffer).decode('utf-8')
+    b64_image = base64.b64encode(buffer.tobytes()).decode('utf-8')
     det_res["annotated_frame_base64"] = f"data:image/jpeg;base64,{b64_image}"
 
     incident = emergency_manager.process_detection(

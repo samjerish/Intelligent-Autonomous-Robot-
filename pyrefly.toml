@@ -1,0 +1,9 @@
+project-includes = [
+    "python_service/**/*.py",
+]
+python-interpreter-path = "python_service/venv/bin/python3"
+search-path = [
+    ".",
+    "python_service"
+]
+disable-search-path-heuristics = true

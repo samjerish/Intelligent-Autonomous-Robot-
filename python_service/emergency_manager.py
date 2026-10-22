@@ -17,8 +17,8 @@ class EmergencyManager:
     def process_detection(
         self,
         detection_result: Dict[str, Any],
-        robot_coords: Dict[str, float],
-        hazard_coords: Optional[Dict[str, float]] = None,
+        robot_coords: Dict[str, Any],
+        hazard_coords: Optional[Dict[str, Any]] = None,
         raw_frame_b64: Optional[str] = None
     ) -> Optional[Dict[str, Any]]:
         """
@@ -89,7 +89,7 @@ class EmergencyManager:
         safe_x = round(x + (dx / dist) * safe_dist)
         safe_y = round(y + (dy / dist) * safe_dist)
 
-        incident_record = {
+        incident_record: Dict[str, Any] = {
             "id": incident_id,
             "status": "ACTIVE_EMERGENCY",
             "detection_type": det_type,
@@ -125,7 +125,8 @@ class EmergencyManager:
         self.incident_history.insert(0, incident_record)
         return incident_record
 
-    def acknowledge_incident(self, incident_id: str, operator_name: str = "Control Room Operator") -> Optional[Dict[str, Any]]:
+    def acknowledge_incident(self, incident_id: str, operator_name: Optional[str] = "Control Room Operator") -> Optional[Dict[str, Any]]:
+        op_name = operator_name or "Control Room Operator"
         target = None
         if self.active_incident and self.active_incident["id"] == incident_id:
             target = self.active_incident
@@ -138,7 +139,7 @@ class EmergencyManager:
         if target:
             target["acknowledgement"] = {
                 "is_acknowledged": True,
-                "acknowledged_by": operator_name,
+                "acknowledged_by": op_name,
                 "acknowledged_at": time.strftime("%Y-%m-%d %H:%M:%S")
             }
             target["status"] = "ACKNOWLEDGED"

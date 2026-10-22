@@ -171,7 +171,7 @@ class FireSmokeDetector:
 
         # Encode annotated image to JPEG base64 for real-time frontend transmission
         _, buffer = cv2.imencode('.jpg', annotated, [int(cv2.IMWRITE_JPEG_QUALITY), 82])
-        b64_image = base64.b64encode(buffer).decode('utf-8')
+        b64_image = base64.b64encode(buffer.tobytes()).decode('utf-8')
         
         return {
             "has_fire": has_fire,
