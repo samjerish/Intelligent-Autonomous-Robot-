@@ -9,10 +9,22 @@ export default defineConfig({
     host: '0.0.0.0',
     allowedHosts: true,
     proxy: {
-      '/api': 'http://127.0.0.1:3000',
+      '/api': {
+        target: 'http://127.0.0.1:3000',
+        changeOrigin: true,
+      },
       '/socket.io': {
         target: 'http://127.0.0.1:3000',
         ws: true,
+        changeOrigin: true,
+        configure: (proxy) => {
+          proxy.on('error', (err) => {
+            // Silently suppress ECONNRESET/EADDRNOTAVAIL during server restart/client disconnect
+            if (err.code !== 'ECONNRESET' && err.code !== 'EADDRNOTAVAIL') {
+              console.warn('[vite proxy error]:', err.message);
+            }
+          });
+        },
       },
     },
   },
