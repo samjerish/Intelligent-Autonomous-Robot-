@@ -10,7 +10,7 @@ import {
   Timer,
   TrendingUp,
   Users,
-  Zap, q
+  Zap,
   Info,
   Check
 } from 'lucide-react';
