@@ -1,9 +1,25 @@
-import { defineConfig } from 'vite'
+import { defineConfig, createLogger } from 'vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 
+const customLogger = createLogger()
+const loggerError = customLogger.error
+customLogger.error = (msg, options) => {
+  if (
+    msg.includes('EADDRNOTAVAIL') ||
+    msg.includes('ECONNRESET') ||
+    msg.includes('ECONNREFUSED') ||
+    msg.includes('ws proxy socket error') ||
+    msg.includes('ws proxy error')
+  ) {
+    return
+  }
+  loggerError(msg, options)
+}
+
 // https://vite.dev/config/
 export default defineConfig({
+  customLogger,
   plugins: [react(), tailwindcss()],
   server: {
     host: '0.0.0.0',

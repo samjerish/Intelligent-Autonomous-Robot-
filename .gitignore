@@ -30,4 +30,12 @@ python_service/venv/
 python_service/snapshots/*.jpg
 __pycache__/
 *.pyc
+*.pyo
+*.pyd
 *.pt
+*.dylib
+*.so
+*.egg-info/
+.env
+!.env.example
+
