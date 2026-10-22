@@ -1,24 +1,63 @@
 import React, { useEffect, useRef, useState, useMemo, useCallback } from 'react';
-import type { MapData, GridPoint, Room } from '../types';
-import { calculatePath, calculateLongPath, calculateEvadePath, calculateReversePath } from '../utils/simulationEngine';
-import { Play, RotateCcw, Activity, ShieldAlert, Crosshair, Maximize, Minimize, Bot, Power, Send, Construction, Pause, Users, Utensils, Cross, Sliders, Car, Trash2, Plus } from 'lucide-react';
+import type { MapData, GridPoint, Room, FireHazardPoint, FireIncident } from '../types';
+import { calculatePath, calculateLongPath, calculateReversePath } from '../utils/simulationEngine';
+import { 
+  Play, 
+  RotateCcw, 
+  Activity, 
+  ShieldAlert, 
+  Crosshair, 
+  Maximize, 
+  Minimize, 
+  Bot, 
+  Power, 
+  Send, 
+  Construction, 
+  Pause, 
+  Users, 
+  Utensils, 
+  Cross, 
+  Sliders, 
+  Car, 
+  Trash2, 
+  Plus, 
+  Flame, 
+  AlertTriangle,
+  Compass,
+  Sun,
+  Moon,
+  Eye,
+  EyeOff,
+  Layers,
+  Search,
+  Terminal,
+  Navigation,
+  Gauge
+} from 'lucide-react';
 import { DeliveryModal } from './DeliveryModal';
+import { FireSimulationNode } from './FireSimulationNode';
+import { EmergencyLocationMarker } from './EmergencyLocationMarker';
+import { 
+  BuildingModel, 
+  CampusRoadsAndGround, 
+  Building3DLabel 
+} from './CampusArchitecture';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import {
   OrbitControls,
   Box,
   Line,
-  Plane,
   OrthographicCamera,
   PerspectiveCamera,
   Html,
-  Instances,
-  Instance,
   Sphere,
   Cylinder,
   RoundedBox,
+  Cone,
 } from '@react-three/drei';
 import * as THREE from 'three';
+import { RobotVisionBroadcaster } from './RobotVisionBroadcaster';
+import { RobotVisionPIP } from './RobotVisionPIP';
 
 const CELL_SIZE = 1;
 
@@ -34,7 +73,7 @@ export type DynamicObstacle = {
   currentPosVector?: THREE.Vector3;
 };
 
-export type RobotState = 'idle' | 'mission' | 'patrol' | 'charging' | 'emergency_response' | 'emergency_to_ctr' | 'ctr_to_emergency' | 'crowd_control' | 'waiting_for_police' | 'evading_obstacle' | 'returning_home' | 'off' | 'reversing' | 'waiting_for_clearance';
+export type RobotState = 'idle' | 'mission' | 'patrol' | 'charging' | 'emergency_response' | 'emergency_to_ctr' | 'ctr_to_emergency' | 'crowd_control' | 'waiting_for_police' | 'evading_obstacle' | 'returning_home' | 'off' | 'reversing' | 'waiting_for_clearance' | 'extinguishing';
 
 export type PoliceState = {
 
@@ -45,8 +84,8 @@ export type PoliceState = {
 };
 
 
-const CameraController = ({ isFollowing, robotPosRef, robotRotRef, controlsRef, triggerReset, onResetDone, gridSize, isMapView }: any) => {
-  const { camera } = useThree();
+const CameraController = ({ cameraMode, isFollowing, robotPosRef, robotRotRef, controlsRef, triggerReset, onResetDone, gridSize, isMapView }: any) => {
+  const { camera, scene } = useThree();
   // Smoothed look-target to prevent jitter when following
   const smoothTarget = useRef(new THREE.Vector3(0, 0.5, 0));
 
@@ -67,7 +106,44 @@ const CameraController = ({ isFollowing, robotPosRef, robotRotRef, controlsRef, 
       if (onResetDone) onResetDone();
     }
 
-    if (isFollowing && robotPosRef.current && robotRotRef?.current !== undefined) {
+    const mode = cameraMode || (isFollowing ? 'follow' : 'orbit');
+
+    // Toggle robot avatar visibility so FPV mode has a 100% clean dashcam view without robot limbs
+    const robotAvatarObj = scene.getObjectByName('robot_avatar_group');
+    if (robotAvatarObj) {
+      robotAvatarObj.visible = mode !== 'fpv';
+    }
+
+    if (mode === 'fpv' && robotPosRef.current && robotRotRef?.current !== undefined) {
+      // 1st Person Robot Eye View - What the Robot Sees from the Front Side (Direct 60 FPS WebGL)
+      const theta = robotRotRef.current;
+      const forwardX = Math.sin(theta);
+      const forwardZ = Math.cos(theta);
+
+      // Mounted on front robot visor/head at eye height (1.05m)
+      const eyePos = new THREE.Vector3(
+        robotPosRef.current.x + forwardX * 0.42,
+        robotPosRef.current.y + 1.05,
+        robotPosRef.current.z + forwardZ * 0.42
+      );
+
+      // Snappy and smooth lerp for realistic head-tracking
+      const lerpAlpha = 1 - Math.pow(0.0001, delta);
+      camera.position.lerp(eyePos, lerpAlpha);
+
+      // Look straight forward along campus roadway/horizon in front of the robot
+      const targetLook = new THREE.Vector3(
+        eyePos.x + forwardX * 16.0,
+        eyePos.y - 0.22,
+        eyePos.z + forwardZ * 16.0
+      );
+      smoothTarget.current.lerp(targetLook, lerpAlpha);
+      camera.lookAt(smoothTarget.current);
+
+      if (controlsRef.current) {
+        controlsRef.current.target.copy(smoothTarget.current);
+      }
+    } else if (mode === 'follow' && robotPosRef.current && robotRotRef?.current !== undefined) {
       // 3rd Person Follow Camera
       const theta = robotRotRef.current;
       const behindDist = 4.5;
@@ -80,8 +156,8 @@ const CameraController = ({ isFollowing, robotPosRef, robotRotRef, controlsRef, 
       );
       const desiredPos = new THREE.Vector3().copy(robotPosRef.current).add(offset);
 
-      // Very smooth position lerp
-      const lerpAlpha = 1 - Math.pow(0.005, delta);
+      // Very smooth, cinematic position lerp
+      const lerpAlpha = 1 - Math.pow(0.001, delta);
       camera.position.lerp(desiredPos, lerpAlpha);
 
       // Smooth the look-at target to look slightly ahead/above the robot
@@ -125,7 +201,8 @@ const MovingEntity = ({
   isMapView, 
   robotPosRef, 
   allObstaclesRef,
-  robotStateRef
+  robotStateRef,
+  mapData
 }: { 
   obstacle: DynamicObstacle;
   gridSize: GridPoint;
@@ -133,8 +210,13 @@ const MovingEntity = ({
   robotPosRef?: React.MutableRefObject<THREE.Vector3 | null>;
   allObstaclesRef?: React.MutableRefObject<DynamicObstacle[]>;
   robotStateRef?: React.MutableRefObject<RobotState>;
+  mapData?: MapData | null;
 }) => {
   const ref = useRef<THREE.Group>(null);
+  const lastReverseTimeRef = useRef<number>(0);
+  const headwayWaitTimeRef = useRef<number>(0);
+  const lastPosRef = useRef<THREE.Vector3>(new THREE.Vector3());
+  const stallTimeRef = useRef<number>(0);
   
   useFrame((_state, delta) => {
     if (!ref.current || obstacle.path.length === 0 || !obstacle.isMoving) return;
@@ -149,49 +231,110 @@ const MovingEntity = ({
 
     // 1. Cooperative Yielding to Robot:
     // If the robot is backing up or waiting for clearance, the robot has yielded to let the obstacle pass!
-    // Obstacle should only pause if very close to a non-yielding robot and driving/walking directly towards it.
+    // The obstacle must keep moving to clear the way!
     if (robotPosRef && robotPosRef.current) {
       const isRobotYielding = robotStateRef && (robotStateRef.current === 'reversing' || robotStateRef.current === 'waiting_for_clearance');
       const distToRobot = currentPos.distanceTo(robotPosRef.current);
       
-      if (!isRobotYielding && distToRobot < (obstacle.type === 'car' ? 1.5 : 0.9)) {
+      // If obstacle is directly against the robot, reverse away with cooldown so it moves away without flip-flopping
+      if (distToRobot < 0.85) {
+        if (Date.now() - lastReverseTimeRef.current > 2000) {
+          lastReverseTimeRef.current = Date.now();
+          obstacle.path.reverse();
+          obstacle.currentIndex = 0;
+        }
+      } else if (!isRobotYielding && distToRobot < (obstacle.type === 'car' ? 1.4 : 0.85)) {
         const toRobot = new THREE.Vector3().subVectors(robotPosRef.current, currentPos).normalize();
-        if (moveDir.dot(toRobot) > 0.3) {
-          return; // Pause and let active robot pass
+        if (moveDir.dot(toRobot) > 0.35) {
+          stallTimeRef.current += delta;
+          if (stallTimeRef.current > 1.0 && Date.now() - lastReverseTimeRef.current > 2000) {
+            lastReverseTimeRef.current = Date.now();
+            stallTimeRef.current = 0;
+            obstacle.path.reverse();
+            obstacle.currentIndex = 0;
+          } else {
+            return; // Pause briefly and let active robot pass
+          }
         }
       }
     }
     
-    // 2. Headway & Anti-Overlap with Other Dynamic Obstacles:
-    // Uses real-time 3D vector positions to prevent cars and people from dog-piling or clipping
+    // 2. Headway & Deadlock Prevention with Other Dynamic Obstacles:
+    // Prevents two oncoming obstacles from freezing in place indefinitely!
     if (allObstaclesRef && allObstaclesRef.current) {
-      const minHeadway = obstacle.type === 'car' ? 1.8 : 1.0;
+      const minHeadway = obstacle.type === 'car' ? 1.6 : 0.95;
+      let isBlockedByOther = false;
       for (const other of allObstaclesRef.current) {
         if (other.id === obstacle.id || !other.currentPosVector) continue;
         const distToOther = currentPos.distanceTo(other.currentPosVector);
         if (distToOther < minHeadway) {
           const toOther = new THREE.Vector3().subVectors(other.currentPosVector, currentPos).normalize();
-          // If the other obstacle is in our forward path cone, hold back to maintain headway
-          if (moveDir.dot(toOther) > 0.35) {
-            return;
-          }
-          // Break deadlocks if two obstacles are very close in the same node
-          if (distToOther < 0.6 && obstacle.id > other.id) {
-            return;
+          if (moveDir.dot(toOther) > 0.3) {
+            isBlockedByOther = true;
+            break;
           }
         }
       }
+
+      if (isBlockedByOther) {
+        headwayWaitTimeRef.current += delta;
+        // If blocked by another obstacle for more than 0.7s, break deadlock so neither obstacle freezes in place!
+        if (headwayWaitTimeRef.current > 0.7) {
+          if (Date.now() - lastReverseTimeRef.current > 1800) {
+            lastReverseTimeRef.current = Date.now();
+            headwayWaitTimeRef.current = 0;
+            if (mapData && mapData.roads && mapData.roads.length > 5) {
+              const randRoad = mapData.roads[Math.floor(Math.random() * mapData.roads.length)];
+              const newPath = calculatePath(obstacle.pos, randRoad, [], mapData, true);
+              if (newPath.length > 1) {
+                obstacle.path = newPath;
+                obstacle.currentIndex = 1;
+                obstacle.targetPos = randRoad;
+              } else {
+                obstacle.path.reverse();
+                obstacle.currentIndex = 0;
+              }
+            } else {
+              obstacle.path.reverse();
+              obstacle.currentIndex = 0;
+            }
+          }
+        } else {
+          return; // Brief headway pause to allow leading vehicle/person to advance
+        }
+      } else {
+        headwayWaitTimeRef.current = 0;
+      }
     }
 
+    // 3. Continuous Roaming & Motion Execution:
     const dist = currentPos.distanceTo(targetVector);
-    if (dist < 0.05) {
+    if (dist < 0.08) {
       if (obstacle.currentIndex < obstacle.path.length - 1) {
         obstacle.currentIndex++;
       } else {
-        obstacle.path.reverse();
-        obstacle.currentIndex = 0;
+        // Continuous roaming: when completing a route, pick a new random road node on campus and keep moving!
+        if (mapData && mapData.roads && mapData.roads.length > 5) {
+          let nextEnd = mapData.roads[Math.floor(Math.random() * mapData.roads.length)];
+          for (let attempt = 0; attempt < 5; attempt++) {
+            if (Math.abs(obstacle.pos.x - nextEnd.x) + Math.abs(obstacle.pos.y - nextEnd.y) >= 5) break;
+            nextEnd = mapData.roads[Math.floor(Math.random() * mapData.roads.length)];
+          }
+          const newPath = calculatePath(obstacle.pos, nextEnd, [], mapData, true);
+          if (newPath.length > 1) {
+            obstacle.path = newPath;
+            obstacle.currentIndex = 1;
+            obstacle.targetPos = nextEnd;
+          } else {
+            obstacle.path.reverse();
+            obstacle.currentIndex = 0;
+          }
+        } else {
+          obstacle.path.reverse();
+          obstacle.currentIndex = 0;
+        }
       }
-      obstacle.pos = obstacle.path[obstacle.currentIndex];
+      obstacle.pos = obstacle.path[Math.min(obstacle.currentIndex, obstacle.path.length - 1)];
     } else {
       const moveDist = obstacle.speed * delta;
       if (moveDist >= dist) {
@@ -202,13 +345,43 @@ const MovingEntity = ({
         currentPos.add(direction.multiplyScalar(moveDist));
       }
       const rotDirection = new THREE.Vector3().subVectors(targetVector, currentPos);
-      if (rotDirection.lengthSq() > 0.001) {
+      if (rotDirection.lengthSq() > 0.01) {
         const targetRotation = Math.atan2(rotDirection.x, rotDirection.z);
         let diff = targetRotation - ref.current.rotation.y;
         while (diff < -Math.PI) diff += Math.PI * 2;
         while (diff > Math.PI) diff -= Math.PI * 2;
-        ref.current.rotation.y += diff * delta * 10;
+        const turnRate = 1 - Math.exp(-12 * Math.min(delta, 0.08));
+        ref.current.rotation.y += diff * turnRate;
       }
+    }
+
+    // 4. Motion Guarantee Watchdog: if entity hasn't moved in 2.0s, repath so it NEVER stays in one place
+    if (currentPos.distanceTo(lastPosRef.current) < 0.08) {
+      stallTimeRef.current += delta;
+      if (stallTimeRef.current > 2.0) {
+        stallTimeRef.current = 0;
+        if (Date.now() - lastReverseTimeRef.current > 1800) {
+          lastReverseTimeRef.current = Date.now();
+          if (mapData && mapData.roads && mapData.roads.length > 5) {
+            const randRoad = mapData.roads[Math.floor(Math.random() * mapData.roads.length)];
+            const newPath = calculatePath(obstacle.pos, randRoad, [], mapData, true);
+            if (newPath.length > 1) {
+              obstacle.path = newPath;
+              obstacle.currentIndex = 1;
+              obstacle.targetPos = randRoad;
+            } else {
+              obstacle.path.reverse();
+              obstacle.currentIndex = 0;
+            }
+          } else {
+            obstacle.path.reverse();
+            obstacle.currentIndex = 0;
+          }
+        }
+      }
+    } else {
+      stallTimeRef.current = 0;
+      lastPosRef.current.copy(currentPos);
     }
   });
 
@@ -244,19 +417,7 @@ const MovingEntity = ({
 };
 
 
-const RoadsRender = ({ roads, gridSize }: { roads: GridPoint[], gridSize: GridPoint }) => {
-  if (!roads || roads.length === 0) return null;
-  return (
-    <Instances limit={roads.length} receiveShadow>
-      <boxGeometry args={[CELL_SIZE, 0.05, CELL_SIZE]} />
-      <meshStandardMaterial color="#64748b" opacity={0.9} transparent />
-      {roads.map((road, i) => {
-        const [x, y, z] = getGridPosition(road, gridSize, 0.025);
-        return <Instance key={i} position={[x, y, z]} />;
-      })}
-    </Instances>
-  );
-};
+// Roadway & asphalt infrastructure rendered by CampusRoadsAndGround
 
 const TrafficBarricade = ({
   position,
@@ -490,30 +651,7 @@ const CrowdsRender = React.memo(({ crowds, gridSize }: { crowds: GridPoint[], gr
   );
 });
 
-const Butterflies = () => {
-  const groupRef = useRef<THREE.Group>(null);
-  useFrame(() => {
-    if (groupRef.current) {
-      // Stopped movement for Butterflies
-      // const t = clock.getElapsedTime();
-      // groupRef.current.children.forEach((child, i) => {
-      //   child.position.y = Math.sin(t * 3 + i * 2) * 0.5 + 1.5;
-      //   child.position.x = Math.cos(t * 1.5 + i) * 3;
-      //   child.position.z = Math.sin(t * 1.8 + i * 1.5) * 3;
-      // });
-    }
-  });
-  
-  return (
-    <group ref={groupRef}>
-      {[...Array(15)].map((_, i) => (
-        <Box key={i} args={[0.05, 0.05, 0.05]}>
-          <meshBasicMaterial color={i % 2 === 0 ? "#fcd34d" : "#60a5fa"} />
-        </Box>
-      ))}
-    </group>
-  );
-};
+
 
 const PoliceVehicle = ({ policeState, policeStateRef, gridSize, isMapView, onReachDestination }: any) => {
   const ref = useRef<THREE.Group>(null);
@@ -587,342 +725,7 @@ const PoliceVehicle = ({ policeState, policeStateRef, gridSize, isMapView, onRea
   );
 };
 
-const ParkTrees = ({ width, height, depth, count }: { width: number; height: number; depth: number; count: number }) => {
-  const trees = useMemo(() => {
-    return [...Array(count)].map((_, i) => {
-      const angle = i * 2.39996;
-      const r = Math.sqrt((i + 1) / (count + 1)) * 0.38;
-      const tx = Math.cos(angle) * r * width;
-      const tz = Math.sin(angle) * r * depth;
-      return { id: i, tx, tz };
-    });
-  }, [width, depth, count]);
-
-  return (
-    <>
-      {trees.map((t) => (
-        <group key={t.id} position={[t.tx, -height / 2 + 0.5, t.tz]}>
-          <Cylinder args={[0.1, 0.1, 0.8]} position={[0, -0.1, 0]}>
-            <meshStandardMaterial color="#78350f" />
-          </Cylinder>
-          <Cylinder args={[0.4, 0.6, 1.2]} position={[0, 0.8, 0]}>
-            <meshStandardMaterial color="#15803d" />
-          </Cylinder>
-        </group>
-      ))}
-    </>
-  );
-};
-
-const BuildingModel = React.memo(({ room, width, height, depth }: { room: Room, width: number, height: number, depth: number }) => {
-  const type = room.type || "unknown";
-  const nameLow = room.name.toLowerCase();
-  const baseColor = room.color || "#e2e8f0";
-  
-  if (type === 'medical') {
-    return (
-      <group>
-        <Box args={[width, height, depth]} castShadow receiveShadow>
-          <meshStandardMaterial color="#f8fafc" />
-        </Box>
-        <Box args={[width + 0.2, 0.2, depth + 0.2]} position={[0, height / 2 + 0.1, 0]} castShadow>
-          <meshStandardMaterial color="#cbd5e1" />
-        </Box>
-        <Cylinder args={[Math.min(width, depth) * 0.3, Math.min(width, depth) * 0.3, 0.1, 32]} position={[0, height / 2 + 0.25, 0]}>
-          <meshStandardMaterial color="#334155" />
-        </Cylinder>
-        <group position={[0, height / 2 + 0.8, 0]}>
-          <Box args={[1.2, 0.3, 0.1]}>
-            <meshStandardMaterial color="#ef4444" emissive="#ef4444" emissiveIntensity={0.5} />
-          </Box>
-          <Box args={[0.3, 1.2, 0.1]}>
-            <meshStandardMaterial color="#ef4444" emissive="#ef4444" emissiveIntensity={0.5} />
-          </Box>
-        </group>
-      </group>
-    );
-  } else if (type === 'security') {
-    return (
-      <group>
-        {/* Main Body (Gray/White Prefab Walls) */}
-        <Box args={[width, height, depth]} position={[0, 0, 0]} castShadow receiveShadow>
-          <meshStandardMaterial color="#e2e8f0" roughness={0.9} />
-        </Box>
-        
-        {/* Blue Overhanging Roof */}
-        <Box args={[width * 1.2, height * 0.1, depth * 1.2]} position={[0, height * 0.55, 0]} castShadow receiveShadow>
-          <meshStandardMaterial color="#3b82f6" roughness={0.8} />
-        </Box>
-
-        {/* Front Door - Frame */}
-        <Box args={[width * 0.3, height * 0.7, depth * 1.02]} position={[width * 0.2, -height * 0.15, 0]}>
-          <meshStandardMaterial color="#2563eb" />
-        </Box>
-        {/* Front Door - Glass/Inner */}
-        <Box args={[width * 0.25, height * 0.65, depth * 1.03]} position={[width * 0.2, -height * 0.15, 0]}>
-          <meshStandardMaterial color={baseColor} roughness={0.8} />
-        </Box>
-
-        {/* Front Window - Frame */}
-        <Box args={[width * 0.4, height * 0.4, depth * 1.02]} position={[-width * 0.2, 0, 0]}>
-          <meshStandardMaterial color="#2563eb" />
-        </Box>
-        {/* Front Window - Glass */}
-        <Box args={[width * 0.35, height * 0.35, depth * 1.03]} position={[-width * 0.2, 0, 0]}>
-          <meshStandardMaterial color="#38bdf8" transparent opacity={0.6} metalness={0.9} roughness={0.1} />
-        </Box>
-
-        {/* Side Window (Right) - Frame */}
-        <Box args={[width * 1.02, height * 0.4, depth * 0.6]} position={[0, 0, depth * 0.2]}>
-          <meshStandardMaterial color="#2563eb" />
-        </Box>
-        {/* Side Window (Right) - Glass */}
-        <Box args={[width * 1.03, height * 0.35, depth * 0.55]} position={[0, 0, depth * 0.2]}>
-          <meshStandardMaterial color="#38bdf8" transparent opacity={0.6} metalness={0.9} roughness={0.1} />
-        </Box>
-
-        {/* Boom barrier base */}
-        <Cylinder args={[0.05, 0.05, 0.5]} position={[width * 0.6, -height * 0.25, depth * 0.6]} castShadow>
-          <meshStandardMaterial color="#ef4444" />
-        </Cylinder>
-        {/* Boom barrier arm */}
-        <Box args={[width * 1.5, 0.05, 0.05]} position={[width * 1.35, -height * 0.05, depth * 0.6]} castShadow>
-          <meshStandardMaterial color="#facc15" />
-        </Box>
-      </group>
-    );
-  } else if (type === 'utility') {
-    return (
-      <group>
-        <Box args={[width, height * 0.7, depth]} position={[0, -height * 0.15, 0]} castShadow receiveShadow>
-          <meshStandardMaterial color="#475569" roughness={0.8} />
-        </Box>
-        <Cylinder args={[Math.min(width, depth) * 0.2, Math.min(width, depth) * 0.25, height * 0.8, 16]} position={[-width * 0.25, height * 0.1, 0]} castShadow>
-           <meshStandardMaterial color="#64748b" />
-        </Cylinder>
-        <Cylinder args={[Math.min(width, depth) * 0.2, Math.min(width, depth) * 0.25, height * 0.8, 16]} position={[width * 0.25, height * 0.1, 0]} castShadow>
-           <meshStandardMaterial color="#64748b" />
-        </Cylinder>
-        <Box args={[width * 0.4, height * 0.4, depth * 1.05]} position={[0, -height * 0.15, 0]}>
-           <meshStandardMaterial color="#f59e0b" emissive="#f59e0b" emissiveIntensity={1} />
-        </Box>
-      </group>
-    );
-  } else if (type === 'admin') {
-    return (
-      <group>
-        <Box args={[width, height * 1.5, depth]} position={[0, height * 0.25, 0]} castShadow receiveShadow>
-          <meshStandardMaterial color="#bae6fd" roughness={0.7} opacity={0.8} transparent emissive="#0ea5e9" emissiveIntensity={0.05} />
-        </Box>
-        <Box args={[width * 1.05, height * 1.55, depth * 0.8]} position={[0, height * 0.25, 0]} castShadow>
-           <meshStandardMaterial color="#1e293b" />
-        </Box>
-        <Cylinder args={[0.05, 0.05, height * 0.8]} position={[0, height + 0.4, 0]}>
-           <meshStandardMaterial color="#ef4444" emissive="#ef4444" />
-        </Cylinder>
-      </group>
-    );
-  } else if (type === 'library') {
-    return (
-      <group>
-        {/* Modern Solid Base */}
-        <Box args={[width * 0.9, height * 0.8, depth * 0.9]} position={[0, -height * 0.1, 0]} castShadow receiveShadow>
-          <meshStandardMaterial color="#cbd5e1" roughness={0.8} />
-        </Box>
-        {/* Glass upper section */}
-        <Box args={[width * 1.05, height * 1.2, depth * 1.05]} position={[0, height * 0.9, 0]} castShadow>
-          <meshStandardMaterial color="#0ea5e9" transparent opacity={0.3} metalness={0.6} roughness={0.2} />
-        </Box>
-        {/* Inner solid core for depth */}
-        <Box args={[width * 0.8, height * 1.15, depth * 0.8]} position={[0, height * 0.9, 0]}>
-          <meshStandardMaterial color="#475569" roughness={0.9} />
-        </Box>
-        {/* Modern slanted roof feature */}
-        <Box args={[width * 1.1, height * 0.2, depth * 1.1]} position={[0, height * 1.6, 0]} rotation={[0.08, 0, 0]} castShadow receiveShadow>
-          <meshStandardMaterial color="#1e293b" roughness={0.8} />
-        </Box>
-      </group>
-    );
-  } else if (type === 'auditorium') {
-    return (
-      <group>
-        <Box args={[width, height * 0.5, depth]} position={[0, -height * 0.25, 0]} castShadow receiveShadow>
-          <meshStandardMaterial color="#cbd5e1" />
-        </Box>
-        {/* Full Dome Roof */}
-        <Sphere args={[Math.min(width, depth)/2, 32, 16, 0, Math.PI * 2, 0, Math.PI / 2]} position={[0, 0, 0]} castShadow>
-          <meshStandardMaterial color="#94a3b8" metalness={0.5} roughness={0.2} />
-        </Sphere>
-      </group>
-    );
-  } else if (type === 'sports') {
-    if (nameLow.includes('pool')) {
-      return (
-        <group>
-          {/* Deck */}
-          <Box args={[width, 0.2, depth]} position={[0, -height/2 + 0.1, 0]} receiveShadow>
-            <meshStandardMaterial color="#cbd5e1" />
-          </Box>
-          {/* Water */}
-          <Box args={[width * 0.8, 0.15, depth * 0.8]} position={[0, -height/2 + 0.15, 0]} receiveShadow>
-            <meshStandardMaterial color="#0ea5e9" opacity={0.7} transparent metalness={0.8} roughness={0.1} />
-          </Box>
-        </group>
-      );
-    } else if (nameLow.includes('tennis')) {
-      return (
-        <group>
-          {/* Court */}
-          <Box args={[width, 0.1, depth]} position={[0, -height/2 + 0.05, 0]} receiveShadow>
-            <meshStandardMaterial color="#166534" />
-          </Box>
-          {/* Net */}
-          <Box args={[width * 0.8, 0.4, 0.05]} position={[0, -height/2 + 0.25, 0]} castShadow>
-            <meshStandardMaterial color="#f8fafc" opacity={0.8} transparent />
-          </Box>
-        </group>
-      );
-    } else if (nameLow.includes('cricket')) {
-      return (
-        <group>
-          {/* Grass */}
-          <Box args={[width, 0.1, depth]} position={[0, -height/2 + 0.05, 0]} receiveShadow>
-            <meshStandardMaterial color="#22c55e" />
-          </Box>
-          {/* Pitch */}
-          <Box args={[width * 0.2, 0.15, depth * 0.8]} position={[0, -height/2 + 0.08, 0]} receiveShadow>
-            <meshStandardMaterial color="#d4a373" />
-          </Box>
-          {/* Nets */}
-          <Box args={[width * 0.3, 1.5, depth * 0.9]} position={[0, -height/2 + 0.8, 0]}>
-             <meshStandardMaterial color="#94a3b8" wireframe />
-          </Box>
-          {/* Stumps */}
-          {[-0.1, 0, 0.1].map((ox, i) => (
-             <Cylinder key={'s1'+i} args={[0.02, 0.02, 0.4]} position={[ox, -height/2 + 0.2, depth * 0.35]}>
-               <meshStandardMaterial color="#ffffff" />
-             </Cylinder>
-          ))}
-          {[-0.1, 0, 0.1].map((ox, i) => (
-             <Cylinder key={'s2'+i} args={[0.02, 0.02, 0.4]} position={[ox, -height/2 + 0.2, -depth * 0.35]}>
-               <meshStandardMaterial color="#ffffff" />
-             </Cylinder>
-          ))}
-        </group>
-      );
-    } else if (nameLow.includes('hockey')) {
-      return (
-        <group>
-          {/* Turf */}
-          <Box args={[width, 0.1, depth]} position={[0, -height/2 + 0.05, 0]} receiveShadow>
-            <meshStandardMaterial color="#15803d" />
-          </Box>
-          {/* Goals */}
-          <Box args={[width * 0.2, 0.8, 0.2]} position={[0, -height/2 + 0.45, depth/2 - 0.5]}>
-             <meshStandardMaterial color="#ffffff" wireframe />
-          </Box>
-          <Box args={[width * 0.2, 0.8, 0.2]} position={[0, -height/2 + 0.45, -depth/2 + 0.5]}>
-             <meshStandardMaterial color="#ffffff" wireframe />
-          </Box>
-        </group>
-      );
-    } else if (nameLow.includes('indoor')) {
-      return (
-        <group>
-          {/* Closed Stadium */}
-          <Box args={[width, height * 1.2, depth]} position={[0, height * 0.1, 0]} castShadow receiveShadow>
-            <meshStandardMaterial color="#cbd5e1" metalness={0.5} />
-          </Box>
-          {/* Curved Roof */}
-          <Cylinder args={[Math.min(width, depth)/2, Math.min(width, depth)/2, Math.max(width, depth), 32, 1, false, 0, Math.PI]} position={[0, height * 0.7, 0]} rotation={[width > depth ? 0 : Math.PI / 2, 0, Math.PI / 2]} castShadow>
-             <meshStandardMaterial color="#94a3b8" />
-          </Cylinder>
-        </group>
-      );
-    } else {
-      // Sports Ground or default park-like sports area
-      return (
-        <group>
-          <Box args={[width, 0.1, depth]} position={[0, -height/2 + 0.05, 0]} receiveShadow>
-            <meshStandardMaterial color="#22c55e" />
-          </Box>
-          {/* Running Track (Ovalish) */}
-          <Cylinder args={[Math.min(width, depth)*0.4, Math.min(width, depth)*0.4, 0.15, 32]} position={[0, -height/2 + 0.08, 0]}>
-             <meshStandardMaterial color="#b91c1c" />
-          </Cylinder>
-          {/* Inner Grass */}
-          <Cylinder args={[Math.min(width, depth)*0.3, Math.min(width, depth)*0.3, 0.2, 32]} position={[0, -height/2 + 0.1, 0]}>
-             <meshStandardMaterial color="#22c55e" />
-          </Cylinder>
-        </group>
-      );
-    }
-  } else if (type === 'park') {
-    return (
-      <group>
-        <Box args={[width, 0.2, depth]} position={[0, -height/2 + 0.1, 0]} receiveShadow>
-          <meshStandardMaterial color="#22c55e" />
-        </Box>
-        {/* Many trees for Eco Park */}
-        <ParkTrees width={width} height={height} depth={depth} count={nameLow.includes('eco') ? 15 : 4} />
-        {/* Butterflies */}
-        <Butterflies />
-      </group>
-    );
-  } else if (type === 'food') {
-    return (
-      <group>
-        <Box args={[width, height * 0.6, depth]} position={[0, -height * 0.2, 0]} castShadow receiveShadow>
-          <meshStandardMaterial color="#fef3c7" />
-        </Box>
-        {/* Awnings */}
-        <Box args={[width * 1.05, 0.2, depth * 1.05]} position={[0, height * 0.1, 0]} castShadow>
-          <meshStandardMaterial color="#f97316" />
-        </Box>
-      </group>
-    );
-  } else if (type === 'hostel') {
-    return (
-      <group>
-        {/* Main Walls - matte finish to eliminate harsh specular glare */}
-        <Box args={[width, height * 1.2, depth]} position={[0, height * 0.1, 0]} castShadow receiveShadow>
-          <meshStandardMaterial color="#cbd5e1" roughness={0.95} metalness={0.0} />
-        </Box>
-        {/* Lower Balcony Band */}
-        <Box args={[width * 1.04, height * 0.15, depth * 1.04]} position={[0, height * 0.05, 0]} castShadow>
-          <meshStandardMaterial color="#94a3b8" roughness={0.9} metalness={0.0} />
-        </Box>
-        {/* Upper Balcony Band (kept safely below the roof line to prevent coplanar z-fighting) */}
-        <Box args={[width * 1.04, height * 0.15, depth * 1.04]} position={[0, height * 0.4, 0]} castShadow>
-          <meshStandardMaterial color="#94a3b8" roughness={0.9} metalness={0.0} />
-        </Box>
-        {/* Dark Matte Roof Parapet - absorbs light and eliminates all top glare */}
-        <Box args={[width * 1.02, 0.25, depth * 1.02]} position={[0, height * 0.7 + 0.1, 0]} castShadow receiveShadow>
-          <meshStandardMaterial color="#334155" roughness={1.0} metalness={0.0} />
-        </Box>
-        {/* Dark Recessed Roof Surface */}
-        <Box args={[width * 0.94, 0.26, depth * 0.94]} position={[0, height * 0.7 + 0.11, 0]} receiveShadow>
-          <meshStandardMaterial color="#1e293b" roughness={1.0} metalness={0.0} />
-        </Box>
-      </group>
-    );
-  } else {
-    // Default Classroom / Generic
-    return (
-      <group>
-        <Box args={[width, height, depth]} castShadow receiveShadow>
-          <meshStandardMaterial color={baseColor} />
-        </Box>
-        <Box args={[width * 1.1, 0.2, depth * 1.1]} position={[0, height / 2 + 0.1, 0]} castShadow>
-          <meshStandardMaterial color="#334155" />
-        </Box>
-        <Box args={[width * 1.02, height * 0.4, depth * 0.8]} position={[0, height * 0.1, 0]}>
-           <meshStandardMaterial color="#bae6fd" roughness={0.8} emissive="#bae6fd" emissiveIntensity={0.05} />
-        </Box>
-      </group>
-    );
-  }
-});
+// High-fidelity procedural campus architecture & infrastructure imported from ./CampusArchitecture
 
 const SciFiGate = ({ position, scale = 1, rotation = [0, 0, 0] }: { position: [number, number, number], scale?: number, rotation?: [number, number, number] }) => {
   return (
@@ -960,7 +763,19 @@ const SciFiGate = ({ position, scale = 1, rotation = [0, 0, 0] }: { position: [n
 };
 
 /* ── Detailed Animated 3D Robot Body ── */
-export const DetailedRobot = ({ isMoving, showFeatures = false, activeFeature = "", isEmergency = false }: { isMoving: boolean; showFeatures?: boolean; activeFeature?: string; isEmergency?: boolean }) => {
+export const DetailedRobot = ({ 
+  isMoving, 
+  showFeatures = false, 
+  activeFeature = "", 
+  isEmergency = false,
+  isExtinguishing = false 
+}: { 
+  isMoving: boolean; 
+  showFeatures?: boolean; 
+  activeFeature?: string; 
+  isEmergency?: boolean;
+  isExtinguishing?: boolean;
+}) => {
   const bodyRef = useRef<THREE.Group>(null);
   const headRef = useRef<THREE.Group>(null);
   const leftArmRef = useRef<THREE.Group>(null);
@@ -979,11 +794,14 @@ export const DetailedRobot = ({ isMoving, showFeatures = false, activeFeature = 
     const t = clock.current;
 
     if (bodyRef.current) bodyRef.current.position.y = 0.05;
-    if (headRef.current) headRef.current.rotation.y = 0;
-    if (leftArmRef.current) leftArmRef.current.rotation.x = 0;
-    if (rightArmRef.current) rightArmRef.current.rotation.x = 0;
+    if (leftArmRef.current) {
+      leftArmRef.current.rotation.x = isExtinguishing ? -Math.PI / 3 : 0;
+    }
+    if (rightArmRef.current) {
+      rightArmRef.current.rotation.x = isExtinguishing ? -Math.PI / 3 : 0;
+    }
 
-    const ws = isMoving ? 8 : 0.5;
+    const ws = isMoving ? 8 : 0;
     if (leftWheelRef.current) leftWheelRef.current.rotation.x += delta * ws;
     if (rightWheelRef.current) rightWheelRef.current.rotation.x += delta * ws;
     if (frontWheelRef.current) frontWheelRef.current.rotation.x += delta * ws;
@@ -1004,9 +822,10 @@ export const DetailedRobot = ({ isMoving, showFeatures = false, activeFeature = 
     
     if (headRef.current) {
       if (isMoving) {
-        headRef.current.rotation.y = Math.sin(t * 2.5) * 0.4;
+        // Smooth, subtle scanning motion - prevents violent head vibration
+        headRef.current.rotation.y = Math.sin(t * 1.2) * 0.15;
       } else {
-        headRef.current.rotation.y = THREE.MathUtils.lerp(headRef.current.rotation.y, 0, 0.1);
+        headRef.current.rotation.y = THREE.MathUtils.lerp(headRef.current.rotation.y, 0, 0.08);
       }
     }
     
@@ -1184,6 +1003,57 @@ export const DetailedRobot = ({ isMoving, showFeatures = false, activeFeature = 
             </div>
           </Html>
         )}
+        {/* Fire Extinguisher Canister Mount (Side) */}
+        <group position={[-0.4, 0.5, -0.1]}>
+          <Cylinder args={[0.08, 0.08, 0.38, 12]} position={[0, 0, 0]} castShadow>
+            <meshStandardMaterial color="#dc2626" metalness={0.4} roughness={0.3} />
+          </Cylinder>
+          <Sphere args={[0.08, 10, 10]} position={[0, 0.19, 0]} castShadow>
+            <meshStandardMaterial color="#dc2626" metalness={0.4} roughness={0.3} />
+          </Sphere>
+          <Cylinder args={[0.02, 0.02, 0.07, 8]} position={[0, 0.28, 0]}>
+            <meshStandardMaterial color="#cbd5e1" metalness={0.9} roughness={0.1} />
+          </Cylinder>
+          <Box args={[0.035, 0.035, 0.02]} position={[0.07, 0.26, 0]}>
+            <meshStandardMaterial color="#22c55e" emissive="#22c55e" emissiveIntensity={0.8} />
+          </Box>
+        </group>
+
+        {/* Dynamic Foam & Chemical Spray When Extinguishing */}
+        {isExtinguishing && (
+          <group position={[0, 0.35, 0.5]}>
+            {/* Outer expanding foam spray cone */}
+            <Cone args={[0.65, 2.0, 14, 1, true]} position={[0, -0.15, 1.0]} rotation={[Math.PI / 2.3, 0, 0]}>
+              <meshStandardMaterial 
+                color="#e0f2fe" 
+                emissive="#38bdf8" 
+                emissiveIntensity={0.9} 
+                transparent 
+                opacity={0.65} 
+                roughness={0.1} 
+              />
+            </Cone>
+            {/* Inner pressurized foam core */}
+            <Cylinder args={[0.08, 0.28, 1.8, 8]} position={[0, -0.12, 0.9]} rotation={[Math.PI / 2.3, 0, 0]}>
+              <meshStandardMaterial color="#ffffff" emissive="#ffffff" emissiveIntensity={1.5} transparent opacity={0.85} />
+            </Cylinder>
+            {/* Ground foam suppression blanket */}
+            <Cylinder args={[0.95, 0.95, 0.04, 16]} position={[0, -0.5, 1.6]}>
+              <meshStandardMaterial color="#f0f9ff" emissive="#bae6fd" emissiveIntensity={0.6} transparent opacity={0.75} />
+            </Cylinder>
+            {/* Flash cooling blue point light */}
+            <pointLight position={[0, 0, 1.1]} intensity={5.0} distance={6} color="#38bdf8" />
+            
+            {/* 3D Floating Tag Above Robot */}
+            <Html position={[0, 1.8, 0]} center>
+              <div className="bg-amber-950/90 border border-amber-400 text-amber-300 text-[11px] font-black px-3.5 py-1.5 rounded-xl shadow-[0_0_30px_rgba(245,158,11,0.8)] backdrop-blur-md flex items-center gap-2 whitespace-nowrap animate-bounce font-mono">
+                <span className="w-2.5 h-2.5 rounded-full bg-amber-400 animate-ping"></span>
+                <span>🚒 EXTINGUISHING FOAM DISPENSER ACTIVE</span>
+              </div>
+            </Html>
+          </group>
+        )}
+
         {/* Base plate */}
         <RoundedBox args={[0.75, 0.12, 0.6]} radius={0.04} smoothness={4} position={[0, 0.06, 0]} castShadow>
           <meshStandardMaterial color="#1e293b" metalness={0.6} roughness={0.3} />
@@ -1241,9 +1111,13 @@ const Robot = ({
   const isMovingRef = useRef(false);
   const [isMoving, setIsMoving] = useState(false);
   const hasCompletedRef = useRef(false);
+  const lastReachedIndexRef = useRef(-1);
+  const lastObstacleDetectionTimeRef = useRef(0);
+  const targetYawRef = useRef(0);
 
   useEffect(() => {
     hasCompletedRef.current = false;
+    lastReachedIndexRef.current = -1;
   }, [path]);
 
   const pauseTimeRef = useRef(0);
@@ -1264,7 +1138,6 @@ const Robot = ({
     if (pauseTimeRef.current > 0) {
       pauseTimeRef.current -= delta;
       if (isMovingRef.current) { isMovingRef.current = false; setIsMoving(false); }
-      // Don't return early here, we still want to check for obstacles behind us
     }
     
     const dist = currentPos.distanceTo(targetVector);
@@ -1272,48 +1145,54 @@ const Robot = ({
     if (pauseTimeRef.current > 0) return; // Wait if still paused
 
     if (isPlaying) {
-      // --- Sensor Logic: Check for dynamic obstacles ahead ---
-      // When reversing or waiting for clearance, do not trigger obstacle alarms on obstacles we are clearing from
+      // --- Sensor Logic: Check for dynamic obstacles ahead with cooldown ---
       if (robotState !== 'reversing' && robotState !== 'waiting_for_clearance' && dynamicObstaclesRef && dynamicObstaclesRef.current.length > 0) {
-        const upcomingPath = path.slice(currentIndex, currentIndex + 4);
-        for (const obs of dynamicObstaclesRef.current) {
-          const obsTarget = obs.path[Math.min(obs.currentIndex, obs.path.length - 1)];
-          let detected = false;
-          for (const p of upcomingPath) {
-            if ((p.x === obs.pos.x && p.y === obs.pos.y) || (p.x === obsTarget.x && p.y === obsTarget.y)) {
-              detected = true;
-              break;
-            }
-          }
-          if (!detected && obs.currentPosVector) {
-            const d = currentPos.distanceTo(obs.currentPosVector);
-            if (d < 1.6) {
-              const forwardDir = new THREE.Vector3().subVectors(targetVector, currentPos).normalize();
-              const toObs = new THREE.Vector3().subVectors(obs.currentPosVector, currentPos).normalize();
-              if (forwardDir.dot(toObs) > 0.2) {
+        const now = Date.now();
+        if (now - lastObstacleDetectionTimeRef.current > 1800) {
+          const upcomingPath = path.slice(currentIndex, currentIndex + 3);
+          for (const obs of dynamicObstaclesRef.current) {
+            const obsTarget = obs.path[Math.min(obs.currentIndex, obs.path.length - 1)];
+            let detected = false;
+            for (const p of upcomingPath) {
+              if ((p.x === obs.pos.x && p.y === obs.pos.y) || (p.x === obsTarget.x && p.y === obsTarget.y)) {
                 detected = true;
+                break;
               }
             }
-          }
-          if (detected) {
-            onObstacleDetected(obs.pos);
-            return; // Pause movement this frame
+            if (!detected && obs.currentPosVector) {
+              const d = currentPos.distanceTo(obs.currentPosVector);
+              if (d < 1.15) {
+                const forwardDir = new THREE.Vector3().subVectors(targetVector, currentPos).normalize();
+                const toObs = new THREE.Vector3().subVectors(obs.currentPosVector, currentPos).normalize();
+                if (forwardDir.dot(toObs) > 0.55) {
+                  detected = true;
+                }
+              }
+            }
+            if (detected) {
+              lastObstacleDetectionTimeRef.current = now;
+              onObstacleDetected(obs.pos);
+              return; // Pause movement this frame to allow bypass initialization
+            }
           }
         }
       }
 
-
-      if (dist < 0.05) {
-        if (isMovingRef.current) { isMovingRef.current = false; setIsMoving(false); }
+      if (dist < 0.08) {
         if (currentIndex < path.length - 1) {
-          const curr = path[currentIndex];
-          const next = path[currentIndex + 1];
-          if (curr.x === next.x && curr.y === next.y) {
-             pauseTimeRef.current = 2.5; // Pause for 2.5 seconds
+          if (lastReachedIndexRef.current !== currentIndex + 1) {
+            lastReachedIndexRef.current = currentIndex + 1;
+            const curr = path[currentIndex];
+            const next = path[currentIndex + 1];
+            // Only pause if vertical floor transition occurs
+            if (curr.x === next.x && curr.y === next.y && curr.f !== next.f) {
+              pauseTimeRef.current = 2.0;
+              if (isMovingRef.current) { isMovingRef.current = false; setIsMoving(false); }
+            }
+            onReachNode(currentIndex + 1);
           }
-          onReachNode(currentIndex + 1);
-        }
-        else if (currentIndex === path.length - 1) {
+        } else if (currentIndex === path.length - 1) {
+          if (isMovingRef.current) { isMovingRef.current = false; setIsMoving(false); }
           if (!hasCompletedRef.current) {
             hasCompletedRef.current = true;
             onMissionComplete();
@@ -1321,32 +1200,47 @@ const Robot = ({
         }
       } else {
         if (!isMovingRef.current) { isMovingRef.current = true; setIsMoving(true); }
-        const moveDist = speed * delta;
+        
+        // Calculate smooth turning and alignment
+        const rotDirection = new THREE.Vector3().subVectors(targetVector, currentPos);
+        if (rotDirection.lengthSq() > 0.02) {
+          targetYawRef.current = Math.atan2(rotDirection.x, rotDirection.z);
+        }
+        
+        let diff = targetYawRef.current - ref.current.rotation.y;
+        while (diff < -Math.PI) diff += Math.PI * 2;
+        while (diff > Math.PI) diff -= Math.PI * 2;
+        
+        // Critically damped rotation smoothing - zero overshoot, zero jitter/turbulence
+        const turnRate = 1 - Math.exp(-12 * Math.min(delta, 0.08));
+        ref.current.rotation.y += diff * turnRate;
+        
+        // Steering governor: gentle deceleration into sharp turns, full speed on straightaways
+        const turnAlignment = Math.max(0.35, Math.cos(diff));
+        const effectiveSpeed = speed * (Math.abs(diff) < 0.35 ? 1.0 : turnAlignment);
+        const moveDist = effectiveSpeed * delta;
+        
         if (moveDist >= dist) {
           currentPos.copy(targetVector);
         } else {
           const direction = new THREE.Vector3().subVectors(targetVector, currentPos).normalize();
           currentPos.add(direction.multiplyScalar(moveDist));
         }
-        const rotDirection = new THREE.Vector3().subVectors(targetVector, currentPos);
-        if (rotDirection.lengthSq() > 0.01) {
-          const targetRotation = Math.atan2(rotDirection.x, rotDirection.z);
-          let diff = targetRotation - ref.current.rotation.y;
-          while (diff < -Math.PI) diff += Math.PI * 2;
-          while (diff > Math.PI) diff -= Math.PI * 2;
-          ref.current.rotation.y += diff * delta * 10;
-        }
       }
     } else {
       if (isMovingRef.current) { isMovingRef.current = false; setIsMoving(false); }
-      currentPos.lerp(targetVector, 0.2);
+      currentPos.lerp(targetVector, 0.15);
     }
   });
 
   const startPos = getGridPosition(path[0] || { x: 0, y: 0, f: 0 }, gridSize, 0.22, isMapView);
   return (
-    <group ref={ref} position={startPos}>
-      <DetailedRobot isMoving={isMoving} isEmergency={isEmergency} />
+    <group ref={ref} position={startPos} name="robot_avatar_group">
+      <DetailedRobot 
+        isMoving={isMoving} 
+        isEmergency={isEmergency} 
+        isExtinguishing={robotState === 'extinguishing'} 
+      />
     </group>
   );
 };
@@ -1369,73 +1263,7 @@ const PathLine = ({ path, currentIndex, gridSize, isMapView, color = "#00ffff", 
 
 
 
-const EnvironmentMap = React.memo(({
-  mapData,
-  isNight,
-  isTargeting,
-  onMapClick,
-  onMapRightClick,
-}: {
-  mapData: MapData;
-  isNight: boolean;
-  isTargeting?: boolean;
-  onMapClick?: (p: THREE.Vector3) => void;
-  onMapRightClick?: (p: THREE.Vector3) => void;
-}) => {
-  const { gridSize } = mapData;
-  const margin = 10; // Space between grid edge and compound wall
-  const compSizeX = gridSize.x + margin * 2;
-  const compSizeY = gridSize.y + margin * 2;
-  const wallThickness = 1.5;
-  const wallHeight = 6;
-  const halfX = compSizeX / 2;
-  const halfY = compSizeY / 2;
-  const wallColor = isNight ? '#0f172a' : '#e2e8f0';
-
-  return (
-    <group>
-      {/* Campus grass ground — clickable for targeting */}
-      <Plane
-        args={[compSizeX, compSizeY]}
-        rotation={[-Math.PI / 2, 0, 0]}
-        position={[0, 0, 0]}
-        receiveShadow
-        onClick={(e) => {
-          if (isTargeting && onMapClick) { e.stopPropagation(); onMapClick(e.point); }
-        }}
-        onContextMenu={(e) => {
-          e.nativeEvent.preventDefault();
-          if (isTargeting && onMapRightClick) {
-            e.stopPropagation();
-            onMapRightClick(e.point);
-          }
-        }}
-        onPointerOver={() => { if (isTargeting) document.body.style.cursor = 'crosshair'; }}
-        onPointerOut={() => { if (isTargeting) document.body.style.cursor = 'auto'; }}
-      >
-        <meshStandardMaterial color={isNight ? '#14532d' : '#4ade80'} roughness={0.9} />
-      </Plane>
-
-      {/* Compound Boundary Walls */}
-      {/* Back Wall */}
-      <Box args={[compSizeX + wallThickness*2, wallHeight, wallThickness]} position={[0, wallHeight/2, halfY + wallThickness/2]} castShadow receiveShadow>
-        <meshStandardMaterial color={wallColor} />
-      </Box>
-      {/* Front Wall */}
-      <Box args={[compSizeX + wallThickness*2, wallHeight, wallThickness]} position={[0, wallHeight/2, -halfY - wallThickness/2]} castShadow receiveShadow>
-        <meshStandardMaterial color={wallColor} />
-      </Box>
-      {/* Right Wall */}
-      <Box args={[wallThickness, wallHeight, compSizeY]} position={[halfX + wallThickness/2, wallHeight/2, 0]} castShadow receiveShadow>
-        <meshStandardMaterial color={wallColor} />
-      </Box>
-      {/* Left Wall */}
-      <Box args={[wallThickness, wallHeight, compSizeY]} position={[-halfX - wallThickness/2, wallHeight/2, 0]} castShadow receiveShadow>
-        <meshStandardMaterial color={wallColor} />
-      </Box>
-    </group>
-  );
-});
+// Campus environment map and ground systems imported from ./CampusArchitecture
 
 interface SimulationViewProps {
   mapData: MapData | null;
@@ -1444,6 +1272,16 @@ interface SimulationViewProps {
   selectedStrategyId?: string;
   isOn?: boolean;
   onPowerChange?: (isOn: boolean) => void;
+  fireHazards?: FireHazardPoint[];
+  onFireHazardsChange?: (hazards: FireHazardPoint[]) => void;
+  activeFireIncident?: FireIncident | null;
+  isPlacingFire?: boolean;
+  onTogglePlaceFire?: () => void;
+  onFireDetected?: (hazard: FireHazardPoint, robotPos: GridPoint) => void;
+  onAcknowledgeIncident?: (incidentId: string) => void;
+  onResolveIncident?: (incidentId: string) => void;
+  onSimulateAtBuilding?: (bldgName: string, coords: GridPoint) => void;
+  incidentHistory?: FireIncident[];
 }
 
 
@@ -1452,8 +1290,34 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
   onDispatchMission, 
   selectedStrategyId,
   isOn: isOnProp,
-  onPowerChange
+  onPowerChange,
+  fireHazards: fireHazardsProp,
+  onFireHazardsChange,
+  activeFireIncident,
+  isPlacingFire: isPlacingFireProp,
+  onTogglePlaceFire,
+  onFireDetected,
+  onAcknowledgeIncident,
+  onResolveIncident,
+  onSimulateAtBuilding,
+  incidentHistory = []
 }) => {
+  const [internalFireHazards, setInternalFireHazards] = useState<FireHazardPoint[]>([]);
+  const fireHazards = fireHazardsProp !== undefined ? fireHazardsProp : internalFireHazards;
+  const setFireHazards = onFireHazardsChange || setInternalFireHazards;
+
+  const [internalIsPlacingFire, setInternalIsPlacingFire] = useState(false);
+  const isPlacingFire = isPlacingFireProp !== undefined ? isPlacingFireProp : internalIsPlacingFire;
+
+  const activeFireTargetRef = useRef<GridPoint | null>(null);
+
+  // Active Marked Emergency Location Point
+  const [markedEmergencyPoint, setMarkedEmergencyPoint] = useState<{
+    position: GridPoint;
+    label: string;
+    type: 'fire' | 'sos' | 'medical' | 'target' | 'hazard';
+  } | null>(null);
+
   const [path, setPath] = useState<GridPoint[]>([]);
   const [activePathColor, setActivePathColor] = useState<string>('#00ffff');
   const [speedLimit, setSpeedLimit] = useState(50);
@@ -1465,14 +1329,23 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
   const [isPlaying, setIsPlaying] = useState(false);
   const [isMapView, setIsMapView] = useState(false);
 
-  const [isFollowing, setIsFollowing] = useState(false);
+  const [cameraMode, setCameraMode] = useState<'orbit' | 'follow' | 'fpv'>('orbit');
+  const isFollowing = cameraMode === 'follow';
+  const setIsFollowing = (val: boolean | ((prev: boolean) => boolean)) => {
+    setCameraMode(prev => {
+      const nextBool = typeof val === 'function' ? val(prev === 'follow') : val;
+      return nextBool ? 'follow' : 'orbit';
+    });
+  };
   const [triggerReset, setTriggerReset] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [showReasoningLog, setShowReasoningLog] = useState(false);
   const [isCCMinimized, setIsCCMinimized] = useState(false);
 
-  // Day mode permanently enabled
-  const isNight = false;
+  // Atmospheric lighting & UI view state
+  const [isNight, setIsNight] = useState(false);
+  const [showBuildingLabels, setShowBuildingLabels] = useState(true);
+  const [buildingSearchTerm, setBuildingSearchTerm] = useState('');
   
   const [aiExplanations, setAiExplanations] = useState<string[]>([]);
   const [selectedRoom, setSelectedRoom] = useState<Room | null>(null);
@@ -1491,7 +1364,7 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
   useEffect(() => {
     if (isPlaying && path.length > 0 && currentPosIndex < path.length && mapData) {
        const currentLoc = path[currentPosIndex];
-       const targetLoc = path[path.length - 1];
+       const targetLoc = destinationTargetRef.current || path[path.length - 1];
        const allObstacles = [...(mapData.obstacles || []), ...userBlockers];
        // Check if current path is blocked
        const isBlocked = path.slice(currentPosIndex).some(p => 
@@ -1502,34 +1375,18 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
          if (newPath.length > 0) {
            setPath(newPath);
            setCurrentPosIndex(0);
-           addExplanation("Road blocked! Rerouting to destination...");
+           addExplanation("Obstacle on path! Recalculating direct route to destination...");
          } else {
-           const homeRoom = mapData.rooms?.find(r => r.name.toLowerCase().includes('generator')) || mapData.rooms?.[0];
-           let homePath: GridPoint[] = [];
-           if (homeRoom) {
-               homePath = calculatePath(currentLoc, homeRoom.door || homeRoom.start, allObstacles, mapData);
-           }
-           if (homePath.length > 0) {
-               setPath(homePath);
-               setCurrentPosIndex(0);
-               setRobotState('returning_home');
-               addExplanation("Road to destination is completely blocked! Returning to base.");
-           } else {
-               const evadePath = calculateEvadePath(currentLoc, allObstacles, mapData);
-               if (evadePath.length > 0) {
-                 setPath(evadePath);
-                 setCurrentPosIndex(0);
-                 setRobotState('evading_obstacle');
-                 addExplanation("Road completely blocked! Moving to give space for obstacles...");
-               } else {
-                 setIsPlaying(false);
-                 setRobotState('idle');
-                 addExplanation("Road completely blocked and cannot evade! Halting.");
-               }
+           // Do NOT return to base or divert to a different room!
+           // Hold position safely, wait for obstacles to clear, and then proceed directly to destination!
+           setIsPlaying(false);
+           setRobotState('waiting_for_clearance');
+           addExplanation("Road temporarily blocked by obstacles. Holding position safely and waiting for clearance to destination...");
+           if (waitForObstacleToClearRef.current) {
+             waitForObstacleToClearRef.current();
            }
          }
        }
-
     }
   }, [userBlockers]);
   
@@ -1551,6 +1408,7 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
   }, [isOnProp]);
   const [activeCCTab, setActiveCCTab] = useState<'dashboard' | 'tools' | 'locations'>('dashboard');
   const [modalType, setModalType] = useState<'food' | 'medical' | null>(null);
+  const [showRobotVisionPIP, setShowRobotVisionPIP] = useState(false);
 
   const handleDeliverySubmit = (missionText: string) => {
     if (onDispatchMission) onDispatchMission(missionText);
@@ -1559,6 +1417,8 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
   const batteryRef = useRef(100);
   const robotStateRef = useRef<RobotState>('idle');
   const originalMissionRef = useRef<{path: GridPoint[], index: number} | null>(null);
+  const destinationTargetRef = useRef<GridPoint | null>(null);
+  const waitForObstacleToClearRef = useRef<(() => void) | null>(null);
   const emergencyLocationRef = useRef<GridPoint | null>(null);
   const robotPosRef = useRef<THREE.Vector3 | null>(null);
   const robotRotRef = useRef<number>(0);
@@ -1839,37 +1699,143 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
           temperature: 35 + (Math.random() * (isPlaying ? 10 : 2)),
           cpu: isPlaying ? 30 + Math.random() * 40 : 5 + Math.random() * 5,
           network: 85 + Math.random() * 15,
-          speed: isPlaying ? 2.5 : 0
+          speed: isPlaying ? 2.5 : 0,
+          emergencyPoint: markedEmergencyPoint?.position || (activeFireIncident && activeFireIncident.status !== 'RESOLVED' ? activeFireIncident.location?.coordinates : null),
+          emergencyLabel: markedEmergencyPoint?.label || (activeFireIncident && activeFireIncident.status !== 'RESOLVED' ? activeFireIncident.location?.building_name : null)
         }
       }));
-    }, 1000);
+    }, isPlaying ? 100 : 500);
     return () => clearInterval(interval);
   }, [isPlaying, mapData]);
 
   const prevIsIdleMode = useRef(isIdleMode);
 
-  // Auto-Patrol Logic
+  // Auto-Patrol Logic with robust multi-room reachable search
   useEffect(() => {
     let timeout: any;
     if (!isIdleMode && (robotState === 'idle' || robotState === 'patrol') && !isPlaying && isOn) {
       const waitTime = (prevIsIdleMode.current && !isIdleMode) ? 0 : 2500;
       timeout = setTimeout(() => {
-        if (!mapData || !mapData.rooms) return;
+        if (!mapData || !mapData.rooms || mapData.rooms.length === 0) return;
         addExplanation(waitTime === 0 ? 'Idle mode disabled. Resuming patrol immediately.' : 'Idle detected. Initiating autonomous patrol mode.');
-        const currentLoc = path.length > 0 ? path[currentPosIndex] : mapData.start;
-        const randomRoom = mapData.rooms[Math.floor(Math.random() * mapData.rooms.length)];
-        const patrolPath = calculatePath(currentLoc, randomRoom.door || randomRoom.start, [...(mapData.obstacles || []), ...userBlockers], mapData);
+        const currentLoc = path.length > 0 && currentPosIndex < path.length ? path[currentPosIndex] : mapData.start;
+        
+        // Shuffle rooms to find the first reachable one
+        const shuffledRooms = [...mapData.rooms].sort(() => Math.random() - 0.5);
+        let patrolPath: GridPoint[] = [];
+        for (const room of shuffledRooms) {
+          const p = calculatePath(currentLoc, room.door || room.start, [...(mapData.obstacles || []), ...userBlockers], mapData, true);
+          if (p.length > 1) {
+            patrolPath = p;
+            break;
+          }
+        }
+        // Fallback: try off-road shoulder path if road is blocked
+        if (patrolPath.length === 0) {
+          for (const room of shuffledRooms) {
+            const p = calculatePath(currentLoc, room.door || room.start, [...(mapData.obstacles || []), ...userBlockers], mapData, false);
+            if (p.length > 1) {
+              patrolPath = p;
+              break;
+            }
+          }
+        }
+        // Fallback to campus center / start point
+        if (patrolPath.length === 0 && mapData.start) {
+          patrolPath = calculatePath(currentLoc, mapData.start, [...(mapData.obstacles || []), ...userBlockers], mapData, false);
+        }
+
         if (patrolPath.length > 0) {
           setPath(patrolPath);
           setCurrentPosIndex(0);
           setRobotState('patrol');
           setIsPlaying(true);
+        } else {
+          setRobotState('idle');
         }
       }, waitTime);
     }
     prevIsIdleMode.current = isIdleMode;
     return () => clearTimeout(timeout);
-  }, [robotState, isPlaying, path, currentPosIndex, mapData, isOn, isIdleMode]);
+  }, [robotState, isPlaying, isOn, isIdleMode, mapData]);
+
+  // --- Autonomous Unstuck Watchdog ---
+  // Continuously monitors physical movement. If the robot has made zero forward progress
+  // while isPlaying is active, it detects a stall/deadlock and executes an automatic recovery.
+  useEffect(() => {
+    let lastCheckedPos: THREE.Vector3 | null = null;
+    let stationaryDuration = 0;
+
+    const watchdogInterval = setInterval(() => {
+      if (!isOn || !isPlaying || robotState === 'off' || robotState === 'charging' || robotState === 'extinguishing') {
+        stationaryDuration = 0;
+        return;
+      }
+
+      if (robotState === 'reversing' || robotState === 'waiting_for_clearance') {
+        return;
+      }
+
+      const currentPos = robotPosRef.current;
+      if (!currentPos) return;
+
+      if (lastCheckedPos) {
+        const movedDist = currentPos.distanceTo(lastCheckedPos);
+        if (movedDist < 0.12) {
+          stationaryDuration += 1;
+        } else {
+          stationaryDuration = 0;
+        }
+      }
+      lastCheckedPos = currentPos.clone();
+
+      // If robot has been stationary for 3+ consecutive seconds while marked isPlaying
+      if (stationaryDuration >= 3) {
+        stationaryDuration = 0;
+        if (!mapData) return;
+        
+        const currentLoc = (path.length > 0 && currentPosIndex < path.length)
+          ? path[currentPosIndex]
+          : getGridPointFromVector3(currentPos, mapData.gridSize);
+        
+        const orig = originalMissionRef.current;
+        const targetLoc = destinationTargetRef.current || (orig && orig.path.length > 0
+          ? orig.path[orig.path.length - 1]
+          : (path.length > 0 ? path[path.length - 1] : mapData.start));
+
+        // Disperse any dynamic obstacles in vicinity to break deadlock
+        dynamicObstaclesRef.current.forEach(obs => {
+          if (obs.currentPosVector && obs.currentPosVector.distanceTo(currentPos) < 2.0) {
+            obs.path.reverse();
+            obs.currentIndex = 0;
+          }
+        });
+
+        // Calculate an active unstuck recovery route directly to the destination (prefer roads, allow shoulder bypass)
+        let recoveryPath = calculatePath(currentLoc, targetLoc, [...(mapData.obstacles || []), ...userBlockers], mapData, true);
+        if (recoveryPath.length === 0) {
+          recoveryPath = calculatePath(currentLoc, targetLoc, [...(mapData.obstacles || []), ...userBlockers], mapData, false);
+        }
+
+        if (recoveryPath.length > 0) {
+          addExplanation('Autonomous Unstuck Watchdog: Recovered from stall. Resuming smooth navigation to destination.');
+          setPath(recoveryPath);
+          setCurrentPosIndex(0);
+          setIsPlaying(true);
+        } else {
+          // Corridor temporarily blocked by obstacles: wait safely for obstacles to clear, NEVER divert to another place!
+          setIsPlaying(false);
+          setRobotState('waiting_for_clearance');
+          addExplanation('Corridor temporarily congested. Holding position safely and waiting for obstacles to clear...');
+          if (waitForObstacleToClearRef.current) {
+            waitForObstacleToClearRef.current();
+          }
+        }
+      }
+    }, 1000);
+
+    return () => clearInterval(watchdogInterval);
+  }, [isOn, isPlaying, robotState, path, currentPosIndex, mapData, userBlockers]);
 
   const initializeDynamicObstacles = (robotPath?: GridPoint[], targetCount?: number) => {
     if (!mapData || !mapData.roads || mapData.roads.length < 5) return;
@@ -1944,6 +1910,28 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
     if (mapData && mapData.roads && mapData.roads.length > 0) {
       initializeDynamicObstacles();
     }
+  }, [mapData]);
+
+  // Obstacle Continuous Movement Guarantee:
+  // Periodically ensures all dynamic obstacles have isMoving=true and active paths
+  useEffect(() => {
+    if (!mapData || !mapData.roads || mapData.roads.length < 5) return;
+    const roads = mapData.roads;
+    const livenessInterval = setInterval(() => {
+      dynamicObstaclesRef.current.forEach(obs => {
+        obs.isMoving = true;
+        if (!obs.path || obs.path.length < 2) {
+          const randEnd = roads[Math.floor(Math.random() * roads.length)];
+          const newPath = calculatePath(obs.pos, randEnd, [], mapData, true);
+          if (newPath.length > 1) {
+            obs.path = newPath;
+            obs.currentIndex = 0;
+            obs.targetPos = randEnd;
+          }
+        }
+      });
+    }, 2500);
+    return () => clearInterval(livenessInterval);
   }, [mapData]);
 
   // Adjust dynamic obstacles count
@@ -2134,17 +2122,16 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
 
   const resumeMissionTo = (currentLoc: GridPoint, targetLoc: GridPoint) => {
     if (!mapData) return;
+    destinationTargetRef.current = targetLoc;
     const allObstacles = [...(mapData.obstacles || []), ...userBlockers];
     
     let nextPath = calculatePath(currentLoc, targetLoc, allObstacles, mapData);
     if (nextPath.length === 0) {
-      nextPath = calculateLongPath(currentLoc, targetLoc, allObstacles, mapData);
-      if (nextPath.length > 0) {
-        addExplanation(`Taking a detour to reach target.`);
-      }
+      nextPath = calculatePath(currentLoc, targetLoc, allObstacles, mapData, false);
     }
     
     if (nextPath.length > 0) {
+      originalMissionRef.current = { path: [...nextPath], index: 0 };
       setPath(nextPath);
       setActivePathColor('#00ffff');
       setCurrentPosIndex(0);
@@ -2249,7 +2236,7 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
           reply = `I must complete my current task first before accepting new emergencies.`;
         } else if (targetRoom) {
           reply = `EMERGENCY ACCEPTED. Dispatched to ${targetRoom.name} immediately.`;
-          handleEmergencyCall(targetRoom.door || targetRoom.start);
+          handleEmergencyCall(targetRoom.door || targetRoom.start, `${targetRoom.name} Emergency`, 'sos');
         } else {
           reply = `I could not find a building matching "${roomName}".`;
         }
@@ -2343,6 +2330,8 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
     }
     
     if (initialPath.length > 0 && mapData.tasks && mapData.tasks.length > 0) {
+      destinationTargetRef.current = target;
+      originalMissionRef.current = { path: [...initialPath], index: 0 };
       setPath(initialPath);
       addExplanation(`Planned route to destination. Estimated distance: ${initialPath.length}m.`);
       
@@ -2471,7 +2460,7 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
     }
   };
 
-  const handleEmergencyCall = (targetPos: GridPoint) => {
+  const handleEmergencyCall = (targetPos: GridPoint, customLabel?: string, emergencyType: 'fire' | 'sos' | 'medical' | 'target' = 'sos') => {
     if (!isOn) {
       addExplanation("Emergency override! Powering ON to respond to critical emergency.");
       setIsOn(true);
@@ -2481,9 +2470,21 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
     }
     
     if (!mapData) return;
-    if (robotState === 'emergency_response' || robotState === 'charging' || robotState === 'emergency_to_ctr' || robotState === 'ctr_to_emergency') return;
+    if (robotState === 'charging') return;
     
-    addExplanation(`EMERGENCY CALL: Diverting immediately to (${targetPos.x}, ${targetPos.y})!`);
+    const resolvedLabel = customLabel || (mapData.rooms?.find(r => 
+      targetPos.x >= r.start.x && targetPos.x <= r.end.x &&
+      targetPos.y >= r.start.y && targetPos.y <= r.end.y
+    )?.name) || `Emergency Location (${targetPos.x}, ${targetPos.y})`;
+
+    // PROPERLY MARK THE EMERGENCY LOCATION POINT ON THE CAMPUS MAP!
+    setMarkedEmergencyPoint({
+      position: targetPos,
+      label: resolvedLabel,
+      type: emergencyType
+    });
+
+    addExplanation(`EMERGENCY CALL: Diverting immediately to marked point at ${resolvedLabel} (${targetPos.x}, ${targetPos.y})! All other tasks suspended.`);
     setIsPlaying(false);
     isRecalculating.current = true;
     
@@ -2491,25 +2492,59 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
       originalMissionRef.current = { path: [...path], index: currentPosIndex };
     }
     
-    const currentLoc = path[currentPosIndex] || mapData.start;
-    const emergencyPath = calculatePath(currentLoc, targetPos, [...(mapData.obstacles || []), ...userBlockers], mapData);
-    
-    if (emergencyPath.length > 0) {
-      setPath(emergencyPath);
-      setActivePathColor('#00ffff');
-      setCurrentPosIndex(0);
-      setRobotState('emergency_response');
-      setIsPlaying(true);
-    } else {
-      addExplanation(`Emergency route calculation failed. Unable to reach target.`);
-      setIsPlaying(true);
+    const currentLoc = robotPosRef.current 
+      ? getGridPointFromVector3(robotPosRef.current, mapData.gridSize) 
+      : (path[currentPosIndex] || mapData.start);
+
+    // Candidates adjacent in case targetPos is inside building or on obstacle
+    const offsets = [
+      { dx: 0, dy: 0 },
+      { dx: 0, dy: 1 }, { dx: 0, dy: -1 }, { dx: 1, dy: 0 }, { dx: -1, dy: 0 },
+      { dx: 1, dy: 1 }, { dx: -1, dy: -1 }, { dx: 1, dy: -1 }, { dx: -1, dy: 1 },
+      { dx: 0, dy: 2 }, { dx: 0, dy: -2 }, { dx: 2, dy: 0 }, { dx: -2, dy: 0 }
+    ];
+
+    let bestPath: GridPoint[] = [];
+    for (const off of offsets) {
+      const candidate: GridPoint = { x: targetPos.x + off.dx, y: targetPos.y + off.dy, f: targetPos.f || 0 };
+      if (candidate.x >= 0 && candidate.x < mapData.gridSize.x && candidate.y >= 0 && candidate.y < mapData.gridSize.y) {
+        let p = calculatePath(currentLoc, candidate, [...(mapData.obstacles || []), ...userBlockers], mapData, true);
+        if (p.length === 0) {
+          p = calculatePath(currentLoc, candidate, [...(mapData.obstacles || []), ...userBlockers], mapData, false);
+        }
+        if (p.length > 0) {
+          bestPath = p;
+          break;
+        }
+      }
     }
-    isRecalculating.current = false;
+
+    if (bestPath.length === 0) {
+      bestPath = calculatePath(currentLoc, targetPos, [...(mapData.obstacles || []), ...userBlockers], mapData, false);
+    }
+    
+    if (bestPath.length > 0) {
+      activeFireTargetRef.current = targetPos;
+      setTimeout(() => {
+        setPath(bestPath);
+        setActivePathColor('#ef4444');
+        setCurrentPosIndex(0);
+        setRobotState('emergency_response');
+        setIsPlaying(true);
+        isRecalculating.current = false;
+        addExplanation(`🚨 EN ROUTE: Robot dispatched to marked emergency point at ${resolvedLabel}.`);
+      }, 200);
+    } else {
+      addExplanation(`Emergency route calculation failed. Unable to reach target at (${targetPos.x}, ${targetPos.y}).`);
+      setIsPlaying(true);
+      isRecalculating.current = false;
+    }
   };
 
   const handleEmergencyComplete = () => {
     if (!mapData) return;
-    addExplanation(`Arrived at emergency location. Providing assistance for 5 seconds...`);
+    const destName = markedEmergencyPoint?.label || (activeFireIncident?.location?.building_name) || 'emergency location';
+    addExplanation(`🚨 ARRIVED AT MARKED EMERGENCY POINT: Robot on-scene at ${destName}. Securing perimeter and providing assistance...`);
     setIsPlaying(false);
     
     if (emergencyTimeoutRef.current) {
@@ -2518,13 +2553,182 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
     
     emergencyTimeoutRef.current = setTimeout(() => {
       // Dispatch local request to trigger the global confirmation modal for completion
-      window.dispatchEvent(new CustomEvent('local_emergency_request', { detail: {x: 0, y: 0} }));
+      window.dispatchEvent(new CustomEvent('local_emergency_request', { detail: markedEmergencyPoint?.position || {x: 0, y: 0} }));
       emergencyTimeoutRef.current = null;
-    }, 5000);
+    }, 4000);
   };
+
+  const dispatchRobotToExtinguish = (fireCoord: GridPoint, locationLabel?: string) => {
+    if (!mapData) return;
+    if (!isOn) {
+      setIsOn(true);
+      if (onPowerChange) onPowerChange(true);
+    }
+    const robotP = robotPosRef.current ? getGridPointFromVector3(robotPosRef.current, mapData.gridSize) : mapData.start;
+
+    // Resolve location label for proper marking
+    const resolvedLabel = locationLabel || (mapData.rooms?.find(r => 
+      fireCoord.x >= r.start.x && fireCoord.x <= r.end.x &&
+      fireCoord.y >= r.start.y && fireCoord.y <= r.end.y
+    )?.name) || `Fire Emergency Sector (${fireCoord.x}, ${fireCoord.y})`;
+
+    // PROPERLY MARK THE EMERGENCY LOCATION POINT ON THE CAMPUS MAP!
+    setMarkedEmergencyPoint({
+      position: fireCoord,
+      label: resolvedLabel,
+      type: 'fire'
+    });
+
+    // Candidates directly adjacent to fire (standoff ~1.5 to 2.5 units)
+    const offsets = [
+      { dx: 1, dy: 0 }, { dx: -1, dy: 0 }, { dx: 0, dy: 1 }, { dx: 0, dy: -1 },
+      { dx: 2, dy: 0 }, { dx: -2, dy: 0 }, { dx: 0, dy: 2 }, { dx: 0, dy: -2 },
+      { dx: 1, dy: 1 }, { dx: -1, dy: -1 }, { dx: 1, dy: -1 }, { dx: -1, dy: 1 },
+      { dx: 0, dy: 0 }
+    ];
+
+    let targetPoint: GridPoint = { x: fireCoord.x, y: fireCoord.y, f: fireCoord.f || 0 };
+    let bestPath: GridPoint[] = [];
+
+    for (const off of offsets) {
+      const candidate: GridPoint = { x: fireCoord.x + off.dx, y: fireCoord.y + off.dy, f: fireCoord.f || 0 };
+      if (candidate.x >= 0 && candidate.x < mapData.gridSize.x && candidate.y >= 0 && candidate.y < mapData.gridSize.y) {
+        let p = calculatePath(robotP, candidate, [...(mapData.obstacles || []), ...userBlockers], mapData, true);
+        if (p.length === 0) {
+          p = calculatePath(robotP, candidate, [...(mapData.obstacles || []), ...userBlockers], mapData, false);
+        }
+        if (p.length > 0) {
+          bestPath = p;
+          targetPoint = candidate;
+          break;
+        }
+      }
+    }
+
+    if (bestPath.length === 0) {
+      bestPath = calculatePath(robotP, targetPoint, [...(mapData.obstacles || []), ...userBlockers], mapData, false);
+    }
+
+    if (bestPath.length > 0) {
+      setIsPlaying(false);
+      isRecalculating.current = true;
+      currentTaskIndexRef.current = 9999;
+      activeFireTargetRef.current = fireCoord;
+
+      if (robotState === 'mission' || robotState === 'patrol' || robotState === 'returning_home') {
+        originalMissionRef.current = { path: [...path], index: currentPosIndex };
+      }
+
+      setTimeout(() => {
+        setPath(bestPath);
+        setCurrentPosIndex(0);
+        setActivePathColor('#ef4444');
+        setRobotState('emergency_response');
+        setIsPlaying(true);
+        isRecalculating.current = false;
+        addExplanation(`🚨 CRITICAL FIRE EMERGENCY: Dispatched to marked point at ${resolvedLabel} (${fireCoord.x}, ${fireCoord.y}). Siren and Fire Extinguisher Unit active.`);
+      }, 200);
+    } else {
+      addExplanation(`⚠️ Road to fire at (${fireCoord.x}, ${fireCoord.y}) is blocked. Cannot establish clear path.`);
+    }
+  };
+
+  const handleDeployFireAt = (gridP: GridPoint) => {
+    const newHazard: FireHazardPoint = {
+      id: `fire_${Date.now()}`,
+      position: gridP,
+      type: 'fire_and_smoke',
+      intensity: 3,
+      active: true
+    };
+    const updated = [...fireHazards, newHazard];
+    setFireHazards(updated);
+    addExplanation(`🔥 Fire Hazard deployed at (${gridP.x}, ${gridP.y}). Continuous AI vision scan active.`);
+    if (onTogglePlaceFire) onTogglePlaceFire();
+    else setInternalIsPlacingFire(false);
+
+    if (onFireDetected && robotPosRef.current && mapData) {
+      const robotP = getGridPointFromVector3(robotPosRef.current, mapData.gridSize);
+      onFireDetected(newHazard, robotP);
+    }
+
+    // Immediately dispatch robot to the fire location to call extinguisher
+    dispatchRobotToExtinguish(gridP);
+  };
+
+  const handleRemoveFireHazard = (id: string) => {
+    setFireHazards(fireHazards.filter(h => h.id !== id));
+    addExplanation("Fire hazard extinguished and cleared.");
+  };
+
+  // Continuous autonomous patrol vision scanning for fire and smoke hazards
+  useEffect(() => {
+    if (fireHazards.length === 0) return;
+    if (!robotPosRef.current || !mapData) return;
+
+    const interval = setInterval(() => {
+      if (!robotPosRef.current || !mapData) return;
+      const robotP = getGridPointFromVector3(robotPosRef.current, mapData.gridSize);
+
+      for (const hazard of fireHazards) {
+        if (!hazard.active) continue;
+        const dx = robotP.x - hazard.position.x;
+        const dy = robotP.y - hazard.position.y;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+
+        // Within robot camera perception cone (~18 meters)
+        if (dist <= 18) {
+          if (!activeFireIncident || activeFireIncident.status === 'RESOLVED') {
+            addExplanation(`🚨 CRITICAL: Fire hazard detected by robot camera at (${hazard.position.x}, ${hazard.position.y})! Initiating emergency alert.`);
+
+            if (onFireDetected) {
+              onFireDetected(hazard, robotP);
+            }
+            dispatchRobotToExtinguish(hazard.position);
+            break;
+          }
+        }
+      }
+    }, 600);
+
+    return () => clearInterval(interval);
+  }, [fireHazards, activeFireIncident, mapData, userBlockers, onFireDetected]);
+
+  // Reactive listener to automatically dispatch to marked emergency point when activeFireIncident triggers
+  const lastHandledFireIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!activeFireIncident || activeFireIncident.status === 'RESOLVED') {
+      if (activeFireIncident?.status === 'RESOLVED') {
+        setMarkedEmergencyPoint(prev => prev?.type === 'fire' ? null : prev);
+      }
+      return;
+    }
+
+    if (activeFireIncident.status === 'ACTIVE_EMERGENCY' || activeFireIncident.status === 'ACKNOWLEDGED') {
+      const fireCoord = activeFireIncident.location?.coordinates as GridPoint | undefined;
+      if (fireCoord && lastHandledFireIdRef.current !== activeFireIncident.id) {
+        lastHandledFireIdRef.current = activeFireIncident.id;
+        const bldgName = activeFireIncident.location?.building_name || activeFireIncident.location?.display_location;
+        dispatchRobotToExtinguish(fireCoord, bldgName);
+      }
+    }
+  }, [activeFireIncident]);
+
+  // Reactive listener for remote emergency target events (e.g. mobile controller)
+  useEffect(() => {
+    const handleRemoteEmergencyTarget = (e: any) => {
+      const detail = e.detail;
+      if (detail && typeof detail.x === 'number' && typeof detail.y === 'number') {
+        handleEmergencyCall({ x: detail.x, y: detail.y, f: detail.f || 0 }, 'Mobile Emergency Target', 'target');
+      }
+    };
+    window.addEventListener('remote_emergency_target', handleRemoteEmergencyTarget);
+    return () => window.removeEventListener('remote_emergency_target', handleRemoteEmergencyTarget);
+  }, [mapData, userBlockers, isOn]);
 
   useEffect(() => {
     const handleRemoteApprove = () => {
+      setMarkedEmergencyPoint(null);
       if (!mapData) return;
       if (turnOffAfterEmergencyRef.current) {
          addExplanation("Emergency override complete. Returning to Robot Home to power off.");
@@ -2577,7 +2781,7 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
     }
 
     let checkCount = 0;
-    const maxChecks = 15; // Check every 800ms for up to ~12s
+    const maxChecks = 14; // Check every 500ms for up to 7s
 
     clearanceCheckRef.current = setInterval(() => {
       checkCount++;
@@ -2587,59 +2791,77 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
       }
 
       const orig = originalMissionRef.current;
-      const targetLoc = (orig && orig.path.length > 0)
+      const targetLoc = destinationTargetRef.current || (orig && orig.path.length > 0
         ? orig.path[orig.path.length - 1]
-        : (path.length > 0 ? path[path.length - 1] : mapData.start);
+        : (path.length > 0 ? path[path.length - 1] : mapData.start));
 
       const currentLoc = (path.length > 0 && currentPosIndex < path.length)
         ? path[currentPosIndex]
         : (robotPosRef.current ? getGridPointFromVector3(robotPosRef.current, mapData.gridSize) : mapData.start);
 
-      // Check current live dynamic obstacle positions
-      const dynamicPositions = dynamicObstaclesRef.current.map(o => o.pos);
+      // Check current live dynamic obstacle positions (focused on those in forward vicinity)
+      const dynamicPositions = dynamicObstaclesRef.current
+        .filter(o => o.currentPosVector && robotPosRef.current ? o.currentPosVector.distanceTo(robotPosRef.current) < 3.5 : true)
+        .map(o => o.pos);
       const currentObstacles = [...(mapData.obstacles || []), ...userBlockers, ...dynamicPositions];
 
-      // Try forward path to target
-      const forwardPath = calculatePath(currentLoc, targetLoc, currentObstacles, mapData, true);
+      // Try forward path directly to the original target destination (prefer roads, fallback to shoulder bypass)
+      let forwardPath = calculatePath(currentLoc, targetLoc, currentObstacles, mapData, true);
+      if (forwardPath.length === 0) {
+        forwardPath = calculatePath(currentLoc, targetLoc, currentObstacles, mapData, false);
+      }
 
       if (forwardPath.length > 0) {
         if (clearanceCheckRef.current) {
           clearInterval(clearanceCheckRef.current);
           clearanceCheckRef.current = null;
         }
-        addExplanation('Obstacle has moved! Road is now clear. Resuming mission forward.');
+        addExplanation('Clearance verified! Path to destination is clear. Resuming autonomous navigation forward.');
         setPath(forwardPath);
         setCurrentPosIndex(0);
         setRobotState(orig ? 'mission' : 'patrol');
         setIsPlaying(true);
-        originalMissionRef.current = null;
-        isRecalculating.current = false;
+        setTimeout(() => { isRecalculating.current = false; }, 800);
         return;
       }
 
+      if (checkCount % 4 === 0) {
+        addExplanation(`Dynamic obstacles in motion on route. Holding position safely and waiting for clearance (${Math.round(checkCount * 0.5)}s)...`);
+      }
+
       if (checkCount >= maxChecks) {
-        if (clearanceCheckRef.current) {
-          clearInterval(clearanceCheckRef.current);
-          clearanceCheckRef.current = null;
-        }
-        // Try detour if route remains obstructed
-        const detourPath = calculateLongPath(currentLoc, targetLoc, currentObstacles, mapData);
-        if (detourPath.length > 0) {
-          addExplanation('Obstacle still present. Taking wide perimeter detour to destination.');
-          setPath(detourPath);
+        // Nudge any adjacent dynamic obstacles away to break corridor jams
+        dynamicObstaclesRef.current.forEach(obs => {
+          if (obs.currentPosVector && robotPosRef.current) {
+            if (obs.currentPosVector.distanceTo(robotPosRef.current) < 2.5) {
+              obs.path.reverse();
+              obs.currentIndex = 0;
+            }
+          }
+        });
+        const unconstrainedPath = calculatePath(currentLoc, targetLoc, [...(mapData.obstacles || []), ...userBlockers], mapData, false);
+        if (unconstrainedPath.length > 0) {
+          if (clearanceCheckRef.current) {
+            clearInterval(clearanceCheckRef.current);
+            clearanceCheckRef.current = null;
+          }
+          addExplanation('Waited for obstacles to clear. Resuming route directly to destination.');
+          setPath(unconstrainedPath);
           setCurrentPosIndex(0);
           setRobotState(orig ? 'mission' : 'patrol');
           setIsPlaying(true);
-          originalMissionRef.current = null;
         } else {
-          addExplanation('Obstacle holding position. Continuing to monitor corridor safely...');
-          // Keep checking
-          setTimeout(() => waitForObstacleToClear(), 1500);
+          checkCount = 0;
+          addExplanation('Corridor still congested. Continuing safe wait for obstacle passage...');
         }
-        isRecalculating.current = false;
+        setTimeout(() => { isRecalculating.current = false; }, 800);
       }
-    }, 800);
+    }, 500);
   };
+
+  useEffect(() => {
+    waitForObstacleToClearRef.current = waitForObstacleToClear;
+  });
 
   const handleObstacleDetected = (obsPos: GridPoint) => {
     if (isRecalculating.current) return;
@@ -2654,78 +2876,58 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
       ? path[currentPosIndex]
       : (robotPosRef.current ? getGridPointFromVector3(robotPosRef.current, mapData.gridSize) : mapData.start);
     
+    // Always preserve and target the exact destination
     const orig = originalMissionRef.current;
-    const targetLoc = (orig && orig.path.length > 0)
+    const targetLoc = destinationTargetRef.current || (orig && orig.path.length > 0
       ? orig.path[orig.path.length - 1]
-      : (path.length > 0 ? path[path.length - 1] : mapData.start);
+      : (path.length > 0 ? path[path.length - 1] : mapData.start));
     
+    destinationTargetRef.current = targetLoc;
+
     // Save original mission if we are not already in temporary detour state
-    if (robotState !== 'evading_obstacle' && robotState !== 'charging' && robotState !== 'emergency_response') {
+    if (robotState !== 'charging' && robotState !== 'emergency_response') {
       originalMissionRef.current = { path: [...path], index: currentPosIndex };
     }
     
     // Gather all active dynamic obstacles
     const dynamicPositions = dynamicObstaclesRef.current.map(o => o.pos);
     const allObstacles = [...(mapData.obstacles || []), ...userBlockers, obsPos, ...dynamicPositions];
-    
-    let intermediateTarget = null;
-    for (let i = currentPosIndex; i < path.length - 1; i++) {
-      if (path[i].x === path[i+1].x && path[i].y === path[i+1].y && path[i].f === path[i+1].f) {
-        intermediateTarget = path[i];
-        break;
+
+    // Check if an obstacle is immediately ahead in close proximity (<1.0m)
+    let isCloseProximity = false;
+    if (robotPosRef.current) {
+      for (const obs of dynamicObstaclesRef.current) {
+        if (obs.currentPosVector && robotPosRef.current.distanceTo(obs.currentPosVector) < 1.05) {
+          isCloseProximity = true;
+          break;
+        }
       }
     }
     
-    let newPath: GridPoint[] = [];
-    if (intermediateTarget) {
-      const fPath = calculatePath(currentLoc, intermediateTarget, allObstacles, mapData, true);
-      const rPath = calculatePath(intermediateTarget, targetLoc, allObstacles, mapData, true);
-      if (fPath.length > 0 && rPath.length > 0) {
-        newPath = [...fPath, fPath[fPath.length - 1], ...rPath.slice(1)];
-      }
-    } else {
-      newPath = calculatePath(currentLoc, targetLoc, allObstacles, mapData, true);
-    }
-    
-    if (newPath.length === 0) {
-      if (intermediateTarget) {
-         const fPath = calculateLongPath(currentLoc, intermediateTarget, allObstacles, mapData);
-         const rPath = calculateLongPath(intermediateTarget, targetLoc, allObstacles, mapData);
-         if (fPath.length > 0 && rPath.length > 0) {
-           newPath = [...fPath, fPath[fPath.length - 1], ...rPath.slice(1)];
-         }
-      } else {
-         newPath = calculateLongPath(currentLoc, targetLoc, allObstacles, mapData);
+    // If in close proximity on single lane, back up 1-2 steps to yield space for the moving obstacle to pass
+    if (isCloseProximity) {
+      const reversePath = calculateReversePath(currentLoc, obsPos, path, currentPosIndex, allObstacles, mapData, 2);
+      if (reversePath.length > 1) {
+        addExplanation(`Obstacle in close proximity. Backing up to yield space and waiting for obstacle to pass...`);
+        setPath(reversePath);
+        setCurrentPosIndex(0);
+        setRobotState('reversing');
+        setIsPlaying(true);
+        setTimeout(() => {
+          isRecalculating.current = false;
+        }, 800);
+        return;
       }
     }
     
-    // 1. Intelligent bypass around obstacles if road network allows
-    if (newPath.length > 0) {
-      setPath(newPath);
-      setCurrentPosIndex(0);
-      setIsPlaying(true);
-      addExplanation(`Dynamic obstacle detected! Smart lane bypass calculated. Navigating around obstacle...`);
-      isRecalculating.current = false;
-      return;
-    }
-    
-    // 2. Obstacle not leaving the way: back up to yield space for obstacle to pass
-    const reversePath = calculateReversePath(currentLoc, obsPos, path, currentPosIndex, allObstacles, mapData, 2);
-    if (reversePath.length > 1) {
-      addExplanation(`Obstacle blocking single lane. Backing up to create space for obstacle to pass...`);
-      setPath(reversePath);
-      setCurrentPosIndex(0);
-      setRobotState('reversing');
-      setIsPlaying(true);
-      isRecalculating.current = false;
-      return;
-    }
-    
-    // 3. If cannot reverse back, hold position safely and wait for obstacle to clear
-    addExplanation(`Corridor blocked ahead. Holding position safely and waiting for obstacle to move...`);
+    // Default safe behavior: Hold position, wait for moving obstacle to pass, then continue to destination!
+    // NEVER divert to a different room or base!
+    addExplanation(`Obstacles detected ahead on route. Holding position safely and waiting for obstacles to clear...`);
     setIsPlaying(false);
     setRobotState('waiting_for_clearance');
-    isRecalculating.current = false;
+    setTimeout(() => {
+      isRecalculating.current = false;
+    }, 800);
     waitForObstacleToClear();
   };
 
@@ -2762,6 +2964,67 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
     if (robotState === 'charging') {
       handleChargeComplete();
     } else if (robotState === 'emergency_response') {
+      if (activeFireTargetRef.current || fireHazards.length > 0) {
+        const fireLoc = activeFireTargetRef.current || (fireHazards[0]?.position);
+        setIsPlaying(false);
+        setRobotState('extinguishing');
+        addExplanation(`🚒 ARRIVED AT FIRE SCENE! Calling Fire Extinguisher Unit & deploying extinguishing foam...`);
+
+        // Emergency service notification / call
+        try {
+          fetch('/api/fire/simulate', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              target_coords: fireLoc,
+              robot_coords: path[path.length - 1] || fireLoc,
+              hazard_type: 'fire_and_smoke',
+              confidence: 0.98
+            })
+          }).catch(() => {});
+        } catch (e) {}
+
+        // Extinguish fire with high-pressure foam for 3.5 seconds
+        setTimeout(() => {
+          if (fireLoc) {
+            setFireHazards(fireHazards.filter(h => Math.abs(h.position.x - fireLoc.x) > 3 || Math.abs(h.position.y - fireLoc.y) > 3));
+          } else {
+            setFireHazards([]);
+          }
+
+          if (activeFireIncident && onResolveIncident) {
+            onResolveIncident(activeFireIncident.id);
+          } else if (activeFireIncident) {
+            fetch('/api/fire/resolve', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ incident_id: activeFireIncident.id })
+            }).catch(() => {});
+          }
+
+          activeFireTargetRef.current = null;
+          setMarkedEmergencyPoint(null);
+          addExplanation(`✅ Fire hazard extinguished and secured! Extinguisher foam deployed successfully.`);
+
+          setTimeout(() => {
+            setRobotState('patrol');
+            addExplanation(`PATROL CLEAR: Robot Patrol Unit #1 resuming autonomous campus route.`);
+            if (mapData && mapData.tasks && mapData.tasks.length > 0) {
+              currentTaskIndexRef.current = 0;
+              const firstTask = mapData.tasks[0];
+              const curLoc = path.length > 0 ? path[path.length - 1] : mapData.start;
+              const resumePath = calculatePath(curLoc, firstTask.location, [...(mapData.obstacles || []), ...userBlockers], mapData);
+              if (resumePath.length > 0) {
+                setPath(resumePath);
+                setCurrentPosIndex(0);
+                setActivePathColor('#00ffff');
+                setIsPlaying(true);
+              }
+            }
+          }, 1200);
+        }, 3500);
+        return;
+      }
       handleEmergencyComplete();
     } else if (robotState === 'emergency_to_ctr') {
        if (emergencyLocationRef.current && mapData) {
@@ -2838,6 +3101,8 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
           const nextPath = calculatePath(currentLoc, nextTask.location, [...(mapData.obstacles || []), ...userBlockers], mapData);
           
           if (nextPath.length > 0) {
+            destinationTargetRef.current = nextTask.location;
+            originalMissionRef.current = { path: [...nextPath], index: 0 };
             setPath(nextPath);
             setCurrentPosIndex(0);
             setRobotState(prev => prev === 'mission' ? 'mission' : 'patrol');
@@ -2856,7 +3121,12 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
           addExplanation('Mission complete. Idle mode active, standing by.');
         } else {
           setRobotState('patrol');
-          addExplanation('Mission complete. Waiting 2.5s before returning to patrol mode.');
+          addExplanation('Mission complete. Resuming autonomous campus patrol in 2.5s...');
+          setTimeout(() => {
+            if (!isIdleMode && isOn) {
+              setIsPlaying(false); // Triggers auto-patrol effect cleanly
+            }
+          }, 2500);
         }
       }
     }
@@ -2876,6 +3146,7 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
       return;
     }
     if (!mapData) return;
+    destinationTargetRef.current = targetPos;
     currentTaskIndexRef.current = mapData.tasks ? mapData.tasks.length : 0;
     setIsPlaying(false);
     isRecalculating.current = true;
@@ -2891,6 +3162,7 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
          const forwardPath = calculatePath(currentLoc, targetPos, [...(mapData.obstacles || []), ...userBlockers], mapData);
          
          if (forwardPath.length > 0) {
+           originalMissionRef.current = { path: [...forwardPath], index: 0 };
            setPath(forwardPath);
            setCurrentPosIndex(0);
            setRobotState('emergency_to_ctr');
@@ -2907,6 +3179,7 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
          const shortPath = calculatePath(currentLoc, targetPos, [...(mapData.obstacles || []), ...userBlockers], mapData);
          
          if (shortPath.length > 0) {
+           originalMissionRef.current = { path: [...shortPath], index: 0 };
            setPath(shortPath);
            setCurrentPosIndex(0);
            setRobotState('mission');
@@ -2956,52 +3229,148 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
       </div>
 
       <div className="absolute md:relative inset-0 opacity-0 md:opacity-100 pointer-events-none md:pointer-events-auto z-0 flex-1 w-full h-full">
-        {/* Top Left Options */}
-        <div className="absolute top-4 left-4 z-10 hidden md:flex flex-col gap-2">
-          {/* Main Options Row */}
-          <div className="flex gap-2 items-center flex-wrap">
-            <button
-              onClick={() => setIsMapView(!isMapView)}
-              className="px-3 py-1.5 rounded-md text-xs font-bold bg-brand text-white shadow-lg hover:bg-blue-600 transition-colors"
-            >
-              Toggle View ({isMapView ? '2D' : '3D'})
-            </button>
+        {/* Top Command Ribbon — Aerospace-grade Glassmorphic HUD */}
+        <div className="absolute top-4 left-4 z-20 hidden md:flex flex-col gap-2">
+          <div className="flex items-center gap-1.5 p-1.5 bg-slate-950/85 backdrop-blur-xl border border-white/10 rounded-2xl shadow-2xl select-none">
+            {/* View Mode Segmented Switch */}
+            <div className="flex items-center bg-white/5 p-0.5 rounded-xl border border-white/10">
+              <button
+                onClick={() => setIsMapView(false)}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                  !isMapView
+                    ? 'bg-cyan-500 text-slate-950 shadow-[0_0_12px_rgba(6,182,212,0.5)]'
+                    : 'text-gray-400 hover:text-white'
+                }`}
+                title="3D Perspective View"
+              >
+                <Compass className="w-3.5 h-3.5" />
+                <span>3D View</span>
+              </button>
+              <button
+                onClick={() => setIsMapView(true)}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                  isMapView
+                    ? 'bg-cyan-500 text-slate-950 shadow-[0_0_12px_rgba(6,182,212,0.5)]'
+                    : 'text-gray-400 hover:text-white'
+                }`}
+                title="2D Top-Down Tactical Map"
+              >
+                <Layers className="w-3.5 h-3.5" />
+                <span>2D Map</span>
+              </button>
+            </div>
 
-            <button
-              onClick={() => setIsFollowing(!isFollowing)}
-              className={`px-3 py-1.5 rounded-md text-xs font-bold shadow-lg transition-colors ${isFollowing ? 'bg-green-600 text-white' : 'bg-surface text-text border border-border'}`}
-            >
-              Follow Robot
-            </button>
+            <div className="h-5 w-px bg-white/10 mx-0.5" />
+
+            {/* Camera Perspective Mode Segmented Selector */}
+            <div className="flex items-center bg-white/5 p-0.5 rounded-xl border border-white/10 gap-0.5">
+              <button
+                onClick={() => setCameraMode('orbit')}
+                className={`flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                  cameraMode === 'orbit'
+                    ? 'bg-white/20 text-white shadow-sm'
+                    : 'text-gray-400 hover:text-white hover:bg-white/5'
+                }`}
+                title="Free Orbit Camera (Rotate & explore campus freely)"
+              >
+                <span>Orbit</span>
+              </button>
+              <button
+                onClick={() => setCameraMode('follow')}
+                className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                  cameraMode === 'follow'
+                    ? 'bg-emerald-500/25 text-emerald-300 border border-emerald-500/40 shadow-[0_0_12px_rgba(16,185,129,0.3)]'
+                    : 'text-gray-400 hover:text-white hover:bg-white/5'
+                }`}
+                title="Follow Unit (3rd Person Chase Drone)"
+              >
+                <Navigation className={`w-3.5 h-3.5 ${cameraMode === 'follow' ? 'text-emerald-400 animate-pulse' : 'text-gray-400'}`} />
+                <span>Chase</span>
+              </button>
+              <button
+                onClick={() => setCameraMode('fpv')}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all border ${
+                  cameraMode === 'fpv'
+                    ? 'bg-cyan-500/30 text-cyan-200 border-cyan-400/60 shadow-[0_0_18px_rgba(6,182,212,0.4)]'
+                    : 'bg-transparent text-cyan-400 border-transparent hover:text-cyan-200 hover:bg-cyan-500/10'
+                }`}
+                title="Robot Eyes FPV (True 1st Person - What the Robot Sees at 60 FPS!)"
+              >
+                <Eye className={`w-3.5 h-3.5 ${cameraMode === 'fpv' ? 'text-cyan-300 animate-pulse' : 'text-cyan-400'}`} />
+                <span>Robot Eyes</span>
+                {cameraMode === 'fpv' && <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-ping ml-0.5" />}
+              </button>
+            </div>
+
+            {/* Recentre Camera */}
             <button
               onClick={() => setTriggerReset(true)}
-              className="px-3 py-1.5 rounded-md text-xs font-bold bg-surface text-text border border-border shadow-lg transition-colors hover:bg-gray-700 hover:text-white"
+              className="p-2 rounded-xl text-gray-300 hover:text-white bg-white/5 border border-white/10 hover:bg-white/10 transition-all"
+              title="Recentre Camera View"
             >
-              Recentre View
-            </button>
-            <button
-              onClick={() => setIsCTROpen(!isCTROpen)}
-              className={`px-3 py-1.5 rounded-md text-xs font-bold shadow-lg transition-colors ${isCTROpen ? 'bg-brand text-white' : 'bg-surface text-text border border-border hover:bg-gray-700 hover:text-white'}`}
-            >
-              CTR (Connect to Robot)
+              <RotateCcw className="w-3.5 h-3.5" />
             </button>
 
-            {/* Quick Obstacle Counter */}
-            <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-mono bg-surface/90 text-text border border-border shadow-lg backdrop-blur-md">
-              <Sliders className="w-3.5 h-3.5 text-cyan-400" />
-              <span className="text-gray-400 text-[11px]">Obstacles:</span>
-              <span className="text-cyan-400 font-bold">{dynamicObstacleCount}</span>
-              <div className="flex items-center gap-0.5 ml-1">
+            {/* Day / Night Vision Toggle */}
+            <button
+              onClick={() => setIsNight(!isNight)}
+              className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl text-xs font-bold transition-all border ${
+                isNight
+                  ? 'bg-indigo-500/20 text-indigo-300 border-indigo-500/40 shadow-[0_0_12px_rgba(99,102,241,0.25)]'
+                  : 'bg-amber-500/15 text-amber-300 border-amber-500/30 shadow-[0_0_12px_rgba(245,158,11,0.2)]'
+              }`}
+              title={isNight ? 'Switch to Daylight Campus' : 'Switch to Nocturnal Night-Vision'}
+            >
+              {isNight ? <Moon className="w-3.5 h-3.5 text-indigo-300" /> : <Sun className="w-3.5 h-3.5 text-amber-300" />}
+              <span className="text-[11px]">{isNight ? 'Night' : 'Day'}</span>
+            </button>
+
+            {/* Robot Vision FPV PIP Button */}
+            <button
+              onClick={() => setShowRobotVisionPIP(!showRobotVisionPIP)}
+              className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl text-xs font-bold transition-all border ${
+                showRobotVisionPIP
+                  ? 'bg-cyan-500/25 text-cyan-300 border-cyan-500/50 shadow-[0_0_14px_rgba(6,182,212,0.3)]'
+                  : 'bg-white/5 text-gray-300 border-white/10 hover:bg-white/10 hover:text-white'
+              }`}
+              title="Toggle Robot Vision Picture-in-Picture Feed"
+            >
+              <Eye className={`w-3.5 h-3.5 ${showRobotVisionPIP ? 'text-cyan-400 animate-pulse' : 'text-gray-400'}`} />
+              <span className="text-[11px]">Vision PIP</span>
+              {showRobotVisionPIP && <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-ping ml-0.5" />}
+            </button>
+
+            {/* 3D Campus Labels Toggle */}
+            <button
+              onClick={() => setShowBuildingLabels(!showBuildingLabels)}
+              className={`p-2 rounded-xl text-xs font-bold transition-all border ${
+                showBuildingLabels
+                  ? 'bg-cyan-500/15 text-cyan-300 border-cyan-500/30'
+                  : 'bg-white/5 text-gray-400 border-white/10 hover:text-white'
+              }`}
+              title={showBuildingLabels ? 'Hide 3D Building Labels' : 'Show 3D Building Labels'}
+            >
+              {showBuildingLabels ? <Eye className="w-3.5 h-3.5" /> : <EyeOff className="w-3.5 h-3.5" />}
+            </button>
+
+            <div className="h-5 w-px bg-white/10 mx-0.5" />
+
+            {/* Obstacle Stepper Pill */}
+            <div className="flex items-center gap-2 px-2.5 py-1 rounded-xl text-xs font-mono bg-white/5 text-gray-300 border border-white/10">
+              <Car className="w-3.5 h-3.5 text-cyan-400" />
+              <span className="text-[11px] text-gray-400 font-sans">Obstacles:</span>
+              <span className="text-cyan-300 font-bold font-mono">{dynamicObstacleCount}</span>
+              <div className="flex items-center gap-0.5">
                 <button
                   onClick={() => handleUpdateObstacleCount(dynamicObstacleCount - 1)}
-                  className="w-5 h-5 flex items-center justify-center bg-white/10 hover:bg-white/20 rounded text-white font-bold transition-colors cursor-pointer"
+                  className="w-4 h-4 flex items-center justify-center bg-white/10 hover:bg-white/20 rounded text-white text-xs font-bold transition-colors cursor-pointer"
                   title="Decrease Obstacles"
                 >
                   -
                 </button>
                 <button
                   onClick={() => handleUpdateObstacleCount(dynamicObstacleCount + 1)}
-                  className="w-5 h-5 flex items-center justify-center bg-white/10 hover:bg-white/20 rounded text-white font-bold transition-colors cursor-pointer"
+                  className="w-4 h-4 flex items-center justify-center bg-white/10 hover:bg-white/20 rounded text-white text-xs font-bold transition-colors cursor-pointer"
                   title="Increase Obstacles"
                 >
                   +
@@ -3009,46 +3378,122 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
               </div>
             </div>
 
-            <button
-              onClick={() => setIsFullscreen(!isFullscreen)}
-              className="p-1.5 rounded-md bg-white/10 text-white shadow-lg backdrop-blur-md hover:bg-white/20 transition-colors border border-white/10 flex items-center justify-center"
-              title={isFullscreen ? "Exit Fullscreen" : "Fullscreen"}
-            >
-              {isFullscreen ? <Minimize className="w-4 h-4" /> : <Maximize className="w-4 h-4" />}
-            </button>
-          </div>
-          
-          {/* Reasoning Log Option */}
-          <div className="relative self-start">
-            <button
-              onClick={() => setShowReasoningLog(!showReasoningLog)}
-              className={`px-3 py-1.5 rounded-md text-xs font-bold shadow-lg transition-colors flex items-center gap-1.5 ${showReasoningLog ? 'bg-cyan-600 text-white' : 'bg-surface text-text border border-border hover:bg-gray-700'}`}
-            >
-              <ShieldAlert className={`w-3.5 h-3.5 ${showReasoningLog ? 'text-white' : 'text-cyan-500'}`} /> 
-              Reasoning Log
-            </button>
-            
-            {/* Reasoning Log Panel overlay */}
-            {showReasoningLog && (
-              <div className="absolute top-full left-0 mt-2 w-64 bg-surface/95 backdrop-blur-md border border-border rounded-lg shadow-xl p-3 z-50">
-                <div className="space-y-2 max-h-60 overflow-y-auto">
-                  {aiExplanations.map((exp, i) => (
-                    <div key={i} className={`text-[10px] leading-relaxed p-2.5 rounded-md border ${i === 0 ? 'bg-cyan-500/10 border-cyan-500/20 text-cyan-100' : 'bg-white/5 border-white/10 text-gray-400'}`}>
-                      {exp}
-                    </div>
-                  ))}
-                  {aiExplanations.length === 0 && (
-                    <div className="text-[10px] text-gray-500 text-center italic py-2">No AI activity recorded.</div>
-                  )}
-                </div>
+            {/* Live Robot Telemetry Pill */}
+            <div className="hidden lg:flex items-center gap-2 px-2.5 py-1 rounded-xl text-[11px] font-mono bg-white/5 border border-white/10 text-gray-400">
+              <span className="text-gray-500">POS:</span>
+              <span className="text-cyan-300 font-bold">
+                {robotPosRef.current ? `${Math.round(robotPosRef.current.x)}, ${Math.round(robotPosRef.current.z)}` : '0, 0'}
+              </span>
+              <span className={`px-1.5 py-0.2 rounded text-[9px] font-bold uppercase tracking-wider ${
+                robotState === 'emergency_response' || robotState === 'extinguishing'
+                  ? 'bg-red-500/20 text-red-400'
+                  : 'bg-emerald-500/20 text-emerald-400'
+              }`}>
+                {robotState.replace('_', ' ')}
+              </span>
+            </div>
+
+            {/* Active Marked Emergency Location Point Pill */}
+            {(markedEmergencyPoint || (activeFireIncident && activeFireIncident.status !== 'RESOLVED' && activeFireIncident.location?.coordinates)) && (
+              <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-xl text-[11px] font-mono bg-red-500/20 border border-red-500/50 text-red-300 shadow-[0_0_15px_rgba(239,68,68,0.3)] animate-pulse">
+                <span className="w-2 h-2 rounded-full bg-red-400 animate-ping shrink-0" />
+                <span className="font-bold uppercase tracking-wider text-[10px] hidden sm:inline">
+                  TARGET:
+                </span>
+                <span className="font-bold text-white max-w-[120px] truncate">
+                  {markedEmergencyPoint?.label || activeFireIncident?.location?.building_name || 'Emergency Point'}
+                </span>
+                <span className="text-cyan-300 font-bold text-[10px]">
+                  ({(markedEmergencyPoint?.position || activeFireIncident?.location?.coordinates)?.x}, {(markedEmergencyPoint?.position || activeFireIncident?.location?.coordinates)?.y})
+                </span>
               </div>
             )}
+
+            <div className="h-5 w-px bg-white/10 mx-0.5" />
+
+            {/* CTR Terminal Trigger */}
+            <button
+              onClick={() => setIsCTROpen(!isCTROpen)}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-mono font-bold transition-all border ${
+                isCTROpen
+                  ? 'bg-cyan-500/20 text-cyan-300 border-cyan-500/60 shadow-[0_0_15px_rgba(6,182,212,0.3)]'
+                  : 'bg-white/5 text-gray-300 border-white/10 hover:bg-white/10 hover:text-white'
+              }`}
+              title="Autonomous Robot Terminal Console"
+            >
+              <Terminal className="w-3.5 h-3.5 text-cyan-400" />
+              <span>CTR Console</span>
+            </button>
+
+            {/* AI Reasoning Log Dropdown Trigger */}
+            <div className="relative">
+              <button
+                onClick={() => setShowReasoningLog(!showReasoningLog)}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all border ${
+                  showReasoningLog
+                    ? 'bg-cyan-600/30 text-cyan-300 border-cyan-500/50 shadow-[0_0_12px_rgba(8,145,178,0.3)]'
+                    : 'bg-white/5 text-gray-300 border-white/10 hover:bg-white/10 hover:text-white'
+                }`}
+                title="AI Reasoning Log"
+              >
+                <ShieldAlert className={`w-3.5 h-3.5 ${showReasoningLog ? 'text-cyan-300' : 'text-cyan-400'}`} />
+                <span>Reasoning</span>
+                {aiExplanations.length > 0 && (
+                  <span className="w-2 h-2 rounded-full bg-cyan-400 animate-pulse" />
+                )}
+              </button>
+
+              {/* Reasoning Log Popover */}
+              {showReasoningLog && (
+                <div className="absolute top-full left-0 mt-2 w-72 bg-slate-950/95 backdrop-blur-xl border border-white/15 rounded-2xl shadow-2xl p-3.5 z-50 animate-in fade-in slide-in-from-top-2 duration-200">
+                  <div className="flex items-center justify-between pb-2 mb-2 border-b border-white/10">
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-cyan-400 flex items-center gap-1.5">
+                      <ShieldAlert className="w-3.5 h-3.5 text-cyan-400" />
+                      AI Decision Matrix
+                    </span>
+                    <span className="text-[9px] font-mono text-gray-400">{aiExplanations.length} records</span>
+                  </div>
+                  <div className="space-y-2 max-h-64 overflow-y-auto custom-scrollbar pr-1">
+                    {aiExplanations.map((exp, i) => (
+                      <div
+                        key={i}
+                        className={`text-[11px] leading-relaxed p-2.5 rounded-xl border transition-all ${
+                          i === 0
+                            ? 'bg-cyan-500/10 border-cyan-500/30 text-cyan-100 shadow-[0_0_10px_rgba(6,182,212,0.1)]'
+                            : 'bg-white/5 border-white/5 text-gray-400'
+                        }`}
+                      >
+                        {exp}
+                      </div>
+                    ))}
+                    {aiExplanations.length === 0 && (
+                      <div className="text-xs text-gray-500 text-center italic py-4">No AI events recorded yet.</div>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Fullscreen Button */}
+            <button
+              onClick={() => setIsFullscreen(!isFullscreen)}
+              className="p-2 rounded-xl text-gray-300 hover:text-white bg-white/5 border border-white/10 hover:bg-white/10 transition-all"
+              title={isFullscreen ? 'Exit Fullscreen' : 'Fullscreen'}
+            >
+              {isFullscreen ? <Minimize className="w-3.5 h-3.5" /> : <Maximize className="w-3.5 h-3.5" />}
+            </button>
           </div>
         </div>
         {isPlacingBlocker && (
           <div className="absolute top-16 left-1/2 -translate-x-1/2 z-30 bg-orange-950/90 border border-orange-500/60 text-orange-200 px-4 py-2 rounded-full shadow-2xl backdrop-blur-md flex items-center gap-2.5 text-xs font-medium pointer-events-none select-none">
             <Construction className="w-4 h-4 text-orange-400 shrink-0" />
             <span><strong className="text-white">Left-Click:</strong> Place Blocker &nbsp;•&nbsp; <strong className="text-white">Right-Click:</strong> Remove Blocker</span>
+          </div>
+        )}
+        {isPlacingFire && (
+          <div className="absolute top-16 left-1/2 -translate-x-1/2 z-30 bg-red-950/90 border border-red-500/60 text-red-200 px-4 py-2 rounded-full shadow-2xl backdrop-blur-md flex items-center gap-2.5 text-xs font-medium pointer-events-none select-none animate-pulse">
+            <Flame className="w-4 h-4 text-orange-400 shrink-0" />
+            <span><strong className="text-white">Left-Click Map:</strong> Deploy Simulated Fire Hazard to Test AI Vision Detection</span>
           </div>
         )}
         <Canvas shadows gl={{ antialias: true }} dpr={[1, 2]} onContextMenu={(e) => e.preventDefault()}>
@@ -3080,6 +3525,7 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
           {isNight && <pointLight position={[-20, 25, -15]} intensity={1.2} color="#bfdbfe" />}
           {!isNight && <pointLight position={[0, 15, 0]} intensity={0.8} color="#60a5fa" />}
           <CameraController 
+            cameraMode={cameraMode}
             isFollowing={isFollowing} 
             robotPosRef={robotPosRef} 
             robotRotRef={robotRotRef} 
@@ -3089,24 +3535,43 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
             gridSize={gridSize}
             isMapView={isMapView}
           />
+          <RobotVisionBroadcaster
+            robotPosRef={robotPosRef}
+            robotRotRef={robotRotRef}
+            speed={isPlaying ? (speedLimit / 50) * 2.5 : 0}
+            battery={battery}
+            robotState={robotState}
+            fireHazards={fireHazards}
+            dynamicObstaclesRef={dynamicObstaclesRef}
+            userBlockers={userBlockers}
+            isNight={isNight}
+            gridSize={gridSize}
+            getGridPositionFn={getGridPosition}
+          />
           <OrbitControls
             ref={controlsRef}
-            enabled={!isFollowing}
+            enabled={cameraMode === 'orbit'}
             enableDamping
             enablePan={false}
-            dampingFactor={0.08}
+            dampingFactor={0.05}
             target={[0, 0, 0]}
             maxPolarAngle={Math.PI / 2.1}
-            minDistance={10}
+            minDistance={8}
             maxDistance={gridSize.y * 1.5}
           />
           
-          <EnvironmentMap 
-            mapData={mapData}
+          {/* Master Procedural Campus Ground, Asphalt Roadways, Sidewalks & Streetlights */}
+          <CampusRoadsAndGround 
+            gridSize={gridSize}
+            roads={mapData.roads || []}
             isNight={isNight}
-            isTargeting={isEmergencyTargeting || isPlacingBlocker || isPlacingCrowd} 
+            isTargeting={isEmergencyTargeting || isPlacingBlocker || isPlacingCrowd || isPlacingFire} 
             onMapClick={(p) => {
               const gridP = getGridPointFromVector3(p, gridSize);
+              if (isPlacingFire) {
+                handleDeployFireAt(gridP);
+                return;
+              }
               if (isPlacingCrowd) {
                 setCrowds(prev => [...prev, gridP]);
                 handleCrowdEmergency(gridP);
@@ -3135,7 +3600,7 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
               }
               setIsEmergencyTargeting(false);
               document.body.style.cursor = 'auto';
-              handleEmergencyCall(gridP);
+              handleEmergencyCall(gridP, `Target Emergency (${gridP.x}, ${gridP.y})`, 'target');
             }} 
             onMapRightClick={(p) => {
               const gridP = getGridPointFromVector3(p, gridSize);
@@ -3145,24 +3610,50 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
               }
             }}
           />
+
+          {/* High-Fidelity Procedural Campus Architecture */}
           {rooms?.map((room: Room) => {
             const width = (room.end.x - room.start.x + 1) * 0.75;
             const depth = (room.end.y - room.start.y + 1) * 0.75;
-            const height = 3;
+            const type = room.type || '';
+            const nameLow = room.name.toLowerCase();
+
+            // Accurate architectural scaling tailored to faculty typology
+            let height = 5.2;
+            if (type === 'admin') height = 7.5;
+            else if (type === 'library') height = 6.2;
+            else if (type === 'auditorium') height = 6.8;
+            else if (type === 'hostel') height = 6.5;
+            else if (nameLow.includes('computer') || nameLow.includes('innovation')) height = 5.8;
+            else if (type === 'sports') height = nameLow.includes('stadium') ? 6.5 : 0.4;
+            else if (type === 'park') height = 0.4;
+            else if (type === 'food') height = 3.8;
+            else if (type === 'medical') height = 4.8;
+            else if (type === 'security') height = 2.8;
+            else if (type === 'utility') height = 4.2;
+
             const x = (room.start.x + room.end.x) / 2 - gridSize.x / 2;
             const z = (room.start.y + room.end.y) / 2 - gridSize.y / 2;
+            const isSelected = selectedRoom?.id === room.id;
+
             return (
-              <group key={room.id} position={[x, height / 2, z]} onClick={(e) => { e.stopPropagation(); setSelectedRoom(room); }}>
+              <group 
+                key={room.id} 
+                position={[x, 0, z]} 
+                onClick={(e) => { e.stopPropagation(); setSelectedRoom(room); }}
+              >
                 <BuildingModel room={room} width={width} height={height} depth={depth} />
-                <Html position={[0, height / 2 + 1.5, 0]} center style={{ pointerEvents: 'none' }}>
-                  <div className="text-[10px] font-bold text-white bg-black/80 px-2 py-1 rounded shadow-lg whitespace-nowrap">
-                    {room.name}
-                  </div>
-                </Html>
+                {showBuildingLabels && (
+                  <Building3DLabel 
+                    room={room} 
+                    height={height} 
+                    isSelected={isSelected} 
+                    onClick={() => setSelectedRoom(room)} 
+                  />
+                )}
               </group>
             );
           })}
-          <RoadsRender roads={mapData.roads || []} gridSize={gridSize} />
           <BlockersRender
             blockers={userBlockers}
             gridSize={gridSize}
@@ -3171,6 +3662,35 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
             isPlacingBlocker={isPlacingBlocker}
           />
           <CrowdsRender crowds={crowds} gridSize={gridSize} />
+          {/* 3D Animated Simulated Fire Hazards */}
+          {fireHazards.map((hazard) => (
+            <FireSimulationNode
+              key={hazard.id}
+              position={hazard.position}
+              gridSize={gridSize}
+              intensity={hazard.intensity}
+              onRemove={() => handleRemoveFireHazard(hazard.id)}
+            />
+          ))}
+
+          {/* Properly Marked 3D/2D Emergency Location Point */}
+          {(markedEmergencyPoint || (activeFireIncident && activeFireIncident.status !== 'RESOLVED' && activeFireIncident.location?.coordinates)) && (
+            <EmergencyLocationMarker
+              position={markedEmergencyPoint ? markedEmergencyPoint.position : (activeFireIncident!.location.coordinates as GridPoint)}
+              gridSize={gridSize}
+              label={markedEmergencyPoint ? markedEmergencyPoint.label : (activeFireIncident!.location.building_name || activeFireIncident!.location.display_location)}
+              type={markedEmergencyPoint ? markedEmergencyPoint.type : 'fire'}
+              isMapView={isMapView}
+              robotPosRef={robotPosRef}
+              onClear={() => {
+                setMarkedEmergencyPoint(null);
+                if (activeFireIncident && onResolveIncident) {
+                  onResolveIncident(activeFireIncident.id);
+                }
+              }}
+            />
+          )}
+
           <PoliceVehicle policeState={policeState} policeStateRef={policeStateRef} gridSize={gridSize} isMapView={isMapView} onReachDestination={handlePoliceReachDestination} />
 
           {/* Starting Gate */}
@@ -3192,6 +3712,7 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
               robotPosRef={robotPosRef}
               allObstaclesRef={dynamicObstaclesRef}
               robotStateRef={robotStateRef}
+              mapData={mapData}
             />
           ))}
 
@@ -3209,29 +3730,176 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
               onObstacleDetected={handleObstacleDetected}
               robotPosRef={robotPosRef}
               robotRotRef={robotRotRef}
-              isEmergency={robotState === 'emergency_response' || robotState === 'emergency_to_ctr' || robotState === 'ctr_to_emergency'}
+              isEmergency={robotState === 'emergency_response' || robotState === 'emergency_to_ctr' || robotState === 'ctr_to_emergency' || Boolean(activeFireIncident && activeFireIncident.status === 'ACTIVE_EMERGENCY')}
               robotState={robotState}
             />
           )}
         </Canvas>
+
+        {/* Full-Screen Robot Eye FPV Cybernetic HUD (Native 60 FPS What The Robot Sees) */}
+        {cameraMode === 'fpv' && (
+          <div className="absolute inset-0 pointer-events-none z-[40] flex flex-col justify-between p-6 select-none animate-in fade-in duration-300">
+            {/* Top Tactical Bar */}
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2 pointer-events-auto">
+                <div className="px-3.5 py-1.5 rounded-xl bg-black/85 border border-cyan-500/50 backdrop-blur-md flex items-center gap-2 shadow-[0_0_20px_rgba(6,182,212,0.3)]">
+                  <span className="w-2.5 h-2.5 rounded-full bg-cyan-400 animate-ping" />
+                  <span className="font-mono font-black text-xs text-white tracking-widest">ROBOT EYES // FPV OPTICAL FEED</span>
+                  <span className="text-[10px] font-mono text-cyan-300 bg-cyan-500/20 px-2 py-0.5 rounded border border-cyan-500/40 font-bold">
+                    60 FPS DIRECT
+                  </span>
+                </div>
+
+                <button
+                  onClick={() => {
+                    window.dispatchEvent(new CustomEvent('remote_toggle_headlight'));
+                  }}
+                  className="px-3 py-1.5 rounded-xl bg-black/80 hover:bg-slate-900 border border-white/20 text-cyan-300 text-xs font-mono font-bold flex items-center gap-1.5 transition-all shadow-lg active:scale-95"
+                  title="Toggle Robot Headlights"
+                >
+                  <Sun className="w-3.5 h-3.5 text-amber-400" />
+                  <span>Headlights</span>
+                </button>
+              </div>
+
+              {/* Exit FPV / Return to Free Camera */}
+              <div className="pointer-events-auto flex items-center gap-2">
+                <button
+                  onClick={() => setCameraMode('follow')}
+                  className="px-3 py-1.5 rounded-xl bg-black/80 hover:bg-slate-900 border border-emerald-500/40 text-emerald-300 text-xs font-mono font-bold transition-all shadow-lg flex items-center gap-1.5"
+                >
+                  <Navigation className="w-3.5 h-3.5" />
+                  <span>Chase Cam</span>
+                </button>
+                <button
+                  onClick={() => setCameraMode('orbit')}
+                  className="px-3.5 py-1.5 rounded-xl bg-cyan-500 hover:bg-cyan-400 text-black text-xs font-mono font-black tracking-wider transition-all shadow-[0_0_20px_rgba(6,182,212,0.5)] active:scale-95 flex items-center gap-1.5"
+                >
+                  <span>EXIT FPV (FREE VIEW)</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Center Cybernetic Optical Reticle */}
+            <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+              <div className="relative w-48 h-48 flex items-center justify-center opacity-80">
+                <Crosshair className="w-28 h-28 text-cyan-400/50 stroke-[1.2]" />
+                <div className="absolute w-20 h-[1px] bg-cyan-400/30 -top-8" />
+                <div className="absolute w-28 h-[1px] bg-cyan-400/30 -top-14" />
+                <div className="absolute w-20 h-[1px] bg-cyan-400/30 -bottom-8" />
+                <div className="absolute w-28 h-[1px] bg-cyan-400/30 -bottom-14" />
+                <div className="w-1.5 h-1.5 rounded-full bg-cyan-300 shadow-[0_0_8px_#22d3ee]" />
+                {/* Lateral brackets */}
+                <div className="absolute -left-12 top-1/2 -translate-y-1/2 text-[9px] font-mono text-cyan-400/60 font-bold">
+                  [-10°]
+                </div>
+                <div className="absolute -right-12 top-1/2 -translate-y-1/2 text-[9px] font-mono text-cyan-400/60 font-bold">
+                  [+10°]
+                </div>
+              </div>
+            </div>
+
+            {/* Bottom Perception Telemetry Bar */}
+            <div className="flex items-center justify-between">
+              <div className="bg-black/85 border border-cyan-500/40 rounded-xl px-4 py-2 backdrop-blur-md flex items-center gap-4 text-xs font-mono shadow-[0_0_25px_rgba(6,182,212,0.2)]">
+                <div className="flex items-center gap-1.5 text-cyan-300">
+                  <Compass className="w-4 h-4 text-cyan-400" />
+                  <span>
+                    HEADING: {robotRotRef.current !== undefined ? Math.round(((-robotRotRef.current * 180 / Math.PI) % 360 + 360) % 360) : 0}°
+                  </span>
+                </div>
+                <div className="w-px h-4 bg-white/10" />
+                <div className="flex items-center gap-1.5 text-yellow-300">
+                  <Gauge className="w-4 h-4 text-yellow-400" />
+                  <span>SPEED: {isPlaying ? ((speedLimit / 50) * 2.5).toFixed(1) : '0.0'} m/s</span>
+                </div>
+                <div className="w-px h-4 bg-white/10" />
+                <div className="flex items-center gap-1.5 text-emerald-400">
+                  <Activity className="w-4 h-4 text-emerald-400" />
+                  <span>BATTERY: {battery}%</span>
+                </div>
+                <div className="w-px h-4 bg-white/10" />
+                <span className="text-gray-300 uppercase font-bold text-[11px] px-2 py-0.5 rounded bg-white/10">
+                  STATE: {robotState}
+                </span>
+              </div>
+
+              <div className="bg-black/80 border border-white/10 rounded-xl px-3 py-2 backdrop-blur-md text-xs font-mono text-gray-400">
+                <span>SENSOR MAST: y=0.95m • FOV 75° • REAL-TIME ZERO-LAG OPTICS</span>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Desktop Robot Vision Picture-in-Picture (PIP) Window */}
+        {showRobotVisionPIP && (
+          <RobotVisionPIP 
+            onClose={() => setShowRobotVisionPIP(false)}
+            onSwitchToFPV={() => {
+              setCameraMode('fpv');
+              setShowRobotVisionPIP(false);
+            }}
+          />
+        )}
       </div>
 
-      {/* CTR Overlay */}
+      {/* Ground Control Station (GCS) / CTR Terminal Overlay */}
       {isCTROpen && (
-        <div className="absolute top-16 left-4 w-80 bg-black/80 backdrop-blur-xl border border-white/20 rounded-2xl hidden md:flex flex-col z-[100] overflow-hidden shadow-2xl h-[400px]">
-          <div className="p-3 border-b border-white/10 bg-brand/20 flex justify-between items-center">
-            <h3 className="font-bold text-sm text-white flex items-center gap-2">
-              <Bot className="w-4 h-4 text-brand" />
-              Connect to Robot (CTR)
-            </h3>
-            <button onClick={() => setIsCTROpen(false)} className="text-gray-400 hover:text-white">✕</button>
+        <div className="absolute top-16 left-4 w-96 bg-slate-950/92 backdrop-blur-2xl border border-cyan-500/30 rounded-2xl hidden md:flex flex-col z-[100] overflow-hidden shadow-[0_0_35px_rgba(6,182,212,0.2)] h-[460px] animate-in fade-in duration-200">
+          {/* Terminal Title Bar */}
+          <div className="px-3.5 py-2.5 border-b border-white/10 bg-slate-900/80 flex justify-between items-center select-none">
+            <div className="flex items-center gap-2">
+              <Terminal className="w-4 h-4 text-cyan-400" />
+              <div>
+                <h3 className="font-mono font-bold text-xs text-white tracking-wider flex items-center gap-1.5">
+                  CTR TERMINAL <span className="text-[10px] text-cyan-400 font-normal">// ROS2 GCS</span>
+                </h3>
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="flex items-center gap-1 text-[9px] font-mono font-bold text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-full border border-emerald-500/30">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping" />
+                ONLINE
+              </span>
+              <button 
+                onClick={() => setIsCTROpen(false)} 
+                className="w-5 h-5 flex items-center justify-center rounded-lg text-gray-400 hover:text-white hover:bg-white/10 transition-colors text-xs font-bold"
+              >
+                ✕
+              </button>
+            </div>
           </div>
-          <div className="flex-1 overflow-y-auto p-4 flex flex-col gap-3">
+
+          {/* Quick Command Presets */}
+          <div className="px-3 py-1.5 border-b border-white/5 bg-black/40 flex items-center gap-1.5 overflow-x-auto custom-scrollbar select-none text-[10px] font-mono">
+            <span className="text-gray-500 text-[9px]">CMD:</span>
+            {[
+              { label: '/patrol', cmd: 'patrol' },
+              { label: '/home', cmd: 'home' },
+              { label: '/status', cmd: 'status' },
+              { label: '/reset', cmd: 'reset' },
+              { label: '/clear', cmd: 'clear' },
+            ].map(c => (
+              <button
+                key={c.label}
+                onClick={() => executeCommand(c.cmd)}
+                className="px-2 py-0.5 rounded bg-white/5 hover:bg-cyan-500/20 text-gray-400 hover:text-cyan-300 border border-white/10 hover:border-cyan-500/40 transition-colors whitespace-nowrap"
+              >
+                {c.label}
+              </button>
+            ))}
+          </div>
+
+          {/* Message Output Feed */}
+          <div className="flex-1 overflow-y-auto p-3.5 space-y-2.5 font-mono text-xs custom-scrollbar">
             {ctrMessages.map((m, i) => (
-              <div key={i} className={`flex ${m.sender === 'user' ? 'justify-end' : 'justify-start'}`}>
-                <div className={`max-w-[80%] rounded-xl p-3 text-sm ${
+              <div key={i} className={`flex flex-col ${m.sender === 'user' ? 'items-end' : 'items-start'}`}>
+                <span className="text-[9px] text-gray-500 mb-0.5 px-1 font-mono">
+                  {m.sender === 'user' ? 'OPERATOR' : 'ROBOT_UNIT_01'}
+                </span>
+                <div className={`max-w-[85%] rounded-xl px-3 py-2 text-xs leading-relaxed ${
                   m.sender === 'user' 
-                    ? 'bg-brand/20 text-brand-light border border-brand/30' 
+                    ? 'bg-cyan-500/20 text-cyan-200 border border-cyan-500/30' 
                     : 'bg-white/5 text-gray-200 border border-white/10'
                 }`}>
                   {m.text}
@@ -3239,50 +3907,59 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
               </div>
             ))}
           </div>
-          <div className="p-3 border-t border-white/10">
-            <div className="flex gap-2">
+
+          {/* Command Input Field */}
+          <div className="p-2.5 border-t border-white/10 bg-slate-900/60">
+            <div className="flex items-center gap-1.5 bg-black/50 border border-white/15 focus-within:border-cyan-500/60 rounded-xl px-3 py-1.5 transition-colors">
+              <span className="text-cyan-400 font-mono text-xs font-bold">unit01:~$</span>
               <input 
                 type="text" 
                 value={ctrInput}
                 onChange={e => setCtrInput(e.target.value)}
                 onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); handleCTRSubmit(e as any); } }}
-                placeholder="Type a command..."
-                className="flex-1 bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-brand/50"
+                placeholder="Type command (/home, patrol, clear)..."
+                className="flex-1 bg-transparent text-xs text-white focus:outline-none font-mono placeholder:text-gray-600"
               />
               <button 
                 onClick={handleCTRSubmit as any}
-                className="bg-brand/20 text-brand border border-brand/30 rounded-lg px-4 py-2 hover:bg-brand/30 transition-colors"
+                className="p-1 rounded-lg text-cyan-400 hover:text-white hover:bg-cyan-500/20 transition-colors"
+                title="Send Command"
               >
-                <Send className="w-4 h-4" />
+                <Send className="w-3.5 h-3.5" />
               </button>
             </div>
           </div>
         </div>
       )}
 
-
-      {/* ── Control Panel (Floating Overlay) ── */}
-      <div className={`absolute right-4 top-4 bottom-4 bg-black/70 backdrop-blur-xl border border-white/10 rounded-2xl hidden md:flex flex-col z-[100] shadow-2xl text-gray-200 pointer-events-auto transition-all duration-300 ${isCCMinimized ? 'w-14 overflow-hidden' : 'w-[360px] overflow-hidden'}`}>
-        <div className="p-4 border-b border-white/10 bg-black/40 flex-none flex justify-between items-center">
+      {/* ── Control Center (Mission Operations Dashboard) ── */}
+      <div className={`absolute right-4 top-4 bottom-4 bg-slate-950/85 backdrop-blur-2xl border border-white/10 rounded-2xl hidden md:flex flex-col z-[100] shadow-2xl text-gray-200 pointer-events-auto transition-all duration-300 ${isCCMinimized ? 'w-14 overflow-hidden' : 'w-[370px] overflow-hidden'}`}>
+        {/* Header Bar */}
+        <div className="p-3.5 border-b border-white/10 bg-black/40 flex-none flex justify-between items-center">
           {!isCCMinimized && (
-            <h3 className="font-bold text-sm flex items-center gap-2 text-white">
-              <Activity className="w-4 h-4 text-brand" />
-              Control Center
-            </h3>
+            <div className="flex items-center gap-2">
+              <div className="p-1.5 rounded-lg bg-cyan-500/15 border border-cyan-500/30 text-cyan-400">
+                <Activity className="w-4 h-4" />
+              </div>
+              <div>
+                <h3 className="font-bold text-xs uppercase tracking-wider text-white">Campus Mission Control</h3>
+                <span className="text-[10px] text-gray-400 font-mono">Autonomous Unit Operations</span>
+              </div>
+            </div>
           )}
-          <div className={`flex gap-2 ${isCCMinimized ? 'w-full justify-center' : ''}`}>
+          <div className={`flex items-center gap-1.5 ${isCCMinimized ? 'w-full justify-center' : ''}`}>
             {!isCCMinimized && (
               <button 
                 onClick={() => setIsCTROpen(!isCTROpen)}
-                className="p-1.5 rounded-md bg-white/5 hover:bg-brand/20 border border-white/10 text-brand-light transition-colors"
-                title="Open Console"
+                className={`p-1.5 rounded-lg border transition-all ${isCTROpen ? 'bg-cyan-500/20 border-cyan-500 text-cyan-300' : 'bg-white/5 border-white/10 text-gray-400 hover:text-white'}`}
+                title="Toggle CTR Console"
               >
-                <Bot className="w-4 h-4" />
+                <Terminal className="w-4 h-4" />
               </button>
             )}
             <button
               onClick={() => setIsCCMinimized(!isCCMinimized)}
-              className="p-1.5 rounded-md bg-white/5 hover:bg-white/20 border border-white/10 text-gray-300 transition-colors"
+              className="p-1.5 rounded-lg bg-white/5 hover:bg-white/15 border border-white/10 text-gray-400 hover:text-white transition-colors"
               title={isCCMinimized ? 'Expand Control Center' : 'Minimize Control Center'}
             >
               {isCCMinimized ? <Maximize className="w-4 h-4" /> : <Minimize className="w-4 h-4" />}
@@ -3293,20 +3970,53 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
         {/* Body — hidden when minimized */}
         {!isCCMinimized && (
         <div className="flex-1 flex flex-col overflow-hidden">
-          {/* Tabs */}
-          <div className="flex border-b border-white/10 bg-black/60 shrink-0">
-            <button onClick={() => setActiveCCTab('dashboard')} className={`flex-1 py-3 text-[10px] font-bold uppercase tracking-widest transition-colors ${activeCCTab === 'dashboard' ? 'text-cyan-400 border-b-2 border-cyan-400 bg-white/5' : 'text-gray-500 hover:text-gray-300 hover:bg-white/5'}`}>Dashboard</button>
-            <button onClick={() => setActiveCCTab('tools')} className={`flex-1 py-3 text-[10px] font-bold uppercase tracking-widest transition-colors ${activeCCTab === 'tools' ? 'text-cyan-400 border-b-2 border-cyan-400 bg-white/5' : 'text-gray-500 hover:text-gray-300 hover:bg-white/5'}`}>Tools</button>
-            <button onClick={() => setActiveCCTab('locations')} className={`flex-1 py-3 text-[10px] font-bold uppercase tracking-widest transition-colors ${activeCCTab === 'locations' ? 'text-cyan-400 border-b-2 border-cyan-400 bg-white/5' : 'text-gray-500 hover:text-gray-300 hover:bg-white/5'}`}>Locations</button>
+          {/* Segmented Tabs */}
+          <div className="flex border-b border-white/10 bg-black/50 p-1 gap-1 shrink-0">
+            <button 
+              onClick={() => setActiveCCTab('dashboard')} 
+              className={`flex-1 py-2 rounded-lg text-[10px] font-bold uppercase tracking-wider transition-all flex items-center justify-center gap-1.5 ${
+                activeCCTab === 'dashboard' 
+                  ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 shadow-[0_0_12px_rgba(6,182,212,0.2)]' 
+                  : 'text-gray-400 hover:text-white hover:bg-white/5'
+              }`}
+            >
+              <Activity className="w-3.5 h-3.5" />
+              <span>Telemetry</span>
+            </button>
+            <button 
+              onClick={() => setActiveCCTab('tools')} 
+              className={`flex-1 py-2 rounded-lg text-[10px] font-bold uppercase tracking-wider transition-all flex items-center justify-center gap-1.5 ${
+                activeCCTab === 'tools' 
+                  ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 shadow-[0_0_12px_rgba(6,182,212,0.2)]' 
+                  : 'text-gray-400 hover:text-white hover:bg-white/5'
+              }`}
+            >
+              <Flame className="w-3.5 h-3.5" />
+              <span>Hazards</span>
+            </button>
+            <button 
+              onClick={() => setActiveCCTab('locations')} 
+              className={`flex-1 py-2 rounded-lg text-[10px] font-bold uppercase tracking-wider transition-all flex items-center justify-center gap-1.5 ${
+                activeCCTab === 'locations' 
+                  ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 shadow-[0_0_12px_rgba(6,182,212,0.2)]' 
+                  : 'text-gray-400 hover:text-white hover:bg-white/5'
+              }`}
+            >
+              <Search className="w-3.5 h-3.5" />
+              <span>Directory</span>
+            </button>
           </div>
 
           <div className="flex-1 overflow-y-auto custom-scrollbar relative">
-            {/* DASHBOARD TAB */}
+            {/* ── DASHBOARD TAB ── */}
             {activeCCTab === 'dashboard' && (
-              <div className="p-4 space-y-6 animate-in fade-in duration-300">
+              <div className="p-4 space-y-4 animate-in fade-in duration-300">
                 <div className="flex items-center justify-between">
-                  <h4 className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Mission Telemetry</h4>
-                  <div className="flex gap-2">
+                  <h4 className="text-[10px] font-bold text-gray-400 uppercase tracking-widest flex items-center gap-1.5">
+                    <Gauge className="w-3.5 h-3.5 text-cyan-400" />
+                    Live Robot Telemetry
+                  </h4>
+                  <div className="flex gap-1.5">
                     <button
                       onClick={() => {
                         const nextIdle = !isIdleMode;
@@ -3339,75 +4049,294 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
                           addExplanation("Idle mode deactivated. Resuming patrol.");
                         }
                       }}
-                      className={`px-3 py-1.5 rounded-lg text-[10px] font-bold flex items-center gap-1.5 transition-colors border ${isIdleMode ? 'bg-gray-500/20 text-white border-gray-500/50' : 'bg-transparent text-gray-500 border-white/10 hover:bg-white/5'}`}
-                      title="Toggle Idle Mode"
+                      className={`px-2.5 py-1 rounded-lg text-[10px] font-bold flex items-center gap-1 transition-all border ${
+                        isIdleMode 
+                          ? 'bg-amber-500/20 text-amber-300 border-amber-500/50 shadow-[0_0_10px_rgba(245,158,11,0.3)]' 
+                          : 'bg-white/5 text-gray-400 border-white/10 hover:text-white'
+                      }`}
+                      title="Toggle Idle / Park Mode"
                     >
-                      <Pause className="w-3.5 h-3.5" /> IDLE
+                      <Pause className="w-3 h-3" />
+                      <span>{isIdleMode ? 'RESUME' : 'IDLE'}</span>
                     </button>
                     <button 
                       onClick={togglePower}
-                      className={`px-3 py-1.5 rounded-lg text-[10px] font-bold transition-colors border ${isOn ? 'bg-red-500/10 text-red-400 border-red-500/30 hover:bg-red-500/20' : 'bg-green-500/10 text-green-400 border-green-500/30 hover:bg-green-500/20'}`}
+                      className={`px-2.5 py-1 rounded-lg text-[10px] font-bold transition-all border flex items-center gap-1 ${
+                        isOn 
+                          ? 'bg-red-500/15 text-red-400 border-red-500/30 hover:bg-red-500/25' 
+                          : 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30 hover:bg-emerald-500/25'
+                      }`}
                     >
-                      {isOn ? 'POWER OFF' : 'POWER ON'}
+                      <Power className="w-3 h-3" />
+                      <span>{isOn ? 'HALT' : 'POWER'}</span>
                     </button>
                   </div>
                 </div>
                 
-                <div className="grid grid-cols-2 gap-3 transition-all duration-500">
+                {/* Telemetry Stat Cards Grid */}
+                <div className="grid grid-cols-2 gap-2.5">
+                  {/* Battery Cell */}
                   <div className="bg-white/5 border border-white/10 rounded-xl p-3 shadow-inner">
-                    <span className="text-[9px] font-bold text-gray-400 uppercase tracking-widest block mb-1">BATTERY</span>
-                    <div className="flex items-center gap-2 mt-1">
-                      <div className="flex-1 h-2 bg-gray-800 rounded-full overflow-hidden">
-                        <div className={`h-full ${battery > 60 ? 'bg-green-500' : battery > 30 ? 'bg-yellow-500' : 'bg-red-500'}`} style={{ width: `${battery}%` }} />
-                      </div>
-                      <span className="text-xs font-black text-white">{battery}%</span>
+                    <div className="flex items-center justify-between text-[9px] font-bold text-gray-400 uppercase tracking-widest mb-1.5">
+                      <span>BATTERY</span>
+                      <span className={battery > 50 ? 'text-emerald-400' : battery > 20 ? 'text-amber-400' : 'text-red-400 font-bold animate-pulse'}>
+                        {battery}%
+                      </span>
+                    </div>
+                    <div className="h-2 bg-black/60 rounded-full overflow-hidden p-0.5 border border-white/5">
+                      <div 
+                        className={`h-full rounded-full transition-all duration-500 ${
+                          battery > 50 ? 'bg-gradient-to-r from-emerald-500 to-cyan-400' : battery > 20 ? 'bg-amber-400' : 'bg-red-500'
+                        }`} 
+                        style={{ width: `${battery}%` }} 
+                      />
                     </div>
                   </div>
-                  <div className="bg-white/5 border border-white/10 rounded-xl p-3 shadow-inner flex flex-col justify-center">
-                    <span className="text-[9px] font-bold text-gray-400 uppercase tracking-widest block mb-1">STATUS</span>
-                    <span className={`text-sm font-black uppercase tracking-wider truncate ${
-                      robotState === 'charging' ? 'text-yellow-400' : 
-                      robotState === 'patrol' ? 'text-blue-400' : 
-                      robotState === 'mission' ? 'text-green-400' : 
-                      robotState === 'emergency_response' ? 'text-red-500 animate-pulse' : 
-                      'text-gray-300'
-                    }`}>
-                      {robotState.replace('_', ' ')}
-                    </span>
+
+                  {/* Operational Status */}
+                  <div className="bg-white/5 border border-white/10 rounded-xl p-3 shadow-inner flex flex-col justify-between">
+                    <span className="text-[9px] font-bold text-gray-400 uppercase tracking-widest block mb-1">UNIT STATE</span>
+                    <div className="flex items-center gap-1.5">
+                      <span className={`w-2 h-2 rounded-full shrink-0 ${
+                        robotState === 'emergency_response' || robotState === 'extinguishing'
+                          ? 'bg-red-400 animate-ping'
+                          : robotState === 'patrol'
+                          ? 'bg-cyan-400 animate-pulse'
+                          : 'bg-emerald-400'
+                      }`} />
+                      <span className={`text-xs font-black uppercase tracking-wider truncate ${
+                        robotState === 'charging' ? 'text-yellow-400' : 
+                        robotState === 'patrol' ? 'text-cyan-400' : 
+                        robotState === 'mission' ? 'text-emerald-400' : 
+                        robotState === 'emergency_response' || robotState === 'extinguishing' ? 'text-red-400 font-bold' : 
+                        'text-gray-300'
+                      }`}>
+                        {robotState.replace('_', ' ')}
+                      </span>
+                    </div>
                   </div>
+
+                  {/* Waypoint Distance */}
                   <div className="bg-white/5 border border-white/10 rounded-xl p-3 shadow-inner">
-                    <span className="text-[9px] font-bold text-gray-400 uppercase tracking-widest block mb-1">DISTANCE</span>
-                    <span className="text-lg font-black text-white">{path.length > 0 ? path.length - currentPosIndex : '--'} <span className="text-[10px] font-bold text-gray-500">m</span></span>
+                    <span className="text-[9px] font-bold text-gray-400 uppercase tracking-widest block mb-1">REMAINING DIST</span>
+                    <div className="flex items-baseline gap-1">
+                      <span className="text-base font-black text-white font-mono">
+                        {path.length > 0 ? Math.max(0, path.length - currentPosIndex) : 0}
+                      </span>
+                      <span className="text-[10px] font-bold text-gray-500">meters</span>
+                    </div>
                   </div>
+
+                  {/* Estimated Arrival */}
                   <div className="bg-white/5 border border-white/10 rounded-xl p-3 shadow-inner">
-                    <span className="text-[9px] font-bold text-gray-400 uppercase tracking-widest block mb-1">ETA</span>
-                    <span className="text-lg font-black text-white">{path.length > 0 ? Math.ceil((path.length - currentPosIndex) * 0.5) : '--'} <span className="text-[10px] font-bold text-gray-500">min</span></span>
+                    <span className="text-[9px] font-bold text-gray-400 uppercase tracking-widest block mb-1">ESTIMATED ETA</span>
+                    <div className="flex items-baseline gap-1">
+                      <span className="text-base font-black text-white font-mono">
+                        {path.length > 0 ? Math.ceil((path.length - currentPosIndex) * 0.4) : 0}
+                      </span>
+                      <span className="text-[10px] font-bold text-gray-500">seconds</span>
+                    </div>
                   </div>
                 </div>
 
-                <div className="flex gap-3 pt-2">
+                {/* Primary Mission Dispatch Actions */}
+                <div className="flex gap-2.5 pt-1">
                   <button
                     onClick={() => startSimulation()}
                     disabled={isPlaying || (path.length > 0 && currentPosIndex >= path.length - 1)}
-                    className="flex-1 flex items-center justify-center gap-2 px-4 py-3 bg-cyan-600/20 text-cyan-400 border border-cyan-500/50 rounded-xl font-bold hover:bg-cyan-600 hover:text-white disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-[0_0_15px_rgba(8,145,178,0.2)] hover:shadow-[0_0_20px_rgba(8,145,178,0.5)] text-sm uppercase tracking-widest"
+                    className="flex-1 flex items-center justify-center gap-2 py-3 px-4 bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 text-slate-950 font-black rounded-xl text-xs uppercase tracking-wider transition-all disabled:opacity-40 disabled:cursor-not-allowed shadow-[0_0_20px_rgba(6,182,212,0.3)] hover:shadow-[0_0_25px_rgba(6,182,212,0.5)] active:scale-[0.98]"
                   >
-                    <Play className="w-4 h-4" /> {isPlaying ? 'Simulating...' : 'Execute'}
+                    <Play className="w-4 h-4 fill-slate-950" />
+                    <span>{isPlaying ? 'EXECUTING ROUTE...' : 'EXECUTE MISSION'}</span>
                   </button>
                   <button
                     onClick={resetSimulation}
                     className="p-3 bg-white/5 border border-white/10 rounded-xl hover:bg-white/10 transition-colors group"
-                    title="Reset Robot"
+                    title="Reset Robot Coordinates"
                   >
-                    <RotateCcw className="w-5 h-5 text-gray-400 group-hover:text-white group-hover:-rotate-90 transition-all duration-300" />
+                    <RotateCcw className="w-4 h-4 text-gray-400 group-hover:text-white group-hover:-rotate-90 transition-all duration-300" />
                   </button>
                 </div>
               </div>
             )}
 
-            {/* TOOLS TAB */}
+            {/* ── TOOLS & HAZARDS TAB ── */}
             {activeCCTab === 'tools' && (
-              <div className="p-4 space-y-5 animate-in fade-in duration-300">
-                {/* OBSTACLE DENSITY CONTROLLER */}
+              <div className="p-4 space-y-4 animate-in fade-in duration-300">
+                {/* AI FIRE EMERGENCY & SURVEILLANCE CONTROL PANEL */}
+                <div className="bg-[#0b1329]/95 border border-cyan-500/30 rounded-2xl p-4 space-y-3.5 shadow-[0_0_25px_rgba(6,182,212,0.15)] relative overflow-hidden backdrop-blur-md">
+                  {/* Ambient Cybernetic Glow */}
+                  <div className={`absolute -top-12 -right-12 w-36 h-36 rounded-full blur-3xl pointer-events-none transition-all duration-700 ${
+                    activeFireIncident && activeFireIncident.status !== 'RESOLVED'
+                      ? 'bg-red-500/25'
+                      : robotState === 'extinguishing'
+                      ? 'bg-amber-500/20'
+                      : 'bg-cyan-500/10'
+                  }`} />
+
+                  {/* Header Row */}
+                  <div className="flex items-start justify-between gap-2 relative z-10">
+                    <div className="flex items-center gap-2.5">
+                      <div className={`p-2 rounded-xl border transition-all ${
+                        activeFireIncident && activeFireIncident.status !== 'RESOLVED'
+                          ? 'bg-red-500/20 text-red-400 border-red-500/50 shadow-[0_0_15px_rgba(239,68,68,0.5)]'
+                          : robotState === 'extinguishing'
+                          ? 'bg-amber-500/20 text-amber-400 border-amber-500/50 shadow-[0_0_15px_rgba(245,158,11,0.4)]'
+                          : 'bg-cyan-500/15 text-cyan-400 border-cyan-500/40'
+                      }`}>
+                        <Flame className={`w-4 h-4 ${activeFireIncident && activeFireIncident.status !== 'RESOLVED' ? 'animate-bounce' : ''}`} />
+                      </div>
+                      <div>
+                        <h3 className="font-black uppercase tracking-wider text-xs text-white">AI FIRE SURVEILLANCE</h3>
+                        <p className="text-[10px] text-gray-400 font-mono tracking-tight">YOLOv8 Real-Time OpenCV Vision</p>
+                      </div>
+                    </div>
+
+                    {/* Status Pill Badge */}
+                    <span className={`px-2.5 py-1 rounded-full text-[9px] font-mono font-black tracking-wider uppercase border shrink-0 transition-all ${
+                      activeFireIncident && activeFireIncident.status !== 'RESOLVED'
+                        ? 'bg-red-500/20 text-red-400 border-red-500/60 animate-pulse shadow-[0_0_15px_rgba(239,68,68,0.4)]'
+                        : robotState === 'extinguishing'
+                        ? 'bg-amber-500/20 text-amber-300 border-amber-500/60 animate-pulse shadow-[0_0_15px_rgba(245,158,11,0.4)]'
+                        : 'bg-emerald-500/15 text-emerald-400 border-emerald-500/40 shadow-[0_0_12px_rgba(16,185,129,0.25)]'
+                    }`}>
+                      {activeFireIncident && activeFireIncident.status !== 'RESOLVED'
+                        ? 'EMERGENCY ALERT'
+                        : robotState === 'extinguishing'
+                        ? 'DISPENSING FOAM'
+                        : 'SURVEILLANCE OK'}
+                    </span>
+                  </div>
+
+                  {/* Primary Action Buttons: Simulate Fire & Map Pin Fire */}
+                  <div className="grid grid-cols-2 gap-2 relative z-10">
+                    <button
+                      onClick={() => {
+                        if (mapData && mapData.rooms && mapData.rooms.length > 0) {
+                          const chosen = mapData.rooms[Math.floor(Math.random() * mapData.rooms.length)];
+                          const coords = chosen.door || chosen.start;
+                          if (onSimulateAtBuilding) {
+                            onSimulateAtBuilding(chosen.name, coords);
+                          } else {
+                            handleDeployFireAt(coords);
+                          }
+                          dispatchRobotToExtinguish(coords);
+                        } else {
+                          const fallback: GridPoint = { x: 22, y: 18, f: 0 };
+                          handleDeployFireAt(fallback);
+                          dispatchRobotToExtinguish(fallback);
+                        }
+                      }}
+                      className="w-full py-2.5 px-3 bg-gradient-to-r from-red-600/30 to-orange-600/20 hover:from-red-600/50 hover:to-orange-600/40 border border-red-500/40 hover:border-red-400 rounded-xl text-white font-bold text-xs uppercase tracking-wider transition-all flex items-center justify-center gap-1.5 shadow-[0_0_15px_rgba(239,68,68,0.25)] active:scale-[0.98]"
+                    >
+                      <Flame className="w-3.5 h-3.5 text-orange-400 animate-pulse" />
+                      <span>Simulate Fire</span>
+                    </button>
+
+                    <button
+                      onClick={() => {
+                        if (onTogglePlaceFire) onTogglePlaceFire();
+                        else setInternalIsPlacingFire(!internalIsPlacingFire);
+                      }}
+                      className={`py-2.5 px-3 border rounded-xl font-bold text-xs uppercase tracking-wider transition-all flex items-center justify-center gap-1.5 active:scale-[0.98] ${
+                        isPlacingFire
+                          ? 'bg-orange-500/25 border-orange-500 text-orange-300 shadow-[0_0_20px_rgba(249,115,22,0.4)] animate-pulse'
+                          : 'bg-white/5 border-white/10 hover:border-cyan-500/50 text-gray-300 hover:text-white'
+                      }`}
+                    >
+                      <Crosshair className="w-3.5 h-3.5 text-cyan-400" />
+                      <span>Map Pin Fire</span>
+                    </button>
+                  </div>
+
+                  {/* Campus Building Selector for Targeted Fire Simulation */}
+                  <div className="relative z-10 flex items-center justify-between gap-1 text-[10px] font-mono text-gray-400 bg-black/40 border border-white/5 rounded-lg px-2.5 py-1.5">
+                    <span className="text-gray-500">Target Building:</span>
+                    <select
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        if (!val || !mapData?.rooms) return;
+                        const bldg = mapData.rooms.find(r => r.name === val);
+                        if (bldg) {
+                          const coords = bldg.door || bldg.start;
+                          if (onSimulateAtBuilding) onSimulateAtBuilding(bldg.name, coords);
+                          else handleDeployFireAt(coords);
+                          dispatchRobotToExtinguish(coords);
+                        }
+                        e.target.value = '';
+                      }}
+                      defaultValue=""
+                      className="bg-transparent text-cyan-300 font-bold focus:outline-none cursor-pointer max-w-[200px] truncate text-right"
+                    >
+                      <option value="" disabled className="bg-slate-900 text-gray-400">Choose Building...</option>
+                      {(mapData?.rooms || []).map(r => (
+                        <option key={r.id || r.name} value={r.name} className="bg-slate-900 text-white">
+                          {r.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {/* Active Emergency Incident Banner */}
+                  {activeFireIncident && activeFireIncident.status !== 'RESOLVED' && (
+                    <div className="p-3 rounded-xl bg-red-950/70 border border-red-500/50 text-xs space-y-2 animate-in fade-in duration-300 shadow-[0_0_20px_rgba(239,68,68,0.2)]">
+                      <div className="flex items-center justify-between text-red-300 font-bold">
+                        <span className="flex items-center gap-1.5 truncate">
+                          <AlertTriangle className="w-4 h-4 text-red-400 shrink-0 animate-bounce" />
+                          <span className="truncate">{activeFireIncident.location.building_name}</span>
+                        </span>
+                        <span className="text-[9px] px-2 py-0.5 bg-red-500/20 text-red-400 rounded-full border border-red-500/40 font-mono uppercase">
+                          {activeFireIncident.status}
+                        </span>
+                      </div>
+                      <div className="text-gray-400 font-mono text-[10px] flex justify-between">
+                        <span>Twilio Call: <b className="text-cyan-400 font-bold">{activeFireIncident.notifications?.voice_status || 'initiated'}</b></span>
+                        <span>SMS Dispatch: <b className="text-cyan-400 font-bold">{activeFireIncident.notifications?.sms_status || 'sent'}</b></span>
+                      </div>
+                      <div className="flex items-center justify-between text-[9px] font-mono text-gray-400 pt-0.5">
+                        <span>Incident History: <b className="text-white">{incidentHistory.length} logged</b></span>
+                        {activeFireIncident.acknowledgement?.is_acknowledged && (
+                          <span className="text-cyan-400 font-bold">ACKNOWLEDGED</span>
+                        )}
+                      </div>
+                      <div className="flex gap-2 pt-1">
+                        <button
+                          onClick={() => dispatchRobotToExtinguish(activeFireIncident.location.coordinates as GridPoint)}
+                          className="flex-1 py-1.5 bg-red-600 hover:bg-red-500 text-white font-bold rounded-lg text-[10px] uppercase tracking-wider transition-all flex items-center justify-center gap-1 shadow-[0_0_15px_rgba(239,68,68,0.5)] active:scale-[0.98]"
+                        >
+                          <Flame className="w-3 h-3" />
+                          Dispatch to Extinguish
+                        </button>
+                        {!activeFireIncident.acknowledgement?.is_acknowledged && onAcknowledgeIncident && (
+                          <button
+                            onClick={() => onAcknowledgeIncident(activeFireIncident.id)}
+                            className="px-2.5 py-1.5 bg-cyan-500/20 hover:bg-cyan-500/30 text-cyan-300 rounded-lg text-[10px] font-bold uppercase transition-all"
+                          >
+                            Ack
+                          </button>
+                        )}
+                        <button
+                          onClick={() => {
+                            if (onResolveIncident) onResolveIncident(activeFireIncident.id);
+                            else {
+                              fetch('/api/fire/resolve', {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ incident_id: activeFireIncident.id })
+                              }).catch(() => {});
+                              setFireHazards([]);
+                            }
+                          }}
+                          className="px-3 py-1.5 bg-white/10 hover:bg-white/20 text-gray-300 hover:text-white rounded-lg text-[10px] font-bold uppercase transition-all"
+                        >
+                          Clear
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* DYNAMIC OBSTACLE DENSITY CONTROLLER */}
                 <div className="bg-white/5 border border-cyan-500/30 rounded-2xl p-4 space-y-3 shadow-lg">
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2">
@@ -3450,7 +4379,7 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
                       <button
                         key={p.val}
                         onClick={() => handleUpdateObstacleCount(p.val)}
-                        className={`py-1 rounded text-[10px] font-bold font-mono transition-all ${
+                        className={`py-1 rounded-lg text-[10px] font-bold font-mono transition-all ${
                           dynamicObstacleCount === p.val 
                             ? 'bg-cyan-500 text-black shadow-[0_0_10px_rgba(6,182,212,0.4)]' 
                             : 'bg-white/5 text-gray-400 hover:text-white hover:bg-white/10'
@@ -3461,11 +4390,11 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
                     ))}
                   </div>
 
-                  {/* Active Entity Composition Breakdown */}
+                  {/* Entity Composition Breakdown */}
                   <div className="flex items-center justify-between text-[11px] font-mono text-gray-400 border-t border-white/10 pt-2">
                     <span className="flex items-center gap-1.5">
                       <Car className="w-3.5 h-3.5 text-blue-400" />
-                      <span>{dynamicObstacles.filter(o => o.type === 'car').length} Cars</span>
+                      <span>{dynamicObstacles.filter(o => o.type === 'car').length} Autonomous Cars</span>
                     </span>
                     <span className="flex items-center gap-1.5">
                       <Users className="w-3.5 h-3.5 text-purple-400" />
@@ -3491,7 +4420,11 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
                         setIsPlacingBlocker(!isPlacingBlocker);
                         if (!isPlacingBlocker) { setIsEmergencyTargeting(false); setIsPlacingCrowd(false); }
                       }}
-                      className={`w-full p-3.5 border rounded-xl transition-all flex items-center gap-3.5 text-left ${isPlacingBlocker ? 'bg-orange-500/20 text-orange-400 border-orange-500 shadow-[0_0_20px_rgba(249,115,22,0.3)]' : 'bg-white/5 text-gray-400 border-white/10 hover:bg-white/10 hover:text-white'}`}
+                      className={`w-full p-3.5 border rounded-xl transition-all flex items-center gap-3.5 text-left ${
+                        isPlacingBlocker 
+                          ? 'bg-orange-500/20 text-orange-400 border-orange-500 shadow-[0_0_20px_rgba(249,115,22,0.3)]' 
+                          : 'bg-white/5 text-gray-400 border-white/10 hover:bg-white/10 hover:text-white'
+                      }`}
                     >
                       <div className={`p-2 rounded-lg ${isPlacingBlocker ? 'bg-orange-500 text-white' : 'bg-white/10'}`}>
                         <Construction className="w-4 h-4" />
@@ -3532,7 +4465,11 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
                         setIsPlacingCrowd(!isPlacingCrowd);
                         if (!isPlacingCrowd) { setIsEmergencyTargeting(false); setIsPlacingBlocker(false); }
                       }}
-                      className={`w-full p-3.5 border rounded-xl transition-all flex items-center gap-3.5 text-left ${isPlacingCrowd ? 'bg-purple-500/20 text-purple-400 border-purple-500 shadow-[0_0_20px_rgba(168,85,247,0.3)]' : 'bg-white/5 text-gray-400 border-white/10 hover:bg-white/10 hover:text-white'}`}
+                      className={`w-full p-3.5 border rounded-xl transition-all flex items-center gap-3.5 text-left ${
+                        isPlacingCrowd 
+                          ? 'bg-purple-500/20 text-purple-400 border-purple-500 shadow-[0_0_20px_rgba(168,85,247,0.3)]' 
+                          : 'bg-white/5 text-gray-400 border-white/10 hover:bg-white/10 hover:text-white'
+                      }`}
                     >
                       <div className={`p-2 rounded-lg ${isPlacingCrowd ? 'bg-purple-500 text-white' : 'bg-white/10'}`}>
                         <Users className="w-4 h-4" />
@@ -3545,7 +4482,11 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
 
                     <button
                       onClick={() => setIsEmergencyTargeting(!isEmergencyTargeting)}
-                      className={`w-full p-3.5 border rounded-xl transition-all flex items-center gap-3.5 text-left ${isEmergencyTargeting ? 'bg-red-500/20 text-red-400 border-red-500 shadow-[0_0_20px_rgba(239,68,68,0.3)]' : 'bg-white/5 text-gray-400 border-white/10 hover:bg-white/10 hover:text-white'}`}
+                      className={`w-full p-3.5 border rounded-xl transition-all flex items-center gap-3.5 text-left ${
+                        isEmergencyTargeting 
+                          ? 'bg-red-500/20 text-red-400 border-red-500 shadow-[0_0_20px_rgba(239,68,68,0.3)]' 
+                          : 'bg-white/5 text-gray-400 border-white/10 hover:bg-white/10 hover:text-white'
+                      }`}
                     >
                       <div className={`p-2 rounded-lg ${isEmergencyTargeting ? 'bg-red-500 text-white' : 'bg-white/10'}`}>
                         <ShieldAlert className="w-4 h-4" />
@@ -3560,68 +4501,137 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
               </div>
             )}
 
-            {/* LOCATIONS TAB */}
+            {/* ── CAMPUS DIRECTORY TAB ── */}
             {activeCCTab === 'locations' && (
               <div className={`flex flex-col h-full animate-in fade-in duration-300 ${!isOn ? 'opacity-30 pointer-events-none grayscale' : ''}`}>
                 {selectedRoom ? (
-                  <div className="p-4 flex-1 overflow-y-auto">
-                    <button onClick={() => setSelectedRoom(null)} className="text-[10px] font-bold text-gray-400 hover:text-white uppercase tracking-widest flex items-center gap-1 mb-4 transition-colors">
+                  <div className="p-4 flex-1 overflow-y-auto space-y-4">
+                    <button 
+                      onClick={() => setSelectedRoom(null)} 
+                      className="text-[10px] font-bold text-gray-400 hover:text-white uppercase tracking-widest flex items-center gap-1 transition-colors"
+                    >
                       <span>←</span> BACK TO DIRECTORY
                     </button>
                     
-                    <div className="bg-gradient-to-br from-white/10 to-white/5 border border-white/10 rounded-2xl p-5 mb-5 shadow-xl backdrop-blur-md">
-                      <h5 className="font-black text-white text-xl mb-2 tracking-wide truncate">{selectedRoom.name}</h5>
-                      <div className="flex gap-2">
-                        <span className="px-2 py-1 rounded text-[10px] font-bold uppercase tracking-wider bg-black/40 text-cyan-300 border border-cyan-500/30">Floor {selectedRoom.start.f}</span>
-                        <span className="px-2 py-1 rounded text-[10px] font-bold uppercase tracking-wider bg-black/40 text-green-400 border border-green-500/30">Clear</span>
+                    {/* Selected Building Details Hero Card */}
+                    <div className="bg-gradient-to-br from-cyan-950/40 via-slate-900/60 to-black border border-cyan-500/30 rounded-2xl p-4 shadow-xl backdrop-blur-md">
+                      <div className="flex items-start justify-between gap-2 mb-2">
+                        <h5 className="font-black text-white text-lg tracking-wide truncate">{selectedRoom.name}</h5>
+                        <span className="px-2 py-0.5 rounded-full text-[9px] font-mono font-bold uppercase tracking-wider bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 shrink-0">
+                          {selectedRoom.type || 'FACULTY'}
+                        </span>
                       </div>
-                      <div className="mt-4 pt-4 border-t border-white/10">
-                         <div className="text-xs text-gray-400 font-mono">Est. Occupancy: <span className="text-white font-bold">{(selectedRoom.name.length + selectedRoom.start.x) % 12 || 2}</span></div>
+                      <div className="flex gap-2">
+                        <span className="px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider bg-black/40 text-gray-300 border border-white/10">
+                          Floor {selectedRoom.start.f}
+                        </span>
+                        <span className="px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider bg-black/40 text-emerald-400 border border-emerald-500/30">
+                          Clear Access
+                        </span>
+                      </div>
+                      <div className="mt-3 pt-3 border-t border-white/10 flex justify-between text-xs text-gray-400 font-mono">
+                         <span>Coordinates: <b className="text-white">({selectedRoom.door?.x ?? selectedRoom.start.x}, {selectedRoom.door?.y ?? selectedRoom.start.y})</b></span>
+                         <span>Est. Occupancy: <b className="text-cyan-300">{(selectedRoom.name.length + selectedRoom.start.x) % 12 || 4}</b></span>
                       </div>
                     </div>
                     
-                    <h4 className="text-[10px] font-bold text-gray-500 uppercase tracking-widest mb-3">Quick Dispatch</h4>
-                    <div className="grid grid-cols-2 gap-3">
-                      <button onClick={() => dispatchQuickMission('Navigate')} className="flex flex-col items-center justify-center gap-2 p-4 bg-brand/10 text-brand hover:bg-brand hover:text-white rounded-xl transition-all border border-brand/20 shadow-sm hover:shadow-[0_0_15px_rgba(34,211,238,0.4)] group">
-                        <Play className="w-6 h-6 group-hover:scale-110 transition-transform" /> 
-                        <span className="text-[10px] font-bold uppercase tracking-wider text-center">Navigate</span>
-                      </button>
-                      <button onClick={() => dispatchQuickMission('Deliver Documents')} className="flex flex-col items-center justify-center gap-2 p-4 bg-blue-500/10 text-blue-400 hover:bg-blue-500 hover:text-white rounded-xl transition-all border border-blue-500/20 shadow-sm hover:shadow-[0_0_15px_rgba(59,130,246,0.4)] group">
-                        <Crosshair className="w-6 h-6 group-hover:scale-110 transition-transform" /> 
-                        <span className="text-[10px] font-bold uppercase tracking-wider text-center">Docs</span>
-                      </button>
-                      <button onClick={() => setModalType('food')} className="flex flex-col items-center justify-center gap-2 p-4 bg-orange-500/10 text-orange-400 hover:bg-orange-500 hover:text-white rounded-xl transition-all border border-orange-500/20 shadow-sm hover:shadow-[0_0_15px_rgba(249,115,22,0.4)] group">
-                        <Utensils className="w-6 h-6 group-hover:scale-110 transition-transform" /> 
-                        <span className="text-[10px] font-bold uppercase tracking-wider text-center">Food</span>
-                      </button>
-                      <button onClick={() => dispatchQuickMission('Clean Room')} className="flex flex-col items-center justify-center gap-2 p-4 bg-green-500/10 text-green-400 hover:bg-green-500 hover:text-white rounded-xl transition-all border border-green-500/20 shadow-sm hover:shadow-[0_0_15px_rgba(34,197,94,0.4)] group">
-                        <Bot className="w-6 h-6 group-hover:scale-110 transition-transform" /> 
-                        <span className="text-[10px] font-bold uppercase tracking-wider text-center">Clean</span>
-                      </button>
-                      <button onClick={() => setModalType('medical')} className="flex flex-col items-center justify-center gap-2 p-4 bg-rose-500/10 text-rose-400 hover:bg-rose-500 hover:text-white rounded-xl transition-all border border-rose-500/20 shadow-sm hover:shadow-[0_0_15px_rgba(244,63,94,0.4)] group">
-                        <Cross className="w-6 h-6 group-hover:scale-110 transition-transform" /> 
-                        <span className="text-[10px] font-bold uppercase tracking-wider text-center">Medical</span>
-                      </button>
-                      <button onClick={() => handleEmergencyCall(selectedRoom.door || selectedRoom.start)} className="flex flex-col items-center justify-center gap-2 p-4 bg-red-500/10 text-red-500 hover:bg-red-500 hover:text-white rounded-xl transition-all border border-red-500/30 shadow-sm hover:shadow-[0_0_15px_rgba(239,68,68,0.5)] group">
-                        <ShieldAlert className="w-6 h-6 group-hover:scale-110 transition-transform" /> 
-                        <span className="text-[10px] font-bold uppercase tracking-wider text-center">SOS</span>
-                      </button>
+                    {/* Quick Dispatch Grid */}
+                    <div>
+                      <h4 className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-2.5">Operational Dispatch</h4>
+                      <div className="grid grid-cols-2 gap-2.5">
+                        <button 
+                          onClick={() => dispatchQuickMission('Navigate')} 
+                          className="flex flex-col items-center justify-center gap-1.5 p-3.5 bg-cyan-500/10 hover:bg-cyan-500/25 text-cyan-300 border border-cyan-500/30 rounded-xl transition-all shadow-sm hover:shadow-[0_0_15px_rgba(6,182,212,0.3)] group active:scale-[0.98]"
+                        >
+                          <Play className="w-5 h-5 group-hover:scale-110 transition-transform" /> 
+                          <span className="text-[10px] font-bold uppercase tracking-wider text-center">Navigate</span>
+                        </button>
+                        <button 
+                          onClick={() => dispatchQuickMission('Deliver Documents')} 
+                          className="flex flex-col items-center justify-center gap-1.5 p-3.5 bg-blue-500/10 hover:bg-blue-500/25 text-blue-300 border border-blue-500/30 rounded-xl transition-all shadow-sm hover:shadow-[0_0_15px_rgba(59,130,246,0.3)] group active:scale-[0.98]"
+                        >
+                          <Crosshair className="w-5 h-5 group-hover:scale-110 transition-transform" /> 
+                          <span className="text-[10px] font-bold uppercase tracking-wider text-center">Docs</span>
+                        </button>
+                        <button 
+                          onClick={() => setModalType('food')} 
+                          className="flex flex-col items-center justify-center gap-1.5 p-3.5 bg-amber-500/10 hover:bg-amber-500/25 text-amber-300 border border-amber-500/30 rounded-xl transition-all shadow-sm hover:shadow-[0_0_15px_rgba(245,158,11,0.3)] group active:scale-[0.98]"
+                        >
+                          <Utensils className="w-5 h-5 group-hover:scale-110 transition-transform" /> 
+                          <span className="text-[10px] font-bold uppercase tracking-wider text-center">Food</span>
+                        </button>
+                        <button 
+                          onClick={() => dispatchQuickMission('Clean Room')} 
+                          className="flex flex-col items-center justify-center gap-1.5 p-3.5 bg-emerald-500/10 hover:bg-emerald-500/25 text-emerald-300 border border-emerald-500/30 rounded-xl transition-all shadow-sm hover:shadow-[0_0_15px_rgba(16,185,129,0.3)] group active:scale-[0.98]"
+                        >
+                          <Bot className="w-5 h-5 group-hover:scale-110 transition-transform" /> 
+                          <span className="text-[10px] font-bold uppercase tracking-wider text-center">Clean</span>
+                        </button>
+                        <button 
+                          onClick={() => setModalType('medical')} 
+                          className="flex flex-col items-center justify-center gap-1.5 p-3.5 bg-rose-500/10 hover:bg-rose-500/25 text-rose-300 border border-rose-500/30 rounded-xl transition-all shadow-sm hover:shadow-[0_0_15px_rgba(244,63,94,0.3)] group active:scale-[0.98]"
+                        >
+                          <Cross className="w-5 h-5 group-hover:scale-110 transition-transform" /> 
+                          <span className="text-[10px] font-bold uppercase tracking-wider text-center">Medical</span>
+                        </button>
+                        <button 
+                          onClick={() => handleEmergencyCall(selectedRoom.door || selectedRoom.start, `${selectedRoom.name} SOS Priority`, 'sos')} 
+                          className="flex flex-col items-center justify-center gap-1.5 p-3.5 bg-red-500/15 hover:bg-red-500/30 text-red-400 border border-red-500/40 rounded-xl transition-all shadow-sm hover:shadow-[0_0_15px_rgba(239,68,68,0.4)] group active:scale-[0.98]"
+                        >
+                          <ShieldAlert className="w-5 h-5 group-hover:scale-110 transition-transform" /> 
+                          <span className="text-[10px] font-bold uppercase tracking-wider text-center">SOS Priority</span>
+                        </button>
+                      </div>
                     </div>
                   </div>
                 ) : (
-                  <div className="p-4 flex-1 flex flex-col min-h-0">
-                    <h4 className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-3 shrink-0">Building Directory</h4>
-                    <div className="flex-1 overflow-y-auto custom-scrollbar pr-2 space-y-2">
-                      {rooms?.map(room => (
-                        <button 
-                          key={room.id}
-                          onClick={() => setSelectedRoom(room)}
-                          className="w-full text-left px-4 py-3 rounded-xl border border-white/5 bg-white/5 hover:bg-white/10 text-gray-300 hover:text-white transition-all text-xs flex justify-between items-center group shadow-sm"
+                  <div className="p-4 flex-1 flex flex-col min-h-0 space-y-3">
+                    {/* Search Field */}
+                    <div className="relative shrink-0">
+                      <Search className="w-4 h-4 text-gray-500 absolute left-3 top-1/2 -translate-y-1/2" />
+                      <input
+                        type="text"
+                        value={buildingSearchTerm}
+                        onChange={(e) => setBuildingSearchTerm(e.target.value)}
+                        placeholder="Search faculties, halls & zones..."
+                        className="w-full bg-black/40 border border-white/10 focus:border-cyan-500/60 rounded-xl pl-9 pr-8 py-2 text-xs text-white placeholder:text-gray-500 focus:outline-none transition-colors"
+                      />
+                      {buildingSearchTerm && (
+                        <button
+                          onClick={() => setBuildingSearchTerm('')}
+                          className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-white text-xs"
                         >
-                          <span className="truncate mr-2 font-medium">{room.name}</span>
-                          <span className="text-[10px] text-gray-500 flex-shrink-0 group-hover:text-cyan-400 transition-colors font-bold uppercase tracking-widest">Fl {room.start.f}</span>
+                          ✕
                         </button>
-                      ))}
+                      )}
+                    </div>
+
+                    {/* Filtered Building List */}
+                    <div className="flex-1 overflow-y-auto custom-scrollbar pr-1 space-y-2">
+                      {(rooms || [])
+                        .filter(r => !buildingSearchTerm || r.name.toLowerCase().includes(buildingSearchTerm.toLowerCase()) || (r.type && r.type.toLowerCase().includes(buildingSearchTerm.toLowerCase())))
+                        .map(room => (
+                          <button 
+                            key={room.id}
+                            onClick={() => setSelectedRoom(room)}
+                            className="w-full text-left p-3 rounded-xl border border-white/5 bg-white/5 hover:bg-white/10 hover:border-cyan-500/30 text-gray-300 hover:text-white transition-all text-xs flex justify-between items-center group shadow-sm"
+                          >
+                            <div className="truncate mr-2">
+                              <span className="font-semibold block truncate text-white">{room.name}</span>
+                              <span className="text-[10px] text-gray-500 uppercase tracking-wider font-mono">
+                                {room.type || 'FACULTY'}
+                              </span>
+                            </div>
+                            <span className="text-[10px] text-cyan-400/80 group-hover:text-cyan-300 flex-shrink-0 font-mono font-bold px-2 py-0.5 rounded bg-black/40 border border-white/10">
+                              FL {room.start.f}
+                            </span>
+                          </button>
+                        ))}
+                      {(rooms || []).filter(r => !buildingSearchTerm || r.name.toLowerCase().includes(buildingSearchTerm.toLowerCase())).length === 0 && (
+                        <div className="text-center py-6 text-xs text-gray-500 italic">
+                          No matching buildings found.
+                        </div>
+                      )}
                     </div>
                   </div>
                 )}

@@ -3,10 +3,11 @@ import { Sidebar } from './components/Sidebar';
 
 // import { StrategyComparison } from './components/StrategyComparison';
 import { SimulationView } from './components/SimulationView';
+import { ModelAnalysisDashboard } from './components/ModelAnalysisDashboard';
 
 import { useLocalStorage } from './hooks/useLocalStorage';
-import type { MissionHistoryItem, MissionResult } from './types';
-import { QrCode, History, Check, Copy, ExternalLink, Wifi, Smartphone, Sliders, Globe, RefreshCw, AlertTriangle } from 'lucide-react';
+import type { MissionHistoryItem, MissionResult, FireIncident, FireHazardPoint, GridPoint } from './types';
+import { QrCode, History, Check, Copy, ExternalLink, Wifi, Smartphone, Sliders, Globe, RefreshCw, AlertTriangle, Flame, BarChart3 } from 'lucide-react';
 import QRCode from 'react-qr-code';
 import { io } from 'socket.io-client';
 
@@ -40,6 +41,14 @@ function App() {
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const socketRef = useRef<any>(null);
 
+  // AI Fire & Smoke Emergency Detection State
+  const [activeFireIncident, setActiveFireIncident] = useState<FireIncident | null>(null);
+  const [incidentHistory, setIncidentHistory] = useState<FireIncident[]>([]);
+  const [fireHazards, setFireHazards] = useState<FireHazardPoint[]>([]);
+  const [isPlacingFire, setIsPlacingFire] = useState(false);
+  const [robotTelemetryPos, setRobotTelemetryPos] = useState<GridPoint>({ x: 61, y: 81, f: 0 });
+  const [robotStatusText, setRobotStatusText] = useState<string>('Autonomous Patrol');
+
   const [networkIp, setNetworkIp] = useState<string>('');
   const [networkInterfaces, setNetworkInterfaces] = useState<Array<{ name: string; label: string; address: string; isHotspot?: boolean }>>([]);
   const [selectedIp, setSelectedIp] = useState<string>('');
@@ -54,6 +63,33 @@ function App() {
   const [tunnelStatus, setTunnelStatus] = useState<string>('initializing');
   const [connectionMode, setConnectionMode] = useState<'cloud' | 'local'>('cloud');
   const [isRestartingTunnel, setIsRestartingTunnel] = useState<boolean>(false);
+
+  // Active View State: Real-time Simulation vs Deep Model Performance & Fitting Analysis
+  const [currentView, setCurrentView] = useState<'surveillance' | 'analysis'>(() => {
+    const path = window.location.pathname.toLowerCase();
+    const hash = window.location.hash.toLowerCase();
+    const search = window.location.search.toLowerCase();
+    return path.includes('analysis') || hash.includes('analysis') || search.includes('analysis') ? 'analysis' : 'surveillance';
+  });
+
+  const handleViewSwitch = (view: 'surveillance' | 'analysis') => {
+    setCurrentView(view);
+    const newPath = view === 'analysis' ? '/analysis' : '/';
+    if (window.location.pathname !== newPath) {
+      window.history.pushState(null, '', newPath);
+    }
+  };
+
+  useEffect(() => {
+    const handlePopState = () => {
+      const path = window.location.pathname.toLowerCase();
+      const hash = window.location.hash.toLowerCase();
+      const isAnalysis = path.includes('analysis') || hash.includes('analysis');
+      setCurrentView(isAnalysis ? 'analysis' : 'surveillance');
+    };
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, []);
 
   useEffect(() => {
     // Fetch initial map data on mount so Control Center is always visible
@@ -165,6 +201,50 @@ function App() {
       }
     });
 
+    // Fire Emergency Sockets
+    newSocket.on('fire_state_init', (data: any) => {
+      if (data?.activeIncident) setActiveFireIncident(data.activeIncident);
+      if (data?.history) setIncidentHistory(data.history);
+    });
+
+    newSocket.on('fire_emergency_alert', (incident: FireIncident) => {
+      setActiveFireIncident(incident);
+      setIncidentHistory(prev => [incident, ...prev.filter(i => i.id !== incident.id)]);
+      if (incident?.location?.coordinates) {
+        const coords = incident.location.coordinates;
+        setFireHazards(prev => {
+          const exists = prev.some(h => Math.abs(h.position.x - coords.x) < 2 && Math.abs(h.position.y - coords.y) < 2);
+          if (!exists) {
+            return [...prev, {
+              id: `hazard_${incident.id}`,
+              position: { x: coords.x, y: coords.y, f: 0 },
+              type: 'fire_and_smoke',
+              intensity: 4,
+              active: true
+            }];
+          }
+          return prev;
+        });
+      }
+    });
+
+    newSocket.on('fire_incident_acknowledged', (incident: FireIncident) => {
+      setActiveFireIncident(prev => prev && prev.id === incident.id ? {
+        ...prev,
+        acknowledgement: {
+          is_acknowledged: true,
+          acknowledged_by: 'Control Room Operator',
+          acknowledged_at: new Date().toLocaleTimeString()
+        },
+        status: 'ACKNOWLEDGED'
+      } : prev);
+    });
+
+    newSocket.on('fire_incident_cleared', () => {
+      setActiveFireIncident(null);
+      setFireHazards([]);
+    });
+
     newSocket.on('mobile_command_received', (data) => {
       // Validate token (fixed for password-based auth)
       if (data.token !== 'mobile-auth') return;
@@ -182,7 +262,7 @@ function App() {
          window.dispatchEvent(new CustomEvent('remote_console_command', { detail: data.command }));
       }
       if (data.action === 'emergency_target') {
-         window.dispatchEvent(new CustomEvent('local_emergency_request', { detail: data }));
+         window.dispatchEvent(new CustomEvent('remote_emergency_target', { detail: { x: Number(data.x), y: Number(data.y) } }));
       }
       if (data.action === 'emergency_action') {
          if (data.type === 'ESTOP') {
@@ -218,12 +298,25 @@ function App() {
       if (data.action === 'toggle_camera') {
          window.dispatchEvent(new CustomEvent('remote_toggle_camera'));
       }
+      if (data.action === 'toggle_headlight') {
+         window.dispatchEvent(new CustomEvent('remote_toggle_headlight'));
+      }
+      if (data.action === 'trigger_audio_ping' || data.action === 'audio_ping') {
+         window.dispatchEvent(new CustomEvent('remote_audio_ping'));
+      }
+      if (data.action === 'extinguish_fire') {
+         window.dispatchEvent(new CustomEvent('remote_extinguish_fire', { detail: data }));
+      }
       if (data.action === 'toggle_voice') {
          window.dispatchEvent(new CustomEvent('remote_toggle_voice'));
       }
       if (data.action === 'dispatch_mission' && data.missionText) {
          handleGenerate(data.missionText);
       }
+    });
+
+    newSocket.on('robot_vision_requested', () => {
+      window.dispatchEvent(new CustomEvent('remote_robot_vision_requested'));
     });
 
     return () => { newSocket.close(); };
@@ -255,17 +348,117 @@ function App() {
   useEffect(() => {
     const handleLocalTelemetry = (e: any) => {
       socketRef.current?.emit('update_telemetry', e.detail);
+      if (e.detail?.position) setRobotTelemetryPos(e.detail.position);
+      if (e.detail?.state) setRobotStatusText(e.detail.state);
     };
     const handleLocalCtrUpdate = (e: any) => {
       socketRef.current?.emit('update_state', { ctrMessages: e.detail });
     };
+    const handleLocalVisionFrame = (e: any) => {
+      socketRef.current?.emit('robot_vision_frame', e.detail);
+    };
+    const handleLocalPoseStream = (e: any) => {
+      socketRef.current?.emit('robot_pose_stream', e.detail);
+    };
     window.addEventListener('local_telemetry_update', handleLocalTelemetry);
     window.addEventListener('local_ctr_messages_update', handleLocalCtrUpdate);
+    window.addEventListener('local_robot_vision_frame', handleLocalVisionFrame);
+    window.addEventListener('local_robot_pose_stream', handleLocalPoseStream);
     return () => {
        window.removeEventListener('local_telemetry_update', handleLocalTelemetry);
        window.removeEventListener('local_ctr_messages_update', handleLocalCtrUpdate);
+       window.removeEventListener('local_robot_vision_frame', handleLocalVisionFrame);
+       window.removeEventListener('local_robot_pose_stream', handleLocalPoseStream);
     };
   }, []);
+
+  // Fire Emergency Action Handlers
+  const handleAcknowledgeIncident = async (incidentId: string) => {
+    try {
+      const res = await fetch('/api/fire/acknowledge', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ incident_id: incidentId, operator_name: 'Campus Control Room Operator' })
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.incident) setActiveFireIncident(data.incident);
+      }
+    } catch (e) {
+      console.error("Failed to acknowledge incident:", e);
+    }
+  };
+
+  const handleResolveIncident = async (incidentId: string) => {
+    try {
+      await fetch('/api/fire/resolve', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ incident_id: incidentId })
+      });
+      setActiveFireIncident(null);
+      setFireHazards([]);
+    } catch (e) {
+      console.error("Failed to resolve incident:", e);
+    }
+  };
+
+  const handleSimulateAtBuilding = async (_bldgName: string, coords: GridPoint) => {
+    const newHazard: FireHazardPoint = {
+      id: `hazard_${Date.now()}`,
+      position: coords,
+      type: 'fire_and_smoke',
+      intensity: 4,
+      active: true
+    };
+    setFireHazards(prev => [...prev.filter(h => h.position.x !== coords.x || h.position.y !== coords.y), newHazard]);
+
+    try {
+      const res = await fetch('/api/fire/simulate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          target_coords: coords,
+          robot_coords: robotTelemetryPos,
+          hazard_type: 'fire_and_smoke',
+          confidence: 0.94
+        })
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.incident) {
+          setActiveFireIncident(data.incident);
+          setIncidentHistory(prev => [data.incident, ...prev.filter(i => i.id !== data.incident.id)]);
+        }
+      }
+    } catch (e) {
+      console.error("Failed to simulate fire:", e);
+    }
+  };
+
+  const handleFireDetectedByRobot = async (hazard: FireHazardPoint, robotPosCoord: GridPoint) => {
+    try {
+      const res = await fetch('/api/fire/simulate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          target_coords: hazard.position,
+          robot_coords: robotPosCoord,
+          hazard_type: hazard.type,
+          confidence: 0.96
+        })
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.incident) {
+          setActiveFireIncident(data.incident);
+          setIncidentHistory(prev => [data.incident, ...prev.filter(i => i.id !== data.incident.id)]);
+        }
+      }
+    } catch (e) {
+      console.error("Failed to dispatch fire detection:", e);
+    }
+  };
 
   const handleRestartTunnel = async () => {
     setIsRestartingTunnel(true);
@@ -397,6 +590,35 @@ function App() {
           <div className="text-[10px] text-gray-400 tracking-[0.2em] uppercase hidden md:block">AI-Enabled Campus Vision System for Emergency Detection and Surveillance</div>
         </div>
         
+        {/* Central View Switcher: Surveillance vs AI Model Analysis */}
+        <div className="flex items-center bg-black/50 border border-white/10 p-1 rounded-xl">
+          <button
+            onClick={() => handleViewSwitch('surveillance')}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+              currentView === 'surveillance'
+                ? 'bg-cyan-500 text-black shadow-lg shadow-cyan-500/25'
+                : 'text-gray-400 hover:text-white hover:bg-white/5'
+            }`}
+          >
+            <Sliders className="w-3.5 h-3.5" />
+            <span className="hidden sm:inline">Surveillance & Control</span>
+            <span className="sm:hidden">Control</span>
+          </button>
+          <button
+            onClick={() => handleViewSwitch('analysis')}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+              currentView === 'analysis'
+                ? 'bg-gradient-to-r from-cyan-500 to-blue-500 text-black shadow-lg shadow-cyan-500/25'
+                : 'text-gray-400 hover:text-white hover:bg-white/5'
+            }`}
+          >
+            <BarChart3 className="w-3.5 h-3.5" />
+            <span className="hidden sm:inline">Model & Fitting Analysis</span>
+            <span className="sm:hidden">Analysis</span>
+            <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+          </button>
+        </div>
+
         <div className="flex items-center gap-3">
           <div className="hidden sm:flex items-center gap-2 bg-white/5 border border-white/10 px-3 py-1.5 rounded-lg text-xs font-mono">
             <span className="w-2 h-2 rounded-full bg-cyan-400 animate-pulse"></span>
@@ -419,11 +641,16 @@ function App() {
         </div>
       </nav>
 
-      {/* Main Workspace Area */}
-      <div className="flex flex-col md:flex-row flex-1 p-2 md:p-6 gap-2 md:gap-6 overflow-hidden">
-      
-      {/* Main Workspace */}
-      <main className="flex-1 flex flex-col gap-2 md:gap-6 min-w-0">
+      {/* Main Content Area: Model Analysis Dashboard or 3D Surveillance & Simulation Workspace */}
+      {currentView === 'analysis' ? (
+        <div className="flex-1 overflow-hidden flex flex-col">
+          <ModelAnalysisDashboard onBackToSimulation={() => handleViewSwitch('surveillance')} />
+        </div>
+      ) : (
+        <div className="flex flex-col md:flex-row flex-1 p-2 md:p-6 gap-2 md:gap-6 overflow-hidden">
+        
+        {/* Main Workspace */}
+        <main className="flex-1 flex flex-col gap-2 md:gap-6 min-w-0">
         
         {/* Mobile Controller Banner for small screens */}
         <div className="md:hidden bg-gradient-to-r from-cyan-950/70 via-blue-950/70 to-slate-900/80 border border-cyan-500/30 rounded-xl p-3 flex items-center justify-between shadow-lg backdrop-blur-md">
@@ -437,17 +664,58 @@ function App() {
             </div>
           </div>
           <a
-            href="/mobile"
+            href="/mobile?key=1234"
+            target="_blank"
+            rel="noreferrer"
             className="px-3 py-1.5 bg-cyan-500 hover:bg-cyan-400 text-black font-black text-xs uppercase tracking-wider rounded-lg shadow-[0_0_15px_rgba(6,182,212,0.4)] transition-all flex items-center gap-1.5"
           >
             Launch <ExternalLink className="w-3.5 h-3.5" />
           </a>
+
         </div>
 
         {/* Main Simulation Area */}
-        <div className="flex-1 flex flex-col gap-6 min-w-0">
+        <div className="flex-1 flex flex-col gap-3 min-w-0">
+          {/* Floating Critical Emergency Banner - Displays only when active incident is unacknowledged/active */}
+          {activeFireIncident && activeFireIncident.status !== 'RESOLVED' && (
+            <div className="bg-red-950/80 border border-red-500/50 backdrop-blur-md px-4 py-2.5 rounded-xl shadow-[0_0_30px_rgba(239,68,68,0.35)] flex items-center justify-between gap-3 animate-in fade-in slide-in-from-top-2 duration-300">
+              <div className="flex items-center gap-3">
+                <div className="p-1.5 rounded-lg bg-red-500/30 text-red-300 animate-bounce">
+                  <Flame className="w-4 h-4 text-red-400" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-white font-black text-xs uppercase tracking-wider">
+                      🚨 ACTIVE FIRE EMERGENCY: {activeFireIncident.location.building_name}
+                    </span>
+                    <span className="px-2 py-0.5 rounded text-[9px] font-mono font-bold bg-red-500/30 text-red-300 border border-red-500/50 animate-pulse">
+                      {activeFireIncident.status}
+                    </span>
+                  </div>
+                  <p className="text-[10px] text-gray-300 font-mono">
+                    Robot Status: [{robotStatusText}] • YOLOv8 Confidence: {(activeFireIncident.confidence * 100).toFixed(0)}% • Emergency dispatch sent • Robot en route with Extinguisher Foam
+                  </p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => handleAcknowledgeIncident(activeFireIncident.id)}
+                  className="px-3 py-1 bg-white/10 hover:bg-white/20 border border-white/20 text-white font-bold text-xs rounded-lg transition-all"
+                >
+                  Acknowledge
+                </button>
+                <button
+                  onClick={() => handleResolveIncident(activeFireIncident.id)}
+                  className="px-3 py-1 bg-red-600 hover:bg-red-500 text-white font-bold text-xs rounded-lg shadow-[0_0_15px_rgba(239,68,68,0.5)] transition-all"
+                >
+                  Resolve
+                </button>
+              </div>
+            </div>
+          )}
+
           <div className="flex-1 flex gap-4 min-h-0">
-            <div className="flex-1 bg-black/40 border border-white/10 rounded-2xl shadow-2xl overflow-hidden relative min-w-0 z-10">
+            <div className="flex-1 bg-black/40 border border-white/10 rounded-2xl shadow-2xl overflow-hidden relative min-w-0 z-10 flex flex-col">
               
               {/* Floating History Sidebar Overlay */}
               {isHistoryOpen && (
@@ -470,7 +738,17 @@ function App() {
                     socketRef.current?.emit('update_state', { isOn: newOn });
                   }}
                   onEvent={() => {}} 
-                  onDispatchMission={handleGenerate} 
+                  onDispatchMission={handleGenerate}
+                  fireHazards={fireHazards}
+                  onFireHazardsChange={setFireHazards}
+                  activeFireIncident={activeFireIncident}
+                  isPlacingFire={isPlacingFire}
+                  onTogglePlaceFire={() => setIsPlacingFire(!isPlacingFire)}
+                  onFireDetected={handleFireDetectedByRobot}
+                  onAcknowledgeIncident={handleAcknowledgeIncident}
+                  onResolveIncident={handleResolveIncident}
+                  onSimulateAtBuilding={handleSimulateAtBuilding}
+                  incidentHistory={incidentHistory}
                 />
               ) : (
                 <div className="flex items-center justify-center h-full text-text-muted">
@@ -482,6 +760,7 @@ function App() {
         </div>
       </main>
       </div>
+      )}
 
       {showQR && (() => {
         const isCloudMode = connectionMode === 'cloud';
@@ -646,6 +925,17 @@ function App() {
                     </a>
                   )}
                 </div>
+
+                {/* Direct Launch Button */}
+                <a
+                  href={activePairingUrl || `/mobile?key=1234`}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="w-full py-2.5 px-4 bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 text-slate-950 font-black rounded-xl text-xs uppercase tracking-wider transition-all flex items-center justify-center gap-2 shadow-[0_0_20px_rgba(6,182,212,0.3)] cursor-pointer"
+                >
+                  <ExternalLink className="w-4 h-4" />
+                  <span>Open Mobile Controller & Vision Now</span>
+                </a>
 
                 {/* Local Wi-Fi Options (Interface switcher & custom host) */}
                 {!isCloudMode && (

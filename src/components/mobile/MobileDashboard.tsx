@@ -1,8 +1,8 @@
 import { useState } from 'react';
-import { Battery, Gauge, Navigation, Utensils, Cross, Sliders } from 'lucide-react';
+import { Battery, Gauge, Navigation, Utensils, Cross, Sliders, Eye, ChevronRight, Compass } from 'lucide-react';
 import { DeliveryModal } from '../DeliveryModal';
 
-export function MobileDashboard({ telemetry, isConnected, sendCommand, obstacleCount = 9, onSetObstacleCount }: any) {
+export function MobileDashboard({ telemetry, isConnected, sendCommand, obstacleCount = 9, onSetObstacleCount, visionFrame, onOpenVision }: any) {
   const [modalType, setModalType] = useState<'food' | 'medical' | null>(null);
 
   if (!telemetry) {
@@ -38,6 +38,66 @@ export function MobileDashboard({ telemetry, isConnected, sendCommand, obstacleC
           <div className="text-right">
             <div className="text-xs text-gray-400 font-mono mb-1">UPTIME</div>
             <div className="font-mono text-sm text-white">02:14:31</div>
+          </div>
+        </div>
+
+        {/* Live Robot Vision Quick Preview Card */}
+        <div 
+          onClick={onOpenVision}
+          className="bg-[#0b1329] border border-cyan-500/40 hover:border-cyan-400 rounded-2xl p-3.5 shadow-[0_0_25px_rgba(6,182,212,0.15)] flex flex-col gap-2.5 transition-all cursor-pointer group active:scale-[0.99]"
+        >
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <div className="p-1.5 rounded-lg bg-cyan-500/20 text-cyan-400 border border-cyan-500/30">
+                <Eye className="w-4 h-4" />
+              </div>
+              <div>
+                <span className="text-xs font-black uppercase tracking-wider text-white flex items-center gap-1.5">
+                  ROBOT VISION FEED
+                  <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-ping"></span>
+                </span>
+                <span className="text-[10px] text-gray-400 font-mono block">
+                  {visionFrame?.detectedObjects?.length ? `${visionFrame.detectedObjects.length} Targets in FOV` : 'YOLOv8 Real-Time FPV Stream'}
+                </span>
+              </div>
+            </div>
+            <span className="text-[10px] text-cyan-400 font-mono font-bold flex items-center gap-0.5 group-hover:translate-x-0.5 transition-transform">
+              OPEN CAM <ChevronRight className="w-3.5 h-3.5" />
+            </span>
+          </div>
+
+          {/* Thumbnail preview */}
+          <div className="relative aspect-[16/9] w-full rounded-xl overflow-hidden bg-black/80 border border-white/10 flex items-center justify-center">
+            {visionFrame?.image ? (
+              <img 
+                src={visionFrame.image} 
+                alt="Robot Vision Preview" 
+                className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" 
+              />
+            ) : (
+              <div className="flex flex-col items-center justify-center text-cyan-400/60 gap-1 font-mono text-[10px]">
+                <Eye className="w-6 h-6 animate-pulse" />
+                <span>CONNECTING SENSOR FEED...</span>
+              </div>
+            )}
+            
+            {/* Top Badges */}
+            <div className="absolute top-2 left-2 px-2 py-0.5 rounded bg-black/80 border border-white/10 text-[9px] font-mono text-cyan-300 flex items-center gap-1">
+              <span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-ping"></span>
+              LIVE FPV
+            </div>
+
+            {visionFrame?.heading !== undefined && (
+              <div className="absolute top-2 right-2 px-2 py-0.5 rounded bg-black/80 border border-white/10 text-[9px] font-mono text-gray-300 flex items-center gap-1">
+                <Compass className="w-3 h-3 text-cyan-400" />
+                {visionFrame.heading}°
+              </div>
+            )}
+
+            <div className="absolute bottom-2 inset-x-2 flex items-center justify-between text-[9px] font-mono text-gray-300 bg-black/75 px-2 py-1 rounded backdrop-blur-sm">
+              <span>HD 70° OPTICAL CONE</span>
+              <span className="text-cyan-400 font-bold">TAP TO EXPAND</span>
+            </div>
           </div>
         </div>
 

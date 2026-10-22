@@ -21,5 +21,13 @@ dist-ssr
 *.ntvs*
 *.njsproj
 *.sln
-*.sw?
 bin/
+
+# Python Virtual Environments & Cache
+venv/
+.venv/
+python_service/venv/
+python_service/snapshots/*.jpg
+__pycache__/
+*.pyc
+*.pt

@@ -2,16 +2,17 @@ import { useState, useEffect, useRef } from 'react';
 import { io, Socket } from 'socket.io-client';
 import { MobileDashboard } from './components/mobile/MobileDashboard';
 import { MobileControls } from './components/mobile/MobileControls';
+import { MobileRobotVision } from './components/mobile/MobileRobotVision';
 import { MobileEmergencyMap } from './components/mobile/MobileEmergencyMap';
 import { MobileTerminal } from './components/mobile/MobileTerminal';
 import { MobileEmergencyPanel } from './components/mobile/MobileEmergencyPanel';
-import { Activity, Gamepad2, Map as MapIcon, Terminal, AlertTriangle } from 'lucide-react';
+import { Activity, Gamepad2, Map as MapIcon, Terminal, AlertTriangle, Eye } from 'lucide-react';
 
 export default function MobileApp() {
   const [isAuthenticated, setIsAuthenticated] = useState(() => {
     // Auto-authenticate if key=1234 or auth=1234 in URL, or stored in localStorage
     const params = new URLSearchParams(window.location.search);
-    const key = params.get('key') || params.get('auth') || params.get('pin');
+    const key = params.get('key') || params.get('auth') || params.get('pin') || params.get('token');
     if (key === '1234') {
       try { localStorage.setItem('pas_mobile_authenticated', 'true'); } catch(e) {}
       return true;
@@ -29,6 +30,8 @@ export default function MobileApp() {
   const [isConnected, setIsConnected] = useState(false);
   const socketRef = useRef<Socket | null>(null);
   const [telemetry, setTelemetry] = useState<any>(null);
+  const [visionFrame, setVisionFrame] = useState<any>(null);
+  const [robotPose, setRobotPose] = useState<any>(null);
   const [mapData, setMapData] = useState<any>(null);
   const [pendingEmergency, setPendingEmergency] = useState<{x: number, y: number} | null>(null);
   const [obstacleCount, setObstacleCount] = useState<number>(9);
@@ -49,6 +52,7 @@ export default function MobileApp() {
 
     socket.on('connect', () => {
       setIsConnected(true);
+      socket.emit('request_robot_vision');
     });
 
     socket.on('disconnect', () => {
@@ -57,6 +61,14 @@ export default function MobileApp() {
 
     socket.on('telemetry_update', (data) => {
       setTelemetry(data);
+    });
+
+    socket.on('robot_vision_frame', (frameData) => {
+      setVisionFrame(frameData);
+    });
+
+    socket.on('robot_pose_stream', (poseData) => {
+      setRobotPose(poseData);
     });
 
     socket.on('obstacle_count_updated', (data: { count: number }) => {
@@ -84,9 +96,11 @@ export default function MobileApp() {
     return (
       <div className="min-h-screen bg-[#020817] flex items-center justify-center p-4">
         <div className="bg-[#0a1122] border border-cyan-500/30 rounded-2xl p-8 w-full max-w-sm shadow-2xl flex flex-col items-center">
-          <Gamepad2 className="w-16 h-16 text-cyan-500 mb-6" />
-          <h1 className="text-2xl font-black text-white mb-2 uppercase tracking-widest text-center">Mobile Control</h1>
-          <p className="text-sm text-gray-400 mb-8 text-center">Enter the security password to access the robot controls.</p>
+          <div className="w-16 h-16 rounded-2xl bg-cyan-500/20 border border-cyan-500/40 flex items-center justify-center text-cyan-400 mb-5 shadow-[0_0_25px_rgba(6,182,212,0.3)]">
+            <Eye className="w-8 h-8 animate-pulse" />
+          </div>
+          <h1 className="text-xl font-black text-white mb-1 uppercase tracking-widest text-center">Mobile Robot Link</h1>
+          <p className="text-xs text-gray-400 mb-6 text-center">Live robot vision, touch steering & campus emergency controls.</p>
           
           <form 
             onSubmit={(e) => {
@@ -99,19 +113,33 @@ export default function MobileApp() {
                 setError(true);
               }
             }}
-            className="w-full"
+            className="w-full space-y-3"
           >
             <input
               type="password"
               value={passwordInput}
               onChange={(e) => setPasswordInput(e.target.value)}
-              placeholder="Enter Password (1234)"
-              className={`w-full bg-[#020817] border ${error ? 'border-red-500' : 'border-cyan-500/50'} rounded-xl px-4 py-3 text-white text-center text-xl tracking-widest outline-none focus:border-cyan-400 transition-colors mb-4`}
+              placeholder="Enter PIN (1234)"
+              className={`w-full bg-[#020817] border ${error ? 'border-red-500' : 'border-cyan-500/50'} rounded-xl px-4 py-3 text-white text-center text-xl tracking-widest outline-none focus:border-cyan-400 transition-colors`}
             />
-            {error && <p className="text-red-500 text-xs font-bold uppercase text-center mb-4">Incorrect Password</p>}
+            {error && <p className="text-red-500 text-xs font-bold uppercase text-center">Incorrect PIN Code</p>}
             
-            <button type="submit" className="w-full bg-cyan-600 hover:bg-cyan-500 text-white font-black uppercase tracking-widest py-3 rounded-xl transition-all shadow-[0_0_15px_rgba(6,182,212,0.3)] cursor-pointer">
-              Connect
+            <button 
+              type="submit" 
+              className="w-full bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white font-black uppercase tracking-widest py-3 rounded-xl transition-all shadow-[0_0_20px_rgba(6,182,212,0.4)] cursor-pointer active:scale-98"
+            >
+              Connect Controller
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                try { localStorage.setItem('pas_mobile_authenticated', 'true'); } catch(err) {}
+                setIsAuthenticated(true);
+              }}
+              className="w-full py-2 bg-white/5 hover:bg-white/10 text-cyan-400 text-xs font-mono font-bold rounded-xl border border-white/10 transition-colors"
+            >
+              Quick Connect (Default PIN: 1234)
             </button>
           </form>
         </div>
@@ -151,7 +179,20 @@ export default function MobileApp() {
             isConnected={isConnected} 
             sendCommand={sendCommand} 
             obstacleCount={obstacleCount} 
-            onSetObstacleCount={handleSetObstacleCount} 
+            onSetObstacleCount={handleSetObstacleCount}
+            visionFrame={visionFrame}
+            onOpenVision={() => setActiveTab('vision')}
+          />
+        );
+      case 'vision':
+        return (
+          <MobileRobotVision
+            visionFrame={visionFrame}
+            robotPose={robotPose}
+            mapData={mapData}
+            sendCommand={sendCommand}
+            telemetry={telemetry}
+            isConnected={isConnected}
           />
         );
       case 'controls':
@@ -161,6 +202,8 @@ export default function MobileApp() {
             sendCommand={sendCommand} 
             obstacleCount={obstacleCount} 
             onSetObstacleCount={handleSetObstacleCount} 
+            visionFrame={visionFrame}
+            onOpenVision={() => setActiveTab('vision')}
           />
         );
       case 'map':
@@ -177,24 +220,28 @@ export default function MobileApp() {
   return (
     <div className="min-h-[100dvh] bg-[#020817] text-gray-100 flex flex-col font-sans overflow-hidden">
       {/* Header */}
-      <header className="flex items-center justify-between p-4 border-b border-white/10 bg-[#0f172a] shrink-0">
-        <div className="flex items-center gap-3">
-          <div className="w-8 h-8 rounded bg-cyan-500/20 border border-cyan-500/50 flex items-center justify-center">
-            <Gamepad2 className="w-5 h-5 text-cyan-400" />
+      <header className="flex items-center justify-between p-3.5 border-b border-white/10 bg-[#0f172a] shrink-0">
+        <div className="flex items-center gap-2.5">
+          <div className="w-8 h-8 rounded-lg bg-cyan-500/20 border border-cyan-500/50 flex items-center justify-center">
+            <Eye className="w-5 h-5 text-cyan-400" />
           </div>
           <div>
-            <h1 className="font-bold text-sm tracking-widest text-cyan-400">PAS-MOBILE</h1>
-            <div className="flex items-center gap-2">
+            <h1 className="font-black text-xs tracking-widest text-cyan-400 uppercase">ACVS ROBOT MOBILE</h1>
+            <div className="flex items-center gap-1.5">
               <div className={`w-2 h-2 rounded-full ${isConnected ? 'bg-green-500' : 'bg-red-500'} animate-pulse`} />
-              <span className="text-xs text-gray-400 font-mono">
-                {isConnected ? 'LINK ACTIVE' : 'NO SIGNAL'}
+              <span className="text-[10px] text-gray-400 font-mono">
+                {isConnected ? 'TELEMETRY & VISION ONLINE' : 'DISCONNECTED'}
               </span>
             </div>
           </div>
         </div>
-        <div className="px-2 py-1 bg-white/5 rounded border border-white/10 text-xs font-mono text-cyan-500/50">
-          ID: MOBILE
-        </div>
+        <button
+          onClick={() => setActiveTab('vision')}
+          className="px-2.5 py-1 bg-cyan-500/10 hover:bg-cyan-500/20 border border-cyan-500/40 rounded-lg text-[10px] font-mono font-bold text-cyan-300 flex items-center gap-1 transition-all"
+        >
+          <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-ping"></span>
+          <span>ROBOT CAM</span>
+        </button>
       </header>
 
       {/* Main Content Area */}
@@ -238,8 +285,16 @@ export default function MobileApp() {
 
       {/* Bottom Navigation */}
       <nav className="shrink-0 bg-[#0f172a] border-t border-white/10 pb-safe">
-        <div className="flex items-center justify-around p-2">
+        <div className="flex items-center justify-around p-1.5">
           <NavButton icon={<Activity />} label="STATUS" active={activeTab === 'dashboard'} onClick={() => setActiveTab('dashboard')} />
+          <NavButton 
+            icon={<Eye />} 
+            label="VISION" 
+            active={activeTab === 'vision'} 
+            onClick={() => setActiveTab('vision')} 
+            isSpecial 
+            hasBadge={visionFrame?.hazardAlert}
+          />
           <NavButton icon={<Gamepad2 />} label="DRIVE" active={activeTab === 'controls'} onClick={() => setActiveTab('controls')} />
           <NavButton icon={<MapIcon />} label="MAP" active={activeTab === 'map'} onClick={() => setActiveTab('map')} />
           <NavButton icon={<Terminal />} label="CMD" active={activeTab === 'terminal'} onClick={() => setActiveTab('terminal')} />
@@ -250,18 +305,23 @@ export default function MobileApp() {
   );
 }
 
-function NavButton({ icon, label, active, onClick, isDanger = false }: any) {
+function NavButton({ icon, label, active, onClick, isDanger = false, isSpecial = false, hasBadge = false }: any) {
   return (
     <button
       onClick={onClick}
-      className={`flex flex-col items-center gap-1 p-2 rounded-lg min-w-[64px] transition-colors
-        ${active ? (isDanger ? 'text-red-400 bg-red-400/10' : 'text-cyan-400 bg-cyan-400/10') : 'text-gray-500 hover:text-gray-300'}
+      className={`relative flex flex-col items-center gap-0.5 p-1.5 rounded-lg min-w-[50px] transition-all cursor-pointer
+        ${active 
+          ? (isDanger ? 'text-red-400 bg-red-400/15' : isSpecial ? 'text-cyan-300 bg-cyan-500/20 shadow-[0_0_15px_rgba(6,182,212,0.3)]' : 'text-cyan-400 bg-cyan-400/10') 
+          : (isSpecial ? 'text-cyan-400/80 hover:text-cyan-300' : 'text-gray-400 hover:text-gray-200')}
       `}
     >
-      <div className={`[&>svg]:w-6 [&>svg]:h-6 ${active && isDanger ? 'animate-pulse' : ''}`}>
+      {hasBadge && (
+        <span className="absolute top-1 right-2.5 w-2 h-2 rounded-full bg-red-500 animate-ping"></span>
+      )}
+      <div className={`[&>svg]:w-5 [&>svg]:h-5 ${active && isDanger ? 'animate-pulse' : ''} ${isSpecial && active ? 'text-cyan-300 stroke-[2.2]' : ''}`}>
         {icon}
       </div>
-      <span className="text-[10px] font-bold tracking-wider">{label}</span>
+      <span className="text-[9px] font-bold tracking-wider">{label}</span>
     </button>
   );
 }

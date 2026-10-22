@@ -75,3 +75,62 @@ export interface MissionHistoryItem {
   result: MissionResult;
   selectedStrategyId: string | null;
 }
+
+export interface FireDetectionItem {
+  type: 'fire' | 'smoke';
+  label: string;
+  confidence: number;
+  bbox: [number, number, number, number];
+  area?: number;
+  verification_method?: string;
+}
+
+export interface FireLocationInfo {
+  is_inside_building: boolean;
+  building_id: string;
+  building_name: string;
+  zone: string;
+  building_type: string;
+  floor: string;
+  door_coordinate?: GridPoint;
+  nearest_distance_meters?: number;
+  relative_direction?: string;
+  coordinates: { x: number; y: number; floor?: number };
+  display_location: string;
+  speech_location?: string;
+}
+
+export interface FireIncident {
+  id: string;
+  status: 'ACTIVE_EMERGENCY' | 'ACKNOWLEDGED' | 'RESOLVED';
+  detection_type: string;
+  confidence: number;
+  detections: FireDetectionItem[];
+  timestamp: number;
+  timestamp_formatted: string;
+  last_seen_timestamp: number;
+  location: FireLocationInfo;
+  robot_position: { x: number; y: number; floor?: number };
+  safe_observation_point: GridPoint;
+  snapshot_filename?: string;
+  snapshot_base64?: string;
+  acknowledgement: {
+    is_acknowledged: boolean;
+    acknowledged_by?: string | null;
+    acknowledged_at?: string | null;
+  };
+  notifications: {
+    sms_status: 'pending' | 'sent' | 'delivered' | 'failed';
+    voice_status: 'pending' | 'sent' | 'initiated' | 'failed';
+    dispatch_details?: any;
+  };
+}
+
+export interface FireHazardPoint {
+  id: string;
+  position: GridPoint;
+  type: 'fire' | 'smoke' | 'fire_and_smoke';
+  intensity: number;
+  active: boolean;
+}
+

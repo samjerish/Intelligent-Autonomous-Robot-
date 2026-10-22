@@ -91,6 +91,25 @@ function startCloudTunnel() {
 // Start tunnel immediately
 startCloudTunnel();
 
+// Start Python AI Fire & Smoke Detection Service
+const pythonServiceBin = path.join(projectRoot, 'python_service', 'venv', 'bin', 'python3');
+let pythonProc = null;
+function startPythonFireService() {
+  if (existsSync(pythonServiceBin)) {
+    console.log('[FireAI] Spawning Python AI Fire Detection & Emergency Service on port 5005...');
+    pythonProc = spawn(pythonServiceBin, ['-m', 'uvicorn', 'python_service.server:app', '--host', '0.0.0.0', '--port', '5005'], {
+      cwd: projectRoot,
+      stdio: 'inherit'
+    });
+    pythonProc.on('exit', (code) => {
+      console.log('[FireAI] Python service exited with code', code);
+    });
+  } else {
+    console.log('[FireAI] Notice: python_service/venv not found. Python service not auto-spawned.');
+  }
+}
+startPythonFireService();
+
 const app = express();
 const port = 3000;
 const httpServer = createServer(app);
@@ -513,8 +532,118 @@ let appState = {
   history: [],
   currentMission: null,
   isOn: true,
-  obstacleCount: 9
+  obstacleCount: 9,
+  activeFireIncident: null,
+  fireHistory: []
 };
+
+// Fire Emergency API Bridge (calls Python service on 5005 with in-memory fallback)
+const PYTHON_FIRE_URL = 'http://127.0.0.1:5005';
+
+app.get('/api/fire/status', async (req, res) => {
+  try {
+    const pyRes = await fetch(`${PYTHON_FIRE_URL}/api/fire/status`);
+    if (pyRes.ok) {
+      const data = await pyRes.json();
+      return res.json(data);
+    }
+  } catch (err) {}
+  res.json({
+    service: "ACVS-EDS Fire Detection Engine (Node Fallback)",
+    status: "ONLINE",
+    active_incident: appState.activeFireIncident,
+    total_incidents_recorded: appState.fireHistory.length
+  });
+});
+
+app.get('/api/fire/incidents', async (req, res) => {
+  try {
+    const pyRes = await fetch(`${PYTHON_FIRE_URL}/api/fire/incidents`);
+    if (pyRes.ok) {
+      const data = await pyRes.json();
+      return res.json(data);
+    }
+  } catch (err) {}
+  res.json({
+    active_incident: appState.activeFireIncident,
+    history: appState.fireHistory
+  });
+});
+
+app.post('/api/fire/detect', async (req, res) => {
+  try {
+    const pyRes = await fetch(`${PYTHON_FIRE_URL}/api/fire/detect`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(req.body)
+    });
+    if (pyRes.ok) {
+      const data = await pyRes.json();
+      if (data.incident) {
+        appState.activeFireIncident = data.incident;
+        appState.fireHistory.unshift(data.incident);
+        io.emit('fire_emergency_alert', data.incident);
+      }
+      return res.json(data);
+    }
+  } catch (err) {}
+  res.status(502).json({ error: "Python vision detector not reachable" });
+});
+
+app.post('/api/fire/simulate', async (req, res) => {
+  try {
+    const pyRes = await fetch(`${PYTHON_FIRE_URL}/api/fire/simulate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(req.body)
+    });
+    if (pyRes.ok) {
+      const data = await pyRes.json();
+      if (data.incident) {
+        appState.activeFireIncident = data.incident;
+        appState.fireHistory.unshift(data.incident);
+        io.emit('fire_emergency_alert', data.incident);
+      }
+      return res.json(data);
+    }
+  } catch (err) {
+    console.error("[Node] Error calling python simulate:", err);
+  }
+  res.status(502).json({ error: "Failed to simulate fire hazard" });
+});
+
+app.post('/api/fire/acknowledge', async (req, res) => {
+  try {
+    const pyRes = await fetch(`${PYTHON_FIRE_URL}/api/fire/acknowledge`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(req.body)
+    });
+    if (pyRes.ok) {
+      const data = await pyRes.json();
+      if (data.incident) {
+        if (appState.activeFireIncident && appState.activeFireIncident.id === data.incident.id) {
+          appState.activeFireIncident = data.incident;
+        }
+        io.emit('fire_incident_acknowledged', data.incident);
+      }
+      return res.json(data);
+    }
+  } catch (err) {}
+  res.json({ success: true, acknowledged: true });
+});
+
+app.post('/api/fire/resolve', async (req, res) => {
+  const { incident_id } = req.body || {};
+  try {
+    if (incident_id) {
+      await fetch(`${PYTHON_FIRE_URL}/api/fire/resolve/${incident_id}`, { method: 'POST' });
+    }
+  } catch (err) {}
+  appState.activeFireIncident = null;
+  io.emit('fire_incident_cleared', { incident_id });
+  res.json({ success: true, resolved: true });
+});
 
 app.get('/api/state', (req, res) => {
   res.json(appState);
@@ -588,5 +717,49 @@ io.on('connection', (socket) => {
   socket.on('update_telemetry', (data) => {
     telemetry = { ...telemetry, ...data };
     socket.broadcast.emit('telemetry_update', telemetry);
+  });
+
+  // Robot Vision Frame Broadcast (Desktop -> Server -> Mobile)
+  socket.on('robot_vision_frame', (frameData) => {
+    socket.broadcast.emit('robot_vision_frame', frameData);
+  });
+
+  // High-frequency Robot Pose Stream for zero-lag 60 FPS FPV Digital Twin
+  socket.on('robot_pose_stream', (poseData) => {
+    socket.broadcast.emit('robot_pose_stream', poseData);
+  });
+
+  socket.on('request_robot_vision', (data) => {
+    socket.broadcast.emit('robot_vision_requested', data);
+  });
+
+
+  // Fire Emergency Sockets
+  socket.emit('fire_state_init', {
+    activeIncident: appState.activeFireIncident,
+    history: appState.fireHistory
+  });
+
+  socket.on('fire_emergency_detected', (incident) => {
+    appState.activeFireIncident = incident;
+    appState.fireHistory.unshift(incident);
+    io.emit('fire_emergency_alert', incident);
+  });
+
+  socket.on('fire_incident_ack', (data) => {
+    if (appState.activeFireIncident && appState.activeFireIncident.id === data.incident_id) {
+      appState.activeFireIncident.acknowledgement = {
+        is_acknowledged: true,
+        acknowledged_by: data.operator_name || 'Control Room Operator',
+        acknowledged_at: new Date().toLocaleTimeString()
+      };
+      appState.activeFireIncident.status = 'ACKNOWLEDGED';
+    }
+    io.emit('fire_incident_acknowledged', data);
+  });
+
+  socket.on('fire_incident_resolved', (data) => {
+    appState.activeFireIncident = null;
+    io.emit('fire_incident_cleared', data);
   });
 });
