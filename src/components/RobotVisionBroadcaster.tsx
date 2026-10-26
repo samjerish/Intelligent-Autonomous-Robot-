@@ -42,8 +42,47 @@ export const RobotVisionBroadcaster: React.FC<RobotVisionBroadcasterProps> = ({
 }) => {
   const { gl, scene } = useThree();
   const [headlights, setHeadlights] = useState(false);
-  const lastCaptureTime = useRef(0);
   const targetMeshRef = useRef<THREE.Object3D>(new THREE.Object3D());
+
+  // FPV Camera setup - 480x360 4:3 high-resolution perspective camera mounted on robot sensor mast
+  const fpvCamera = useMemo(() => {
+    const cam = new THREE.PerspectiveCamera(75, 480 / 360, 0.08, 400);
+    return cam;
+  }, []);
+
+  // Smoothed camera tracking vectors to eliminate micro-jitter during robot movement
+  const smoothCamPos = useRef(new THREE.Vector3());
+  const smoothCamLook = useRef(new THREE.Vector3());
+  const isCamInitialized = useRef(false);
+
+  // Offscreen WebGL render target & 2D canvas buffer (480x360)
+  const renderTarget = useMemo(() => {
+    return new THREE.WebGLRenderTarget(480, 360, {
+      minFilter: THREE.LinearFilter,
+      magFilter: THREE.LinearFilter,
+      format: THREE.RGBAFormat,
+    });
+  }, []);
+
+  const readBuf = useMemo(() => new Uint8Array(480 * 360 * 4), []);
+  const canvas = useMemo(() => {
+    const c = document.createElement('canvas');
+    c.width = 480;
+    c.height = 360;
+    return c;
+  }, []);
+  const ctx = useMemo(() => canvas.getContext('2d', { willReadFrequently: false }), [canvas]);
+
+  const persistentImgData = useRef<ImageData | null>(null);
+  const lastPoseTime = useRef(0);
+  const lastSocketTime = useRef(0);
+  const lastRequestTime = useRef(Date.now()); // active on start
+
+  useEffect(() => {
+    if (ctx && !persistentImgData.current) {
+      persistentImgData.current = ctx.createImageData(480, 360);
+    }
+  }, [ctx]);
 
   // Headlight toggle remote event listener
   useEffect(() => {
@@ -54,40 +93,6 @@ export const RobotVisionBroadcaster: React.FC<RobotVisionBroadcasterProps> = ({
     return () => window.removeEventListener('remote_toggle_headlight', handleToggleHeadlight);
   }, []);
 
-  // FPV Camera setup - mounted on robot sensor mast
-  const fpvCamera = useMemo(() => {
-    const cam = new THREE.PerspectiveCamera(70, 320 / 240, 0.1, 350);
-    return cam;
-  }, []);
-
-  // Offscreen WebGL render target & 2D canvas buffer (320x240 for high performance + low bandwidth)
-  const renderTarget = useMemo(() => {
-    return new THREE.WebGLRenderTarget(320, 240, {
-      minFilter: THREE.LinearFilter,
-      magFilter: THREE.LinearFilter,
-      format: THREE.RGBAFormat,
-    });
-  }, []);
-
-  const readBuf = useMemo(() => new Uint8Array(320 * 240 * 4), []);
-  const canvas = useMemo(() => {
-    const c = document.createElement('canvas');
-    c.width = 320;
-    c.height = 240;
-    return c;
-  }, []);
-  const ctx = useMemo(() => canvas.getContext('2d', { willReadFrequently: false }), [canvas]);
-
-  const persistentImgData = useRef<ImageData | null>(null);
-  const lastPoseTime = useRef(0);
-  const lastRequestTime = useRef(Date.now()); // active on start
-
-  useEffect(() => {
-    if (ctx && !persistentImgData.current) {
-      persistentImgData.current = ctx.createImageData(320, 240);
-    }
-  }, [ctx]);
-
   // Listen for vision requests from mobile devices
   useEffect(() => {
     const handleVisionRequested = () => {
@@ -97,15 +102,22 @@ export const RobotVisionBroadcaster: React.FC<RobotVisionBroadcasterProps> = ({
     return () => window.removeEventListener('remote_robot_vision_requested', handleVisionRequested);
   }, []);
 
-  // Frame Capture & High-Frequency Pose Stream in animation loop
-  useFrame(() => {
+  // Frame Capture & High-Frequency Stream in animation loop
+  useFrame((_state, delta) => {
     const now = performance.now();
     if (!robotPosRef.current) return;
     const pos = robotPosRef.current;
     const rot = robotRotRef.current || 0;
-    const deg = Math.round(((-rot * 180 / Math.PI) % 360 + 360) % 360);
 
-    // 1. High-Frequency Pose Stream (30-40 Hz, ~28ms) for zero-lag 60 FPS Digital Twin
+    // True robot forward direction vector
+    // In our 3D coordinate system, robot faces +Z when rot = 0
+    const forwardX = Math.sin(rot);
+    const forwardZ = Math.cos(rot);
+
+    // Precise cardinal heading in degrees (0 = N, 90 = E, 180 = S, 270 = W)
+    const deg = Math.round(((Math.atan2(forwardX, forwardZ) * 180 / Math.PI) % 360 + 360) % 360);
+
+    // 1. High-Frequency Pose Stream (30-40 Hz, ~28ms) for zero-lag Digital Twin
     if (now - lastPoseTime.current >= 28) {
       lastPoseTime.current = now;
       window.dispatchEvent(new CustomEvent('local_robot_pose_stream', {
@@ -125,56 +137,86 @@ export const RobotVisionBroadcaster: React.FC<RobotVisionBroadcasterProps> = ({
       }));
     }
 
-    // 2. Video Frame Capture throttled to ~18 FPS (every 55ms)
-    if (now - lastCaptureTime.current < 55) return;
-    lastCaptureTime.current = now;
+    // Check if desktop PIP is open or mobile has recently requested stream
+    const pipCanvas = document.getElementById('robot-pip-canvas') as HTMLCanvasElement | null;
+    const hasMobileClient = now - lastRequestTime.current < 15000;
 
-    // Camera mounted forward on robot sensor mast at y = 0.95m
-    const forwardX = -Math.sin(rot);
-    const forwardZ = -Math.cos(rot);
-    const camX = pos.x + forwardX * 0.3;
-    const camY = pos.y + 0.95;
-    const camZ = pos.z + forwardZ * 0.3;
+    // Camera mounted forward on robot sensor head at eye-level:
+    // y = 1.65m (head level), z = 0.45m forward from robot center (in front of visor)
+    const targetCamX = pos.x + forwardX * 0.45;
+    const targetCamY = pos.y + 1.65;
+    const targetCamZ = pos.z + forwardZ * 0.45;
 
-    fpvCamera.position.set(camX, camY, camZ);
-    const lookTarget = new THREE.Vector3(
-      camX + forwardX * 12,
-      camY - 0.25, // slight downward pitch looking onto road
-      camZ + forwardZ * 12
+    const targetLook = new THREE.Vector3(
+      targetCamX + forwardX * 18,
+      targetCamY - 0.22, // slight downward pitch looking onto road and horizon
+      targetCamZ + forwardZ * 18
     );
-    fpvCamera.lookAt(lookTarget);
+
+    const targetPos = new THREE.Vector3(targetCamX, targetCamY, targetCamZ);
+
+    if (!isCamInitialized.current) {
+      smoothCamPos.current.copy(targetPos);
+      smoothCamLook.current.copy(targetLook);
+      isCamInitialized.current = true;
+    } else {
+      // Butter-smooth camera position and look lerp
+      const lerpAlpha = 1 - Math.pow(0.0001, delta);
+      smoothCamPos.current.lerp(targetPos, lerpAlpha);
+      smoothCamLook.current.lerp(targetLook, lerpAlpha);
+    }
+
+    fpvCamera.position.copy(smoothCamPos.current);
+    fpvCamera.lookAt(smoothCamLook.current);
     fpvCamera.updateMatrixWorld();
 
     // Position headlight target ahead
     if (targetMeshRef.current) {
-      targetMeshRef.current.position.set(camX + forwardX * 15, camY - 0.5, camZ + forwardZ * 15);
+      targetMeshRef.current.position.set(
+        targetCamX + forwardX * 16,
+        targetCamY - 0.8,
+        targetCamZ + forwardZ * 16
+      );
       targetMeshRef.current.updateMatrixWorld();
     }
+
+    // Skip offscreen GPU render if neither PIP nor mobile is requesting vision
+    if (!pipCanvas && !hasMobileClient) return;
 
     // Render FPV scene into offscreen render target
     const currentRenderTarget = gl.getRenderTarget();
     gl.setRenderTarget(renderTarget);
     gl.render(scene, fpvCamera);
-    gl.readRenderTargetPixels(renderTarget, 0, 0, 320, 240, readBuf);
+    gl.readRenderTargetPixels(renderTarget, 0, 0, 480, 360, readBuf);
     gl.setRenderTarget(currentRenderTarget);
 
-    // Fast flip vertically from WebGL to 2D canvas using persistent buffer
+    // Fast vertical flip from WebGL buffer to 2D canvas using persistent buffer
     if (ctx) {
-      if (!persistentImgData.current) {
-        persistentImgData.current = ctx.createImageData(320, 240);
+      if (!persistentImgData.current || persistentImgData.current.width !== 480) {
+        persistentImgData.current = ctx.createImageData(480, 360);
       }
       const data = persistentImgData.current.data;
-      for (let y = 0; y < 240; y++) {
-        const srcRow = (239 - y) * 320 * 4;
-        const dstRow = y * 320 * 4;
-        data.set(readBuf.subarray(srcRow, srcRow + 1280), dstRow);
+      const rowBytes = 480 * 4;
+      for (let y = 0; y < 360; y++) {
+        const srcRow = (359 - y) * rowBytes;
+        const dstRow = y * rowBytes;
+        data.set(readBuf.subarray(srcRow, srcRow + rowBytes), dstRow);
       }
       ctx.putImageData(persistentImgData.current, 0, 0);
+
+      // A. Direct Hardware-Accelerated Blit to Desktop PIP Canvas (0ms Latency, 60 FPS)
+      if (pipCanvas) {
+        const pipCtx = pipCanvas.getContext('2d');
+        if (pipCtx) {
+          pipCtx.drawImage(canvas, 0, 0, pipCanvas.width, pipCanvas.height);
+        }
+      }
 
       // Analyze camera frustum detections (YOLOv8 vision simulation)
       const detectedBoxes: DetectedBox[] = [];
       let hazardAlert = false;
       let nearestObstacle = 999;
+      const camForward = new THREE.Vector3(forwardX, 0, forwardZ).normalize();
 
       // 1. Fire hazards in field of view
       if (fireHazards && fireHazards.length > 0) {
@@ -184,28 +226,31 @@ export const RobotVisionBroadcaster: React.FC<RobotVisionBroadcasterProps> = ({
           const dist = pos.distanceTo(fVec);
           if (dist < nearestObstacle) nearestObstacle = dist;
 
-          if (dist <= 25) {
-            // Project into camera screen coordinates
-            const proj = fVec.clone().project(fpvCamera);
-            if (proj.z > 0 && proj.z < 1 && Math.abs(proj.x) < 1.05 && Math.abs(proj.y) < 1.05) {
-              hazardAlert = true;
-              const px = ((proj.x + 1) / 2) * 100;
-              const py = ((1 - proj.y) / 2) * 100;
-              const sizeFactor = Math.max(10, Math.min(38, (1 / (dist + 0.5)) * 140));
-              detectedBoxes.push({
-                id: `fire_${f.id}`,
-                type: 'fire',
-                label: `ACTIVE FIRE HAZARD`,
-                confidence: Math.round(92 + Math.random() * 7),
-                distance: parseFloat(dist.toFixed(1)),
-                boxPercent: {
-                  x: Math.max(2, px - sizeFactor / 2),
-                  y: Math.max(5, py - sizeFactor / 1.6),
-                  w: sizeFactor,
-                  h: sizeFactor * 1.2
-                },
-                color: '#ef4444'
-              });
+          if (dist <= 30) {
+            const toTarget = new THREE.Vector3().subVectors(fVec, fpvCamera.position);
+            // Verify hazard is in front of camera
+            if (toTarget.dot(camForward) > 0.1) {
+              const proj = fVec.clone().project(fpvCamera);
+              if (proj.z > -1 && proj.z < 1 && Math.abs(proj.x) < 1.05 && Math.abs(proj.y) < 1.05) {
+                hazardAlert = true;
+                const px = ((proj.x + 1) / 2) * 100;
+                const py = ((1 - proj.y) / 2) * 100;
+                const sizeFactor = Math.max(10, Math.min(42, (1 / (dist + 0.5)) * 140));
+                detectedBoxes.push({
+                  id: `fire_${f.id}`,
+                  type: 'fire',
+                  label: `ACTIVE FIRE HAZARD`,
+                  confidence: Math.round(94 + Math.random() * 5),
+                  distance: parseFloat(dist.toFixed(1)),
+                  boxPercent: {
+                    x: Math.max(2, px - sizeFactor / 2),
+                    y: Math.max(5, py - sizeFactor / 1.6),
+                    w: sizeFactor,
+                    h: sizeFactor * 1.2
+                  },
+                  color: '#ef4444'
+                });
+              }
             }
           }
         }
@@ -226,27 +271,30 @@ export const RobotVisionBroadcaster: React.FC<RobotVisionBroadcasterProps> = ({
           const dist = pos.distanceTo(obsPosVec);
           if (dist < nearestObstacle) nearestObstacle = dist;
 
-          if (dist <= 18) {
-            const proj = obsPosVec.clone().project(fpvCamera);
-            if (proj.z > 0 && proj.z < 1 && Math.abs(proj.x) < 1.05 && Math.abs(proj.y) < 1.05) {
-              const isCar = obs.type === 'car';
-              const px = ((proj.x + 1) / 2) * 100;
-              const py = ((1 - proj.y) / 2) * 100;
-              const sizeFactor = Math.max(8, Math.min(32, (1 / (dist + 0.5)) * 110));
-              detectedBoxes.push({
-                id: `obs_${obs.id}`,
-                type: isCar ? 'car' : 'pedestrian',
-                label: isCar ? `CAMPUS VEHICLE` : `PEDESTRIAN`,
-                confidence: Math.round(88 + Math.random() * 11),
-                distance: parseFloat(dist.toFixed(1)),
-                boxPercent: {
-                  x: Math.max(2, px - sizeFactor / 2),
-                  y: Math.max(5, py - sizeFactor / 1.8),
-                  w: sizeFactor,
-                  h: isCar ? sizeFactor * 0.8 : sizeFactor * 1.4
-                },
-                color: isCar ? '#f59e0b' : '#06b6d4'
-              });
+          if (dist <= 24) {
+            const toTarget = new THREE.Vector3().subVectors(obsPosVec, fpvCamera.position);
+            if (toTarget.dot(camForward) > 0.1) {
+              const proj = obsPosVec.clone().project(fpvCamera);
+              if (proj.z > -1 && proj.z < 1 && Math.abs(proj.x) < 1.05 && Math.abs(proj.y) < 1.05) {
+                const isCar = obs.type === 'car';
+                const px = ((proj.x + 1) / 2) * 100;
+                const py = ((1 - proj.y) / 2) * 100;
+                const sizeFactor = Math.max(8, Math.min(36, (1 / (dist + 0.5)) * 110));
+                detectedBoxes.push({
+                  id: `obs_${obs.id}`,
+                  type: isCar ? 'car' : 'pedestrian',
+                  label: isCar ? `CAMPUS VEHICLE` : `PEDESTRIAN`,
+                  confidence: Math.round(90 + Math.random() * 9),
+                  distance: parseFloat(dist.toFixed(1)),
+                  boxPercent: {
+                    x: Math.max(2, px - sizeFactor / 2),
+                    y: Math.max(5, py - sizeFactor / 1.8),
+                    w: sizeFactor,
+                    h: isCar ? sizeFactor * 0.8 : sizeFactor * 1.4
+                  },
+                  color: isCar ? '#f59e0b' : '#06b6d4'
+                });
+              }
             }
           }
         }
@@ -260,42 +308,37 @@ export const RobotVisionBroadcaster: React.FC<RobotVisionBroadcasterProps> = ({
           const dist = pos.distanceTo(bVec);
           if (dist < nearestObstacle) nearestObstacle = dist;
 
-          if (dist <= 14) {
-            const proj = bVec.clone().project(fpvCamera);
-            if (proj.z > 0 && proj.z < 1 && Math.abs(proj.x) < 1.05 && Math.abs(proj.y) < 1.05) {
-              const px = ((proj.x + 1) / 2) * 100;
-              const py = ((1 - proj.y) / 2) * 100;
-              const sizeFactor = Math.max(8, Math.min(28, (1 / (dist + 0.5)) * 95));
-              detectedBoxes.push({
-                id: `barricade_${b.x}_${b.y}`,
-                type: 'barricade',
-                label: `ROAD BARRICADE`,
-                confidence: 99,
-                distance: parseFloat(dist.toFixed(1)),
-                boxPercent: {
-                  x: Math.max(2, px - sizeFactor / 2),
-                  y: Math.max(5, py - sizeFactor / 2),
-                  w: sizeFactor,
-                  h: sizeFactor
-                },
-                color: '#a855f7'
-              });
+          if (dist <= 18) {
+            const toTarget = new THREE.Vector3().subVectors(bVec, fpvCamera.position);
+            if (toTarget.dot(camForward) > 0.1) {
+              const proj = bVec.clone().project(fpvCamera);
+              if (proj.z > -1 && proj.z < 1 && Math.abs(proj.x) < 1.05 && Math.abs(proj.y) < 1.05) {
+                const px = ((proj.x + 1) / 2) * 100;
+                const py = ((1 - proj.y) / 2) * 100;
+                const sizeFactor = Math.max(8, Math.min(30, (1 / (dist + 0.5)) * 95));
+                detectedBoxes.push({
+                  id: `barricade_${b.x}_${b.y}`,
+                  type: 'barricade',
+                  label: `ROAD BARRICADE`,
+                  confidence: 99,
+                  distance: parseFloat(dist.toFixed(1)),
+                  boxPercent: {
+                    x: Math.max(2, px - sizeFactor / 2),
+                    y: Math.max(5, py - sizeFactor / 2),
+                    w: sizeFactor,
+                    h: sizeFactor
+                  },
+                  color: '#a855f7'
+                });
+              }
             }
           }
         }
       }
 
-      // Heading calculation in degrees (0-359 N=0, E=90, S=180, W=270)
-      const deg = Math.round(((-rot * 180 / Math.PI) % 360 + 360) % 360);
-
-      // Generate compact base64 JPEG (0.50-0.52 provides sharp vision with ~16KB payload)
-      const imageBase64 = canvas.toDataURL('image/jpeg', 0.52);
-
-      // Dispatch local event to App.tsx to forward over socket to mobile client
-      window.dispatchEvent(new CustomEvent('local_robot_vision_frame', {
+      // B. Dispatch lightweight telemetry event for Desktop PIP (no React state re-render on SimulationView)
+      window.dispatchEvent(new CustomEvent('robot_vision_telemetry', {
         detail: {
-          image: imageBase64,
-          timestamp: Date.now(),
           heading: deg,
           speed: parseFloat(speed.toFixed(1)),
           battery: Math.round(battery),
@@ -309,6 +352,30 @@ export const RobotVisionBroadcaster: React.FC<RobotVisionBroadcasterProps> = ({
           hazardType: hazardAlert ? 'FIRE HAZARD DETECTED' : undefined
         }
       }));
+
+      // C. Steady 20 FPS JPEG Stream for Mobile Devices over WebSocket (~50ms)
+      if (hasMobileClient && now - lastSocketTime.current >= 50) {
+        lastSocketTime.current = now;
+        const imageBase64 = canvas.toDataURL('image/jpeg', 0.50);
+
+        window.dispatchEvent(new CustomEvent('local_robot_vision_frame', {
+          detail: {
+            image: imageBase64,
+            timestamp: Date.now(),
+            heading: deg,
+            speed: parseFloat(speed.toFixed(1)),
+            battery: Math.round(battery),
+            position: { x: Math.round(pos.x), y: Math.round(pos.z) },
+            robotState,
+            isNight,
+            headlights,
+            nearestObstacleDist: nearestObstacle === 999 ? 12.0 : parseFloat(nearestObstacle.toFixed(1)),
+            detectedObjects: detectedBoxes,
+            hazardAlert,
+            hazardType: hazardAlert ? 'FIRE HAZARD DETECTED' : undefined
+          }
+        }));
+      }
     }
   });
 
@@ -319,14 +386,14 @@ export const RobotVisionBroadcaster: React.FC<RobotVisionBroadcasterProps> = ({
       {headlights && robotPosRef.current && (
         <spotLight
           position={[
-            robotPosRef.current.x - Math.sin(robotRotRef.current || 0) * 0.4,
-            robotPosRef.current.y + 0.85,
-            robotPosRef.current.z - Math.cos(robotRotRef.current || 0) * 0.4
+            robotPosRef.current.x + Math.sin(robotRotRef.current || 0) * 0.45,
+            robotPosRef.current.y + 1.2,
+            robotPosRef.current.z + Math.cos(robotRotRef.current || 0) * 0.45
           ]}
           target={targetMeshRef.current}
-          angle={Math.PI / 4.2}
+          angle={Math.PI / 4.0}
           penumbra={0.35}
-          intensity={isNight ? 9.5 : 3.0}
+          intensity={isNight ? 10.0 : 3.5}
           distance={45}
           color="#e0f2fe"
           castShadow={false}
