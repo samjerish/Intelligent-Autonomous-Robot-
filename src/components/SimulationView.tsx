@@ -1935,20 +1935,33 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
     const obs: DynamicObstacle[] = [];
     const carCount = count < 3 ? (count > 0 ? 1 : 0) : Math.min(8, Math.max(1, Math.round(count * 0.3)));
     
+    // Track spawn positions to ensure obstacles start with ample space between each other
+    const spawnedPositions: GridPoint[] = [];
+
     for (let i = 0; i < count; i++) {
       const isCar = i < carCount;
-      // Pick start and end nodes with reasonable separation to prevent bunching
+      // Pick start node with guaranteed separation from previously spawned obstacles
       let start = roads[Math.floor(Math.random() * roads.length)];
+      for (let attempt = 0; attempt < 20; attempt++) {
+        const tooClose = spawnedPositions.some(p => Math.abs(p.x - start.x) + Math.abs(p.y - start.y) < 4);
+        if (!tooClose) break;
+        start = roads[Math.floor(Math.random() * roads.length)];
+      }
+      spawnedPositions.push(start);
+
       let end = roads[Math.floor(Math.random() * roads.length)];
-      for (let attempt = 0; attempt < 6; attempt++) {
-        if (Math.abs(start.x - end.x) + Math.abs(start.y - end.y) >= 6) break;
+      for (let attempt = 0; attempt < 10; attempt++) {
+        if (Math.abs(start.x - end.x) + Math.abs(start.y - end.y) >= 8) break;
         end = roads[Math.floor(Math.random() * roads.length)];
       }
 
-      const path = calculatePath(start, end, [...(mapData.obstacles || []), ...userBlockers], mapData, true);
+      let path = calculatePath(start, end, [...(mapData.obstacles || []), ...userBlockers], mapData, true);
+      if (path.length <= 1) {
+        path = calculatePath(start, end, [...(mapData.obstacles || []), ...userBlockers], mapData, false);
+      }
       if (path.length > 1) {
         obs.push({
-          id: `obs_${i}_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+          id: `obs_dyn_${i}`,
           type: isCar ? 'car' : 'person',
           pos: path[0],
           targetPos: end,
@@ -1973,7 +1986,7 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
         const crossPath = [crossStart, crossPoint, crossEnd];
 
         obs.push({
-          id: `sudden_crosser_${Date.now()}`,
+          id: `obs_dyn_crosser`,
           type: 'person',
           pos: crossStart,
           targetPos: crossEnd,
