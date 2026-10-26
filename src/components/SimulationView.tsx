@@ -195,7 +195,9 @@ const MovingEntity = ({
   isMapView, 
   robotPosRef, 
   allObstaclesRef,
-  robotStateRef
+  robotStateRef,
+  mapDataRef,
+  userBlockersRef
 }: { 
   obstacle: DynamicObstacle;
   gridSize: GridPoint;
@@ -203,16 +205,49 @@ const MovingEntity = ({
   robotPosRef?: React.MutableRefObject<THREE.Vector3 | null>;
   allObstaclesRef?: React.MutableRefObject<DynamicObstacle[]>;
   robotStateRef?: React.MutableRefObject<RobotState>;
+  mapDataRef?: React.MutableRefObject<MapData | null>;
+  userBlockersRef?: React.MutableRefObject<GridPoint[]>;
 }) => {
   const ref = useRef<THREE.Group>(null);
   
+  // Memoize initial position by obstacle.id so parent re-renders do NOT reset the ThreeJS position
+  const initialPos = useMemo(() => {
+    const node = obstacle.pos || obstacle.path[0] || { x: 0, y: 0, f: 0 };
+    return getGridPosition(node, gridSize, obstacle.type === 'car' ? 0.2 : 0.5, isMapView);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [obstacle.id]);
+
   useFrame((_state, delta) => {
-    if (!ref.current || obstacle.path.length === 0 || !obstacle.isMoving) return;
+    if (!ref.current || !obstacle.isMoving) return;
     const currentPos = ref.current.position;
     obstacle.currentPosVector = currentPos.clone();
     obstacle.pos = getGridPointFromVector3(currentPos, gridSize);
+
+    // If path is missing or has <= 1 node, find a new road path across campus
+    if (!obstacle.path || obstacle.path.length <= 1) {
+      if (mapDataRef?.current?.roads && mapDataRef.current.roads.length > 5) {
+        const roads = mapDataRef.current.roads;
+        let randEnd = roads[Math.floor(Math.random() * roads.length)];
+        for (let a = 0; a < 8; a++) {
+          if (Math.abs(randEnd.x - obstacle.pos.x) + Math.abs(randEnd.y - obstacle.pos.y) >= 6) break;
+          randEnd = roads[Math.floor(Math.random() * roads.length)];
+        }
+        const blockers = [...(mapDataRef.current.obstacles || []), ...(userBlockersRef?.current || [])];
+        const newP = calculatePath(obstacle.pos, randEnd, blockers, mapDataRef.current, true);
+        if (newP.length > 1) {
+          obstacle.path = newP;
+          obstacle.currentIndex = 1;
+          obstacle.targetPos = randEnd;
+        }
+      }
+      if (!obstacle.path || obstacle.path.length <= 1) return;
+    }
+
+    if (obstacle.currentIndex >= obstacle.path.length) {
+      obstacle.currentIndex = obstacle.path.length - 1;
+    }
     
-    const targetNode = obstacle.path[Math.min(obstacle.currentIndex, obstacle.path.length - 1)];
+    const targetNode = obstacle.path[obstacle.currentIndex];
     const [tx, ty, tz] = getGridPosition(targetNode, gridSize, obstacle.type === 'car' ? 0.2 : 0.5, isMapView);
     const targetVector = new THREE.Vector3(tx, ty, tz);
     const moveDir = new THREE.Vector3().subVectors(targetVector, currentPos).normalize();
@@ -220,14 +255,19 @@ const MovingEntity = ({
     // 1. Cooperative Yielding to Robot:
     // If the robot is backing up or waiting for clearance, the robot has yielded to let the obstacle pass!
     // Obstacle should only pause if very close to a non-yielding robot and driving/walking directly towards it.
+    let isWaitingForRobot = false;
     if (robotPosRef && robotPosRef.current) {
       const isRobotYielding = robotStateRef && (robotStateRef.current === 'reversing' || robotStateRef.current === 'waiting_for_clearance');
       const distToRobot = currentPos.distanceTo(robotPosRef.current);
       
       if (!isRobotYielding && distToRobot < (obstacle.type === 'car' ? 1.5 : 0.9)) {
         const toRobot = new THREE.Vector3().subVectors(robotPosRef.current, currentPos).normalize();
-        if (moveDir.dot(toRobot) > 0.3) {
-          return; // Pause and let active robot pass
+        if (moveDir.dot(toRobot) > 0.35) {
+          isWaitingForRobot = true;
+          obstacle.stuckTimer = (obstacle.stuckTimer || 0) + delta;
+          if (obstacle.stuckTimer < 2.0) {
+            return; // Pause briefly and let active robot pass
+          }
         }
       }
     }
@@ -235,31 +275,78 @@ const MovingEntity = ({
     // 2. Headway & Anti-Overlap with Other Dynamic Obstacles:
     // Uses real-time 3D vector positions to prevent cars and people from dog-piling or clipping
     if (allObstaclesRef && allObstaclesRef.current) {
-      const minHeadway = obstacle.type === 'car' ? 1.8 : 1.0;
+      const minHeadway = obstacle.type === 'car' ? 1.6 : 0.9;
       for (const other of allObstaclesRef.current) {
         if (other.id === obstacle.id || !other.currentPosVector) continue;
         const distToOther = currentPos.distanceTo(other.currentPosVector);
         if (distToOther < minHeadway) {
           const toOther = new THREE.Vector3().subVectors(other.currentPosVector, currentPos).normalize();
           // If the other obstacle is in our forward path cone, hold back to maintain headway
-          if (moveDir.dot(toOther) > 0.35) {
-            return;
+          if (moveDir.dot(toOther) > 0.4) {
+            obstacle.stuckTimer = (obstacle.stuckTimer || 0) + delta;
+            if (obstacle.stuckTimer < 1.8) {
+              return;
+            }
           }
-          // Break deadlocks if two obstacles are very close in the same node
-          if (distToOther < 0.6 && obstacle.id > other.id) {
-            return;
+          // Break deadlocks if two obstacles are very close in the same node:
+          // After 1.5s, reroute to another destination so both never stay frozen
+          if (distToOther < 0.6) {
+            obstacle.stuckTimer = (obstacle.stuckTimer || 0) + delta;
+            if (obstacle.stuckTimer > 1.5) {
+              obstacle.stuckTimer = 0;
+              if (mapDataRef?.current?.roads && mapDataRef.current.roads.length > 5) {
+                const roads = mapDataRef.current.roads;
+                let nextDest = roads[Math.floor(Math.random() * roads.length)];
+                const blockers = [...(mapDataRef.current.obstacles || []), ...(userBlockersRef?.current || [])];
+                const reroutePath = calculatePath(obstacle.pos, nextDest, blockers, mapDataRef.current, true);
+                if (reroutePath.length > 1) {
+                  obstacle.path = reroutePath;
+                  obstacle.currentIndex = 1;
+                  obstacle.targetPos = nextDest;
+                  return;
+                }
+              }
+            }
+            if (obstacle.id > other.id && obstacle.stuckTimer < 1.0) {
+              return;
+            }
           }
         }
       }
     }
 
+    if (!isWaitingForRobot) {
+      obstacle.stuckTimer = Math.max(0, (obstacle.stuckTimer || 0) - delta * 0.5);
+    }
+
     const dist = currentPos.distanceTo(targetVector);
-    if (dist < 0.05) {
+    if (dist < 0.12) {
       if (obstacle.currentIndex < obstacle.path.length - 1) {
         obstacle.currentIndex++;
       } else {
-        obstacle.path.reverse();
-        obstacle.currentIndex = 0;
+        // Reached end of path! Keep moving continuously by finding a new destination across campus roads
+        let foundNewPath = false;
+        if (mapDataRef?.current?.roads && mapDataRef.current.roads.length > 5) {
+          const roads = mapDataRef.current.roads;
+          let nextDest = roads[Math.floor(Math.random() * roads.length)];
+          for (let attempt = 0; attempt < 8; attempt++) {
+            if (Math.abs(nextDest.x - obstacle.pos.x) + Math.abs(nextDest.y - obstacle.pos.y) >= 6) break;
+            nextDest = roads[Math.floor(Math.random() * roads.length)];
+          }
+          const blockers = [...(mapDataRef.current.obstacles || []), ...(userBlockersRef?.current || [])];
+          const newPath = calculatePath(obstacle.pos, nextDest, blockers, mapDataRef.current, true);
+          if (newPath.length > 1) {
+            obstacle.path = newPath;
+            obstacle.currentIndex = 1;
+            obstacle.targetPos = nextDest;
+            foundNewPath = true;
+          }
+        }
+        if (!foundNewPath) {
+          // Fallback: reverse path and head towards next node
+          obstacle.path.reverse();
+          obstacle.currentIndex = Math.min(1, obstacle.path.length - 1);
+        }
       }
       obstacle.pos = obstacle.path[obstacle.currentIndex];
     } else {
@@ -282,10 +369,8 @@ const MovingEntity = ({
     }
   });
 
-  const startPos = getGridPosition(obstacle.path[0] || {x:0, y:0, f:0}, gridSize, obstacle.type === 'car' ? 0.2 : 0.5, isMapView);
-
   return (
-    <group ref={ref} position={startPos} scale={1.8}>
+    <group ref={ref} position={initialPos} scale={1.8}>
       {obstacle.type === 'car' ? (
         <group>
           <Box args={[0.7, 0.4, 1.2]} position={[0, 0.2, 0]} castShadow>
@@ -1417,8 +1502,11 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
   const controlsRef = useRef<any>(null);
   const turnOffAfterEmergencyRef = useRef(false);
   const currentTaskIndexRef = useRef(0);
-  const emergencyTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const clearanceCheckRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const mapDataRef = useRef<MapData | null>(mapData);
+  useEffect(() => { mapDataRef.current = mapData; }, [mapData]);
+  const userBlockersRef = useRef<GridPoint[]>(userBlockers);
+  useEffect(() => { userBlockersRef.current = userBlockers; }, [userBlockers]);
 
   useEffect(() => {
     switch(robotState) {
