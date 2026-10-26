@@ -198,7 +198,9 @@ const MovingEntity = ({
   isMapView, 
   robotPosRef, 
   allObstaclesRef,
-  robotStateRef
+  robotStateRef,
+  mapData,
+  userBlockers
 }: { 
   obstacle: DynamicObstacle;
   gridSize: GridPoint;
@@ -206,81 +208,207 @@ const MovingEntity = ({
   robotPosRef?: React.MutableRefObject<THREE.Vector3 | null>;
   allObstaclesRef?: React.MutableRefObject<DynamicObstacle[]>;
   robotStateRef?: React.MutableRefObject<RobotState>;
+  mapData?: MapData | null;
+  userBlockers?: GridPoint[];
 }) => {
   const ref = useRef<THREE.Group>(null);
+  const diversionOffsetRef = useRef<THREE.Vector3>(new THREE.Vector3());
+  const targetDiversionOffset = useRef<THREE.Vector3>(new THREE.Vector3());
+  const lastPosRef = useRef<THREE.Vector3>(new THREE.Vector3());
+  const stuckTimerRef = useRef<number>(0);
+  const lastRerouteTimeRef = useRef<number>(0);
   
   useFrame((_state, delta) => {
     if (!ref.current || obstacle.path.length === 0 || !obstacle.isMoving) return;
     const currentPos = ref.current.position;
     obstacle.currentPosVector = currentPos.clone();
     obstacle.pos = getGridPointFromVector3(currentPos, gridSize);
+
+    // 1. Anti-stuck watchdog: ensure obstacles never freeze or stay in the same position
+    if (lastPosRef.current.distanceTo(currentPos) < 0.008) {
+      stuckTimerRef.current += delta;
+    } else {
+      stuckTimerRef.current = 0;
+      lastPosRef.current.copy(currentPos);
+    }
+
+    if (stuckTimerRef.current > 2.0 && mapData?.roads && mapData.roads.length > 0) {
+      stuckTimerRef.current = 0;
+      const curGrid = obstacle.pos;
+      let newTarget = mapData.roads[Math.floor(Math.random() * mapData.roads.length)];
+      for (let attempt = 0; attempt < 8; attempt++) {
+        if (Math.abs(newTarget.x - curGrid.x) + Math.abs(newTarget.y - curGrid.y) >= 6) break;
+        newTarget = mapData.roads[Math.floor(Math.random() * mapData.roads.length)];
+      }
+      const newPath = calculatePath(
+        curGrid,
+        newTarget,
+        [...(mapData.obstacles || []), ...(userBlockers || [])],
+        mapData,
+        true
+      );
+      if (newPath && newPath.length > 1) {
+        obstacle.path = newPath;
+        obstacle.targetPos = newTarget;
+        obstacle.currentIndex = 0;
+      }
+    }
     
     const targetNode = obstacle.path[Math.min(obstacle.currentIndex, obstacle.path.length - 1)];
     const [tx, ty, tz] = getGridPosition(targetNode, gridSize, obstacle.type === 'car' ? 0.2 : 0.5, isMapView);
     const targetVector = new THREE.Vector3(tx, ty, tz);
-    const moveDir = new THREE.Vector3().subVectors(targetVector, currentPos).normalize();
 
-    // 1. Cooperative Yielding to Robot:
-    // If the robot is backing up or waiting for clearance, the robot has yielded to let the obstacle pass!
-    // Obstacle should only pause if very close to a non-yielding robot and driving/walking directly towards it.
+    // Direction along the road waypoint
+    const moveDir = new THREE.Vector3().subVectors(targetVector, currentPos);
+    moveDir.y = 0;
+    if (moveDir.lengthSq() > 0.0001) {
+      moveDir.normalize();
+    } else {
+      moveDir.set(0, 0, 1);
+    }
+
+    // 2. Intelligent Diversion around Oncoming Robot:
+    // If coming straight towards robot, do NOT return back and do NOT freeze; take a smooth lateral diversion!
+    let isDiversionActive = false;
+    let steerSide = 1; // +1 = right lane/shoulder, -1 = left lane/shoulder
+    let speedMultiplier = 1.0;
+
     if (robotPosRef && robotPosRef.current) {
-      const isRobotYielding = robotStateRef && (robotStateRef.current === 'reversing' || robotStateRef.current === 'waiting_for_clearance');
-      const distToRobot = currentPos.distanceTo(robotPosRef.current);
-      
-      if (!isRobotYielding && distToRobot < (obstacle.type === 'car' ? 1.5 : 0.9)) {
-        const toRobot = new THREE.Vector3().subVectors(robotPosRef.current, currentPos).normalize();
-        if (moveDir.dot(toRobot) > 0.3) {
-          return; // Pause and let active robot pass
+      const robotPos = robotPosRef.current;
+      const toRobot = new THREE.Vector3().subVectors(robotPos, currentPos);
+      toRobot.y = 0;
+      const distToRobot = toRobot.length();
+
+      // Detect oncoming encounter within 6.0m
+      if (distToRobot < 6.0 && distToRobot > 0.05) {
+        const toRobotNorm = toRobot.clone().normalize();
+        const dot = moveDir.dot(toRobotNorm);
+
+        // dot > 0.15 means moving towards robot (head-on collision course)
+        if (dot > 0.15) {
+          isDiversionActive = true;
+
+          // Determine diversion steer side via 2D cross product:
+          // (moveDir.x * toRobotNorm.z - moveDir.z * toRobotNorm.x)
+          // If > 0, robot is slightly right -> steer left (-1)
+          // Else steer right (+1) (standard right-hand diversion)
+          const crossY = (moveDir.x * toRobotNorm.z) - (moveDir.z * toRobotNorm.x);
+          steerSide = crossY > 0.05 ? -1 : 1;
+
+          // Keep moving forward smoothly; slightly reduce speed for safe passing
+          speedMultiplier = distToRobot < 1.0 ? 0.75 : 0.9;
+
+          // Attempt topological road network diversion if near intersection
+          const now = performance.now();
+          if (now - lastRerouteTimeRef.current > 3500 && mapData?.roads && mapData.roads.length > 0) {
+            lastRerouteTimeRef.current = now;
+            const curGrid = obstacle.pos;
+            const robotGrid = getGridPointFromVector3(robotPos, gridSize);
+
+            const detourPath = calculatePath(
+              curGrid,
+              obstacle.targetPos,
+              [...(mapData.obstacles || []), ...(userBlockers || []), robotGrid],
+              mapData,
+              true
+            );
+            if (detourPath && detourPath.length > 2 && (detourPath[1].x !== robotGrid.x || detourPath[1].y !== robotGrid.y)) {
+              obstacle.path = detourPath;
+              obstacle.currentIndex = 0;
+            }
+          }
         }
       }
     }
-    
-    // 2. Headway & Anti-Overlap with Other Dynamic Obstacles:
-    // Uses real-time 3D vector positions to prevent cars and people from dog-piling or clipping
+
+    // 3. Headway & Mutual Passing with Other Dynamic Obstacles:
     if (allObstaclesRef && allObstaclesRef.current) {
-      const minHeadway = obstacle.type === 'car' ? 1.8 : 1.0;
+      const minHeadway = obstacle.type === 'car' ? 1.8 : 1.1;
       for (const other of allObstaclesRef.current) {
         if (other.id === obstacle.id || !other.currentPosVector) continue;
-        const distToOther = currentPos.distanceTo(other.currentPosVector);
-        if (distToOther < minHeadway) {
-          const toOther = new THREE.Vector3().subVectors(other.currentPosVector, currentPos).normalize();
-          // If the other obstacle is in our forward path cone, hold back to maintain headway
-          if (moveDir.dot(toOther) > 0.35) {
-            return;
-          }
-          // Break deadlocks if two obstacles are very close in the same node
-          if (distToOther < 0.6 && obstacle.id > other.id) {
-            return;
+        const toOther = new THREE.Vector3().subVectors(other.currentPosVector, currentPos);
+        toOther.y = 0;
+        const distToOther = toOther.length();
+        if (distToOther < minHeadway && distToOther > 0.05) {
+          const toOtherNorm = toOther.clone().normalize();
+          const dot = moveDir.dot(toOtherNorm);
+          if (dot > 0.25) {
+            speedMultiplier = Math.min(speedMultiplier, 0.7);
+            if (!isDiversionActive) {
+              const crossY = (moveDir.x * toOtherNorm.z) - (moveDir.z * toOtherNorm.x);
+              steerSide = crossY > 0 ? -1 : 1;
+              isDiversionActive = true;
+            }
           }
         }
       }
     }
 
-    const dist = currentPos.distanceTo(targetVector);
-    if (dist < 0.05) {
+    // 4. Compute Lateral Diversion Offset
+    const normalDir = new THREE.Vector3(-moveDir.z, 0, moveDir.x);
+    if (isDiversionActive) {
+      const diversionMag = (obstacle.type === 'car' ? 1.15 : 0.85) * steerSide;
+      targetDiversionOffset.current.copy(normalDir).multiplyScalar(diversionMag);
+    } else {
+      targetDiversionOffset.current.set(0, 0, 0);
+    }
+
+    diversionOffsetRef.current.lerp(targetDiversionOffset.current, delta * 3.5);
+
+    // 5. Advance Movement Towards Waypoint + Diversion Offset
+    const effectiveTarget = targetVector.clone().add(diversionOffsetRef.current);
+    const distToWaypoint = currentPos.distanceTo(targetVector);
+    const distToEffective = currentPos.distanceTo(effectiveTarget);
+
+    if (distToWaypoint < 0.25 || distToEffective < 0.15) {
       if (obstacle.currentIndex < obstacle.path.length - 1) {
         obstacle.currentIndex++;
       } else {
-        obstacle.path.reverse();
-        obstacle.currentIndex = 0;
+        // Continuous roaming: never reverse back and forth or freeze; pick next campus destination!
+        if (mapData?.roads && mapData.roads.length > 0) {
+          const curGrid = obstacle.pos;
+          let newTarget = mapData.roads[Math.floor(Math.random() * mapData.roads.length)];
+          for (let attempt = 0; attempt < 10; attempt++) {
+            if (Math.abs(newTarget.x - curGrid.x) + Math.abs(newTarget.y - curGrid.y) >= 8) break;
+            newTarget = mapData.roads[Math.floor(Math.random() * mapData.roads.length)];
+          }
+          const newPath = calculatePath(
+            curGrid,
+            newTarget,
+            [...(mapData.obstacles || []), ...(userBlockers || [])],
+            mapData,
+            true
+          );
+          if (newPath && newPath.length > 1) {
+            obstacle.path = newPath;
+            obstacle.targetPos = newTarget;
+            obstacle.currentIndex = 0;
+          } else {
+            // Fallback adjacent road neighbor to ensure movement never stops
+            const neighbors = mapData.roads.filter(r => 
+              Math.abs(r.x - curGrid.x) + Math.abs(r.y - curGrid.y) === 1
+            );
+            if (neighbors.length > 0) {
+              obstacle.path = [curGrid, neighbors[Math.floor(Math.random() * neighbors.length)]];
+              obstacle.currentIndex = 0;
+            }
+          }
+        }
       }
-      obstacle.pos = obstacle.path[obstacle.currentIndex];
+      obstacle.pos = obstacle.path[Math.min(obstacle.currentIndex, obstacle.path.length - 1)];
     } else {
-      const moveDist = obstacle.speed * delta;
-      if (moveDist >= dist) {
-        currentPos.copy(targetVector);
-        obstacle.pos = targetNode;
-      } else {
-        const direction = new THREE.Vector3().subVectors(targetVector, currentPos).normalize();
-        currentPos.add(direction.multiplyScalar(moveDist));
-      }
-      const rotDirection = new THREE.Vector3().subVectors(targetVector, currentPos);
+      const moveDist = obstacle.speed * speedMultiplier * delta;
+      const direction = new THREE.Vector3().subVectors(effectiveTarget, currentPos).normalize();
+      currentPos.add(direction.multiplyScalar(moveDist));
+
+      const rotDirection = new THREE.Vector3().subVectors(effectiveTarget, currentPos);
+      rotDirection.y = 0;
       if (rotDirection.lengthSq() > 0.001) {
         const targetRotation = Math.atan2(rotDirection.x, rotDirection.z);
         let diff = targetRotation - ref.current.rotation.y;
         while (diff < -Math.PI) diff += Math.PI * 2;
         while (diff > Math.PI) diff -= Math.PI * 2;
-        ref.current.rotation.y += diff * delta * 10;
+        ref.current.rotation.y += diff * delta * 8;
       }
     }
   });
