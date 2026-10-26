@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState, useMemo, useCallback } from 'react';
 import type { MapData, GridPoint, Room, FireHazardPoint, FireIncident, MissionTask } from '../types';
-import { calculatePath, calculateLongPath, calculateReversePath, calculateEvadePath } from '../utils/simulationEngine';
+import { calculatePath, calculateLongPath, calculateEvadePath } from '../utils/simulationEngine';
 import { 
   Play, 
   RotateCcw, 
