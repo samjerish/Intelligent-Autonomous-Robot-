@@ -217,6 +217,26 @@ const MovingEntity = ({
   const headwayWaitTimeRef = useRef<number>(0);
   const lastPosRef = useRef<THREE.Vector3>(new THREE.Vector3());
   const stallTimeRef = useRef<number>(0);
+
+  // Compute stable initial position once so React Three Fiber reconciler NEVER resets position during parent re-renders!
+  const initialPos = useMemo(() => {
+    if (obstacle.currentPosVector) {
+      return [obstacle.currentPosVector.x, obstacle.currentPosVector.y, obstacle.currentPosVector.z] as [number, number, number];
+    }
+    return getGridPosition(obstacle.path[0] || { x: 0, y: 0, f: 0 }, gridSize, obstacle.type === 'car' ? 0.2 : 0.5, isMapView);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    if (ref.current) {
+      if (obstacle.currentPosVector) {
+        ref.current.position.copy(obstacle.currentPosVector);
+      } else {
+        ref.current.position.set(initialPos[0], initialPos[1], initialPos[2]);
+      }
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   
   useFrame((_state, delta) => {
     if (!ref.current || obstacle.path.length === 0 || !obstacle.isMoving) return;
@@ -230,31 +250,17 @@ const MovingEntity = ({
     const moveDir = new THREE.Vector3().subVectors(targetVector, currentPos).normalize();
 
     // 1. Cooperative Yielding to Robot:
-    // If the robot is backing up or waiting for clearance, the robot has yielded to let the obstacle pass!
-    // The obstacle must keep moving to clear the way!
+    // When the robot is taking its lateral shoulder bypass around this obstacle,
+    // the obstacle yields smoothly (never reverses, teleports, or disappears).
     if (robotPosRef && robotPosRef.current) {
       const isRobotYielding = robotStateRef && (robotStateRef.current === 'reversing' || robotStateRef.current === 'waiting_for_clearance');
       const distToRobot = currentPos.distanceTo(robotPosRef.current);
       
-      // If obstacle is directly against the robot, reverse away with cooldown so it moves away without flip-flopping
-      if (distToRobot < 0.85) {
-        if (Date.now() - lastReverseTimeRef.current > 2000) {
-          lastReverseTimeRef.current = Date.now();
-          obstacle.path.reverse();
-          obstacle.currentIndex = 0;
-        }
-      } else if (!isRobotYielding && distToRobot < (obstacle.type === 'car' ? 1.4 : 0.85)) {
+      if (!isRobotYielding && distToRobot < (obstacle.type === 'car' ? 1.6 : 1.1)) {
         const toRobot = new THREE.Vector3().subVectors(robotPosRef.current, currentPos).normalize();
-        if (moveDir.dot(toRobot) > 0.35) {
-          stallTimeRef.current += delta;
-          if (stallTimeRef.current > 1.0 && Date.now() - lastReverseTimeRef.current > 2000) {
-            lastReverseTimeRef.current = Date.now();
-            stallTimeRef.current = 0;
-            obstacle.path.reverse();
-            obstacle.currentIndex = 0;
-          } else {
-            return; // Pause briefly and let active robot pass
-          }
+        if (moveDir.dot(toRobot) > 0.2) {
+          // Pause briefly while robot passes by via shoulder bypass
+          return;
         }
       }
     }
