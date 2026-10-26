@@ -1,7 +1,6 @@
 import React, { useMemo } from 'react';
-import type { Room, GridPoint } from '../types';
-import { Box, Cylinder, Sphere, Html, RoundedBox, Cone } from '@react-three/drei';
-import * as THREE from 'three';
+import type { Room } from '../types';
+import { Box, Cylinder, Sphere, Html, Cone } from '@react-three/drei';
 
 // Category color palettes and architectural constants
 export const getBuildingCategory = (room: Room): {
@@ -68,7 +67,6 @@ export const getBuildingHeight = (room: Room): number => {
       return 5.0;
     case 'food':
       return 4.0;
-    case 'indoor stadium':
     case 'sports':
       if (nameLow.includes('indoor') || nameLow.includes('stadium')) return 6.5;
       return 0.4; // Open field / court
