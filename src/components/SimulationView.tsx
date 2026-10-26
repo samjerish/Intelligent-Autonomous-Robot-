@@ -1795,13 +1795,21 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
     const obs: DynamicObstacle[] = [];
     const carCount = count < 3 ? (count > 0 ? 1 : 0) : Math.min(8, Math.max(1, Math.round(count * 0.3)));
     
+    const robotCur = robotPosRef.current ? getGridPointFromVector3(robotPosRef.current, mapData.gridSize) : mapData.start;
+
     for (let i = 0; i < count; i++) {
       const isCar = i < carCount;
       // Pick start and end nodes with reasonable separation to prevent bunching
       let start = roads[Math.floor(Math.random() * roads.length)];
+      for (let a = 0; a < 6; a++) {
+        if (robotCur && Math.abs(start.x - robotCur.x) + Math.abs(start.y - robotCur.y) < 6) {
+          start = roads[Math.floor(Math.random() * roads.length)];
+        } else break;
+      }
+
       let end = roads[Math.floor(Math.random() * roads.length)];
-      for (let attempt = 0; attempt < 6; attempt++) {
-        if (Math.abs(start.x - end.x) + Math.abs(start.y - end.y) >= 6) break;
+      for (let attempt = 0; attempt < 8; attempt++) {
+        if (Math.abs(start.x - end.x) + Math.abs(start.y - end.y) >= 8) break;
         end = roads[Math.floor(Math.random() * roads.length)];
       }
 
@@ -1814,32 +1822,7 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
           targetPos: end,
           path,
           currentIndex: 0,
-          speed: isCar ? 5.5 : (1.8 + Math.random() * 0.8),
-          isMoving: true
-        });
-      }
-    }
-
-    // Add dynamic pedestrian crosser if we have an active robot path and reasonable obstacle density
-    if (count >= 5 && robotPath && robotPath.length > 8) {
-      const crossPoint = robotPath[6];
-      if (crossPoint) {
-        const crossNeighbors = roads.filter(r => 
-          (Math.abs(r.x - crossPoint.x) + Math.abs(r.y - crossPoint.y) === 1) &&
-          (r.x !== crossPoint.x || r.y !== crossPoint.y)
-        );
-        const crossStart = crossNeighbors[0] || crossPoint;
-        const crossEnd = crossNeighbors[crossNeighbors.length - 1] || crossPoint;
-        const crossPath = [crossStart, crossPoint, crossEnd];
-
-        obs.push({
-          id: `sudden_crosser_${Date.now()}`,
-          type: 'person',
-          pos: crossStart,
-          targetPos: crossEnd,
-          path: crossPath,
-          currentIndex: 0,
-          speed: 1.6,
+          speed: isCar ? 4.8 : (1.8 + Math.random() * 0.6),
           isMoving: true
         });
       }
