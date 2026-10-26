@@ -1385,7 +1385,7 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
   onFireDetected,
   onAcknowledgeIncident,
   onResolveIncident,
-  onSimulateAtBuilding,
+  onSimulateAtBuilding: _onSimulateAtBuilding,
   incidentHistory = []
 }) => {
   const [internalFireHazards, setInternalFireHazards] = useState<FireHazardPoint[]>([]);
