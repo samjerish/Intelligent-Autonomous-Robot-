@@ -1886,14 +1886,6 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
           ? orig.path[orig.path.length - 1]
           : (path.length > 0 ? path[path.length - 1] : mapData.start));
 
-        // Disperse any dynamic obstacles in vicinity to break deadlock
-        dynamicObstaclesRef.current.forEach(obs => {
-          if (obs.currentPosVector && obs.currentPosVector.distanceTo(currentPos) < 2.0) {
-            obs.path.reverse();
-            obs.currentIndex = 0;
-          }
-        });
-
         // Calculate an active unstuck recovery route directly to the destination (prefer roads, allow shoulder bypass)
         let recoveryPath = calculatePath(currentLoc, targetLoc, [...(mapData.obstacles || []), ...userBlockers], mapData, true);
         if (recoveryPath.length === 0) {
@@ -1901,20 +1893,10 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
         }
 
         if (recoveryPath.length > 0) {
-          addExplanation('Autonomous Unstuck Watchdog: Taking diversion route to destination.');
+          addExplanation('Autonomous Unstuck Watchdog: Taking forward diversion route to destination.');
           setPath(recoveryPath);
           setCurrentPosIndex(0);
           setIsPlaying(true);
-        } else {
-          const evade = calculateEvadePath(currentLoc, [...(mapData.obstacles || []), ...userBlockers], mapData);
-          if (evade.length > 1) {
-            const resumeSub = calculatePath(evade[evade.length - 1], targetLoc, [...(mapData.obstacles || []), ...userBlockers], mapData, false);
-            const combined = resumeSub.length > 0 ? [...evade, ...resumeSub.slice(1)] : evade;
-            setPath(combined);
-            setCurrentPosIndex(0);
-            setIsPlaying(true);
-            addExplanation('Autonomous Unstuck Watchdog: Taking diversion around stall point to destination.');
-          }
         }
       }
     }, 1000);
@@ -3124,48 +3106,101 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
     const dynamicPositions = dynamicObstaclesRef.current.map(o => o.pos);
     const allObstacles = [...(mapData.obstacles || []), ...userBlockers, obsPos, ...dynamicPositions];
 
-    // Proactive Obstacle Diversion: smoothly route around obstacles without obstacles disappearing
-    // 1. Attempt road diversion: alternate street corridor to destination
-    let diversionPath = calculatePath(currentLoc, targetLoc, allObstacles, mapData, true);
-
-    // 2. Attempt shoulder/sidewalk bypass: immediately skirt around obstacle and rejoin road
-    if (diversionPath.length === 0) {
-      diversionPath = calculatePath(currentLoc, targetLoc, allObstacles, mapData, false);
+    // Identify past nodes behind the robot to strictly forbid reversing / returning back
+    const pastNodes: GridPoint[] = [];
+    if (path.length > 0) {
+      for (let i = Math.max(0, currentPosIndex - 5); i < currentPosIndex; i++) {
+        pastNodes.push(path[i]);
+      }
     }
+    const antiBacktrackObstacles = [...allObstacles, ...pastNodes];
+    const antiBacktrackSet = new Set(antiBacktrackObstacles.map(o => `${o.x},${o.y},${o.f}`));
 
-    // 3. Attempt immediate lateral unblocked step around obstacle
-    if (diversionPath.length === 0) {
-      const lateralCandidates = [
-        { dx: 0, dy: 1 }, { dx: 0, dy: -1 }, { dx: 1, dy: 0 }, { dx: -1, dy: 0 },
-        { dx: 1, dy: 1 }, { dx: -1, dy: -1 }, { dx: 1, dy: -1 }, { dx: -1, dy: 1 }
-      ];
-      const obstacleKeySet = new Set(allObstacles.map(o => `${o.x},${o.y},${o.f}`));
-      
-      for (const off of lateralCandidates) {
-        const stepPt: GridPoint = { x: currentLoc.x + off.dx, y: currentLoc.y + off.dy, f: currentLoc.f };
-        if (
-          stepPt.x >= 0 && stepPt.x < mapData.gridSize.x &&
-          stepPt.y >= 0 && stepPt.y < mapData.gridSize.y &&
-          !obstacleKeySet.has(`${stepPt.x},${stepPt.y},${stepPt.f}`)
-        ) {
-          const sub = calculatePath(stepPt, targetLoc, allObstacles, mapData, false);
-          if (sub.length > 0) {
-            diversionPath = [currentLoc, ...sub];
-            break;
-          }
+    // Forward heading unit vector
+    const nextNode = (path.length > currentPosIndex + 1)
+      ? path[currentPosIndex + 1]
+      : obsPos;
+    const fwdDx = Math.sign(nextNode.x - currentLoc.x);
+    const fwdDy = Math.sign(nextNode.y - currentLoc.y);
+
+    // Lateral vectors perpendicular to forward heading
+    // Priority: standard traffic right-hand bypass, fallback to left
+    const rightLateral = { dx: -fwdDy, dy: fwdDx };
+    const leftLateral = { dx: fwdDy, dy: -fwdDx };
+
+    let diversionPath: GridPoint[] = [];
+
+    // 1. Primary Strategy: Seamless Forward Lateral Bypass (Veer to shoulder/lane and advance forward)
+    // Try right-forward, pure right, left-forward, pure left
+    const bypassCandidates = [
+      { dx: rightLateral.dx + fwdDx, dy: rightLateral.dy + fwdDy },
+      { dx: rightLateral.dx, dy: rightLateral.dy },
+      { dx: leftLateral.dx + fwdDx, dy: leftLateral.dy + fwdDy },
+      { dx: leftLateral.dx, dy: leftLateral.dy }
+    ];
+
+    for (const offset of bypassCandidates) {
+      const stepPt: GridPoint = {
+        x: currentLoc.x + offset.dx,
+        y: currentLoc.y + offset.dy,
+        f: currentLoc.f
+      };
+
+      if (
+        stepPt.x >= 0 && stepPt.x < mapData.gridSize.x &&
+        stepPt.y >= 0 && stepPt.y < mapData.gridSize.y &&
+        !antiBacktrackSet.has(`${stepPt.x},${stepPt.y},${stepPt.f}`)
+      ) {
+        // Compute forward path from the lateral step point to destination (forbidding past nodes)
+        const forwardPath = calculatePath(stepPt, targetLoc, antiBacktrackObstacles, mapData, false);
+        if (forwardPath.length > 0) {
+          diversionPath = [currentLoc, ...forwardPath];
+          break;
         }
       }
     }
 
-    // 4. Fallback: Evade step to break congestion while routing towards destination
+    // 2. Secondary Strategy: Shoulder / Sidewalk forward bypass directly to targetLoc without backtracking
     if (diversionPath.length === 0) {
-      const evade = calculateEvadePath(currentLoc, allObstacles, mapData);
-      if (evade.length > 1) {
-        const resumeSub = calculatePath(evade[evade.length - 1], targetLoc, allObstacles, mapData, false);
-        if (resumeSub.length > 0) {
-          diversionPath = [...evade, ...resumeSub.slice(1)];
-        } else {
-          diversionPath = evade;
+      const shoulderPath = calculatePath(currentLoc, targetLoc, antiBacktrackObstacles, mapData, false);
+      if (shoulderPath.length > 1) {
+        diversionPath = shoulderPath;
+      }
+    }
+
+    // 3. Tertiary Strategy: Alternate forward road corridor (without backtracking)
+    if (diversionPath.length === 0) {
+      const roadPath = calculatePath(currentLoc, targetLoc, antiBacktrackObstacles, mapData, true);
+      if (roadPath.length > 1) {
+        diversionPath = roadPath;
+      }
+    }
+
+    // 4. Quaternary Strategy: Distance-minimizing forward neighbor step (strictly approaching targetLoc)
+    if (diversionPath.length === 0) {
+      const allDirs = [
+        { dx: 0, dy: 1 }, { dx: 0, dy: -1 }, { dx: 1, dy: 0 }, { dx: -1, dy: 0 },
+        { dx: 1, dy: 1 }, { dx: -1, dy: -1 }, { dx: 1, dy: -1 }, { dx: -1, dy: 1 }
+      ];
+      // Sort strictly by closest distance to targetLoc so the robot ALWAYS moves forward towards the goal
+      allDirs.sort((a, b) => {
+        const da = Math.hypot(targetLoc.x - (currentLoc.x + a.dx), targetLoc.y - (currentLoc.y + a.dy));
+        const db = Math.hypot(targetLoc.x - (currentLoc.x + b.dx), targetLoc.y - (currentLoc.y + b.dy));
+        return da - db;
+      });
+
+      for (const d of allDirs) {
+        const pt: GridPoint = { x: currentLoc.x + d.dx, y: currentLoc.y + d.dy, f: currentLoc.f };
+        if (
+          pt.x >= 0 && pt.x < mapData.gridSize.x &&
+          pt.y >= 0 && pt.y < mapData.gridSize.y &&
+          !antiBacktrackSet.has(`${pt.x},${pt.y},${pt.f}`)
+        ) {
+          const sub = calculatePath(pt, targetLoc, [...(mapData.obstacles || []), ...userBlockers, obsPos], mapData, false);
+          if (sub.length > 0) {
+            diversionPath = [currentLoc, ...sub];
+            break;
+          }
         }
       }
     }
