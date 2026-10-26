@@ -1762,10 +1762,9 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
   useEffect(() => {
     let timeout: any;
     if (!isIdleMode && (robotState === 'idle' || robotState === 'patrol') && !isPlaying && isOn) {
-      const waitTime = (prevIsIdleMode.current && !isIdleMode) ? 0 : 2500;
       timeout = setTimeout(() => {
         if (!mapData || !mapData.rooms) return;
-        addExplanation(waitTime === 0 ? 'Idle mode disabled. Resuming patrol immediately.' : 'Idle detected. Initiating autonomous patrol mode.');
+        addExplanation('Autonomous patrol active. Patrolling campus network.');
         const currentLoc = path.length > 0 ? path[currentPosIndex] : mapData.start;
         const randomRoom = mapData.rooms[Math.floor(Math.random() * mapData.rooms.length)];
         const patrolPath = calculatePath(currentLoc, randomRoom.door || randomRoom.start, [...(mapData.obstacles || []), ...userBlockers], mapData);
@@ -1775,7 +1774,7 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
           setRobotState('patrol');
           setIsPlaying(true);
         }
-      }, waitTime);
+      }, 100);
     }
     prevIsIdleMode.current = isIdleMode;
     return () => clearTimeout(timeout);
@@ -2891,6 +2890,34 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
         setRobotState('idle');
       }
       originalMissionRef.current = null;
+    } else if (robotState === 'patrol') {
+      if (isIdleMode) {
+        setIsPlaying(false);
+        setRobotState('idle');
+        addExplanation('Idle mode active. Standing by at patrol waypoint.');
+      } else {
+        // Continuous patrol: never enter idle mode unless idle option is explicitly toggled on!
+        if (mapData && mapData.rooms && mapData.rooms.length > 0) {
+          const currentLoc = path.length > 0 ? path[path.length - 1] : mapData.start;
+          let randomRoom = mapData.rooms[Math.floor(Math.random() * mapData.rooms.length)];
+          for (let attempt = 0; attempt < 8; attempt++) {
+            const door = randomRoom.door || randomRoom.start;
+            if (Math.abs(door.x - currentLoc.x) + Math.abs(door.y - currentLoc.y) >= 8) break;
+            randomRoom = mapData.rooms[Math.floor(Math.random() * mapData.rooms.length)];
+          }
+          const nextPatrolPath = calculatePath(currentLoc, randomRoom.door || randomRoom.start, [...(mapData.obstacles || []), ...userBlockers], mapData);
+          if (nextPatrolPath.length > 0) {
+            setPath(nextPatrolPath);
+            setCurrentPosIndex(0);
+            setRobotState('patrol');
+            setIsPlaying(true);
+            addExplanation(`Patrol waypoint reached. Patrolling towards ${randomRoom.name}.`);
+            return;
+          }
+        }
+        setRobotState('patrol');
+        setIsPlaying(true);
+      }
     } else {
       if (mapData && mapData.tasks && currentTaskIndexRef.current < mapData.tasks.length - 1) {
         const prevTask = mapData.tasks[currentTaskIndexRef.current];
@@ -2909,23 +2936,33 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
           if (nextPath.length > 0) {
             setPath(nextPath);
             setCurrentPosIndex(0);
-            setRobotState(prev => prev === 'mission' ? 'mission' : 'patrol');
+            setRobotState('mission');
             setIsPlaying(true);
             addExplanation(`Resuming mission to ${nextTask.locationName}.`);
           } else {
             addExplanation(`Route calculation to ${nextTask.locationName} failed.`);
-            setRobotState('idle');
+            setRobotState('patrol');
           }
           isRecalculating.current = false;
         }, 800);
       } else {
-        setIsPlaying(false);
         if (isIdleMode) {
+          setIsPlaying(false);
           setRobotState('idle');
           addExplanation('Mission complete. Idle mode active, standing by.');
         } else {
           setRobotState('patrol');
-          addExplanation('Mission complete. Waiting 2.5s before returning to patrol mode.');
+          addExplanation('Mission complete. Resuming autonomous patrol.');
+          if (mapData && mapData.rooms && mapData.rooms.length > 0) {
+            const currentLoc = path.length > 0 ? path[path.length - 1] : mapData.start;
+            const randomRoom = mapData.rooms[Math.floor(Math.random() * mapData.rooms.length)];
+            const patrolPath = calculatePath(currentLoc, randomRoom.door || randomRoom.start, [...(mapData.obstacles || []), ...userBlockers], mapData);
+            if (patrolPath.length > 0) {
+              setPath(patrolPath);
+              setCurrentPosIndex(0);
+              setIsPlaying(true);
+            }
+          }
         }
       }
     }
