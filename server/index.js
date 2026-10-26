@@ -725,11 +725,13 @@ io.on('connection', (socket) => {
 
   // Robot Vision Frame Broadcast (Desktop -> Server -> Mobile)
   socket.on('robot_vision_frame', (frameData) => {
+    latestVisionFrame = frameData;
     socket.broadcast.emit('robot_vision_frame', frameData);
   });
 
   // High-frequency Robot Pose Stream for zero-lag 60 FPS FPV Digital Twin
   socket.on('robot_pose_stream', (poseData) => {
+    latestPose = poseData;
     socket.broadcast.emit('robot_pose_stream', poseData);
   });
 

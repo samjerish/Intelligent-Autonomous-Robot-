@@ -86,7 +86,23 @@ export default function MobileApp() {
       if (newState.obstacleCount !== undefined) setObstacleCount(newState.obstacleCount);
     });
 
+    // Periodic heartbeat to keep real-time vision and telemetry hot
+    const heartbeat = setInterval(() => {
+      if (socket.connected) {
+        socket.emit('request_robot_vision');
+      }
+    }, 3000);
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible' && socket.connected) {
+        socket.emit('request_robot_vision');
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
     return () => {
+      clearInterval(heartbeat);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
       socket.disconnect();
     };
   }, []);
