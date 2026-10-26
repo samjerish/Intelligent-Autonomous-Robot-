@@ -3114,7 +3114,7 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
         originalMissionRef.current = { 
           path: [...path], 
           index: currentPosIndex,
-          previousState: robotState 
+          previousState: (robotState === 'mission' ? 'mission' : robotState === 'returning_home' ? 'returning_home' : robotState === 'idle' ? 'idle' : 'patrol') 
         };
       }
     }
@@ -4406,7 +4406,7 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
                     <span>{isPlaying ? 'EXECUTING ROUTE...' : 'EXECUTE MISSION'}</span>
                   </button>
                   <button
-                    onClick={resetSimulation}
+                    onClick={() => resetSimulation(false)}
                     className="p-3 bg-white/5 border border-white/10 rounded-xl hover:bg-white/10 transition-colors group"
                     title="Reset Robot Coordinates"
                   >
