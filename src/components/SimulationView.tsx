@@ -298,26 +298,34 @@ const MovingEntity = ({
       toRobot.y = 0;
       const distToRobot = toRobot.length();
 
-      // Physical repulsion if very close (< 1.35m): push laterally away so clipping NEVER occurs
-      if (distToRobot < 1.35 && distToRobot > 0.01) {
+      // Physical repulsion cushion: guarantees obstacle NEVER enters robot personal zone (min 2.4m center-to-center)
+      const MIN_GAP_TO_ROBOT = 2.4;
+      if (distToRobot < MIN_GAP_TO_ROBOT && distToRobot > 0.001) {
         const pushAway = new THREE.Vector3().subVectors(currentPos, robotPos).normalize();
         pushAway.y = 0;
-        currentPos.add(pushAway.multiplyScalar(delta * 2.5));
+        const pushStrength = Math.min(6.0, (MIN_GAP_TO_ROBOT - distToRobot) * 6.0 + 2.0);
+        currentPos.add(pushAway.multiplyScalar(delta * pushStrength));
       }
 
-      // Detect oncoming encounter within 6.0m
-      if (distToRobot < 6.0 && distToRobot > 0.05) {
+      // Detect oncoming encounter within 7.5m horizon
+      if (distToRobot < 7.5 && distToRobot > 0.05) {
         const toRobotNorm = toRobot.clone().normalize();
         const dot = moveDir.dot(toRobotNorm);
 
-        // dot > 0.08 means moving towards robot (head-on collision course)
-        if (dot > 0.08) {
+        // dot > 0.05 means moving towards robot corridor
+        if (dot > 0.05) {
           const crossY = (moveDir.x * toRobotNorm.z) - (moveDir.z * toRobotNorm.x);
-          const steerSide = crossY > 0.05 ? -1 : 1;
+          const steerSide = crossY > 0.02 ? -1 : 1;
           
-          // Steer wide around robot: 1.15m for cars, 1.35m for pedestrians
-          lateralOffset = (isPedestrian ? 1.35 : 1.15) * steerSide;
-          speedMultiplier = 0.85;
+          // Steer generously wide around robot (1.55m - 1.65m lateral offset)
+          lateralOffset = (isPedestrian ? 1.65 : 1.55) * steerSide;
+          
+          // Slow down when in close proximity so safe lateral gap is established before passing
+          if (distToRobot < 3.5) {
+            speedMultiplier = Math.max(0.25, (distToRobot - 1.2) / 2.3);
+          } else {
+            speedMultiplier = 0.75;
+          }
 
           // Attempt topological road network detour if near intersection
           const now = performance.now();
@@ -349,10 +357,12 @@ const MovingEntity = ({
         const toOther = new THREE.Vector3().subVectors(other.currentPosVector, currentPos);
         toOther.y = 0;
         const distToOther = toOther.length();
-        if (distToOther < 1.35 && distToOther > 0.01) {
+        const MIN_GAP_TO_OTHER = 2.2;
+        if (distToOther < MIN_GAP_TO_OTHER && distToOther > 0.001) {
           const pushAway = new THREE.Vector3().subVectors(currentPos, other.currentPosVector).normalize();
           pushAway.y = 0;
-          currentPos.add(pushAway.multiplyScalar(delta * 2.2));
+          const pushStrength = Math.min(5.0, (MIN_GAP_TO_OTHER - distToOther) * 5.0 + 1.5);
+          currentPos.add(pushAway.multiplyScalar(delta * pushStrength));
         }
       }
     }
@@ -1124,7 +1134,7 @@ export const DetailedRobot = ({
 };
 
 const Robot = ({
-  path, currentIndex, isPlaying, gridSize, isMapView, speed, dynamicObstaclesRef,
+  path, currentIndex, isPlaying, gridSize, isMapView, speed, dynamicObstaclesRef, userBlockers,
   onReachNode, onMissionComplete, onObstacleDetected: _onObstacleDetected, robotPosRef, robotRotRef, isEmergency = false,
   robotState, robotGroupRef, isFPV
 }: {
@@ -1135,6 +1145,7 @@ const Robot = ({
   isMapView: boolean;
   speed: number;
   dynamicObstaclesRef: React.MutableRefObject<DynamicObstacle[]>;
+  userBlockers?: GridPoint[];
   onReachNode: (idx: number) => void;
   onMissionComplete: () => void;
   onObstacleDetected: (obsPos: GridPoint) => void;
@@ -1198,7 +1209,8 @@ const Robot = ({
 
       // 1. Dynamic Traffic Awareness & Active Lateral Bypass:
       // The robot NEVER freezes or reverses when meeting dynamic traffic!
-      // It steers smoothly into the clear lane/shoulder and passes without stopping.
+      // It maintains a strict safety buffer (min 2.4m center-to-center) and steers into the clear shoulder.
+      const MIN_SAFETY_GAP = 2.4; // Guarantees visible 0.9m - 1.0m air gap between robot shell and obstacle
       if (dynamicObstaclesRef && dynamicObstaclesRef.current.length > 0) {
         for (const obs of dynamicObstaclesRef.current) {
           if (!obs.currentPosVector) continue;
@@ -1206,30 +1218,56 @@ const Robot = ({
           toObs.y = 0;
           const distToObs = toObs.length();
 
-          // Physical lateral repulsion if very close (< 1.35m): prevent clipping/touching
-          if (distToObs < 1.35 && distToObs > 0.01) {
+          // Physical safety cushion: smoothly repulses robot so personal buffer is never breached
+          if (distToObs < MIN_SAFETY_GAP && distToObs > 0.001) {
             const repulse = toObs.clone().normalize().negate();
-            currentPos.add(repulse.multiplyScalar(delta * 2.5));
+            const pushStrength = Math.min(6.0, (MIN_SAFETY_GAP - distToObs) * 6.0 + 2.0);
+            currentPos.add(repulse.multiplyScalar(delta * pushStrength));
           }
 
-          // Oncoming obstacle detection within 5.5m
-          if (distToObs < 5.5 && distToObs > 0.05) {
+          // Oncoming obstacle detection within 7.0m horizon
+          if (distToObs < 7.0 && distToObs > 0.05) {
             const toObsNorm = toObs.clone().normalize();
             const dot = forwardDir.dot(toObsNorm);
-            if (dot > 0.08) {
+            if (dot > 0.05) {
               isDynamicEncounter = true;
-              speedFactor = Math.min(speedFactor, distToObs < 1.3 ? 0.72 : 0.88);
 
-              // Steer away from obstacle side
+              // Steer cleanly away from obstacle side
               const crossY = (forwardDir.x * toObsNorm.z) - (forwardDir.z * toObsNorm.x);
-              robotSteerSide = crossY > 0.05 ? -1 : 1;
+              robotSteerSide = crossY > 0.02 ? -1 : 1;
+
+              // When approaching obstacle in forward corridor (< 3.2m), yield/slow down forward drive
+              // so the lateral evasion bypass creates the safe clearance before passing
+              if (distToObs < 3.2) {
+                const forwardSlowdown = Math.max(0.18, (distToObs - 1.2) / 2.0);
+                speedFactor = Math.min(speedFactor, forwardSlowdown);
+              } else {
+                speedFactor = Math.min(speedFactor, 0.75);
+              }
             }
           }
         }
       }
 
+      // 2. Static Barricade / User Blocker Buffer:
+      if (userBlockers && userBlockers.length > 0) {
+        for (const b of userBlockers) {
+          const [bx, , bz] = getGridPosition(b, gridSize, 0.22, isMapView);
+          const bVec = new THREE.Vector3(bx, currentPos.y, bz);
+          const toB = new THREE.Vector3().subVectors(bVec, currentPos);
+          toB.y = 0;
+          const distToB = toB.length();
+          const MIN_BLOCKER_GAP = 2.2;
+          if (distToB < MIN_BLOCKER_GAP && distToB > 0.001) {
+            const repulse = toB.clone().normalize().negate();
+            const pushStrength = Math.min(5.0, (MIN_BLOCKER_GAP - distToB) * 5.0 + 1.5);
+            currentPos.add(repulse.multiplyScalar(delta * pushStrength));
+          }
+        }
+      }
+
       if (isDynamicEncounter) {
-        targetRobotDiversion.current.copy(normalDir).multiplyScalar(0.75 * robotSteerSide);
+        targetRobotDiversion.current.copy(normalDir).multiplyScalar(1.55 * robotSteerSide);
       } else {
         targetRobotDiversion.current.set(0, 0, 0);
       }
