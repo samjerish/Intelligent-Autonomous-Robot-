@@ -1182,25 +1182,41 @@ const Robot = ({
       // When reversing or waiting for clearance, do not trigger obstacle alarms on obstacles we are clearing from
       if (robotState !== 'reversing' && robotState !== 'waiting_for_clearance' && dynamicObstaclesRef && dynamicObstaclesRef.current.length > 0) {
         const upcomingPath = path.slice(currentIndex, currentIndex + 4);
+        const forwardDir = new THREE.Vector3().subVectors(targetVector, currentPos);
+        forwardDir.y = 0;
+        if (forwardDir.lengthSq() > 0.0001) forwardDir.normalize();
+
         for (const obs of dynamicObstaclesRef.current) {
           const obsTarget = obs.path[Math.min(obs.currentIndex, obs.path.length - 1)];
           let detected = false;
-          for (const p of upcomingPath) {
-            if ((p.x === obs.pos.x && p.y === obs.pos.y) || (p.x === obsTarget.x && p.y === obsTarget.y)) {
-              detected = true;
-              break;
+
+          // Check if obstacle is already executing a lateral diversion (>0.72m off centerline)
+          let isSafelyDiverted = false;
+          if (obs.currentPosVector) {
+            const lateralOffset = Math.abs((forwardDir.x * (obs.currentPosVector.z - currentPos.z)) - (forwardDir.z * (obs.currentPosVector.x - currentPos.x)));
+            if (lateralOffset > 0.72) {
+              isSafelyDiverted = true;
             }
           }
-          if (!detected && obs.currentPosVector) {
-            const d = currentPos.distanceTo(obs.currentPosVector);
-            if (d < 1.6) {
-              const forwardDir = new THREE.Vector3().subVectors(targetVector, currentPos).normalize();
-              const toObs = new THREE.Vector3().subVectors(obs.currentPosVector, currentPos).normalize();
-              if (forwardDir.dot(toObs) > 0.2) {
+
+          if (!isSafelyDiverted) {
+            for (const p of upcomingPath) {
+              if ((p.x === obs.pos.x && p.y === obs.pos.y) || (p.x === obsTarget.x && p.y === obsTarget.y)) {
                 detected = true;
+                break;
+              }
+            }
+            if (!detected && obs.currentPosVector) {
+              const d = currentPos.distanceTo(obs.currentPosVector);
+              if (d < 1.6) {
+                const toObs = new THREE.Vector3().subVectors(obs.currentPosVector, currentPos).normalize();
+                if (forwardDir.dot(toObs) > 0.2) {
+                  detected = true;
+                }
               }
             }
           }
+
           if (detected) {
             onObstacleDetected(obs.pos);
             return; // Pause movement this frame
