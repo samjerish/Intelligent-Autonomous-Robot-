@@ -329,11 +329,11 @@ const MovingEntity = ({
                 obstacle.targetPos = randRoad;
               } else {
                 obstacle.path = [...obstacle.path].reverse();
-                obstacle.currentIndex = 0;
+                obstacle.currentIndex = Math.min(1, obstacle.path.length - 1);
               }
             } else {
               obstacle.path = [...obstacle.path].reverse();
-              obstacle.currentIndex = 0;
+              obstacle.currentIndex = Math.min(1, obstacle.path.length - 1);
             }
           }
         } else {
@@ -367,11 +367,11 @@ const MovingEntity = ({
             obstacle.targetPos = nextEnd;
           } else {
             obstacle.path = [...obstacle.path].reverse();
-            obstacle.currentIndex = 0;
+            obstacle.currentIndex = Math.min(1, obstacle.path.length - 1);
           }
         } else {
           obstacle.path = [...obstacle.path].reverse();
-          obstacle.currentIndex = 0;
+          obstacle.currentIndex = Math.min(1, obstacle.path.length - 1);
         }
       }
       obstacle.pos = obstacle.path[Math.min(obstacle.currentIndex, obstacle.path.length - 1)];
@@ -414,11 +414,11 @@ const MovingEntity = ({
               obstacle.targetPos = randRoad;
             } else {
               obstacle.path = [...obstacle.path].reverse();
-              obstacle.currentIndex = 0;
+              obstacle.currentIndex = Math.min(1, obstacle.path.length - 1);
             }
           } else {
             obstacle.path = [...obstacle.path].reverse();
-            obstacle.currentIndex = 0;
+            obstacle.currentIndex = Math.min(1, obstacle.path.length - 1);
           }
         }
       }
@@ -428,10 +428,8 @@ const MovingEntity = ({
     }
   });
 
-  const startPos = getGridPosition(obstacle.path[0] || {x:0, y:0, f:0}, gridSize, obstacle.type === 'car' ? 0.2 : 0.5, isMapView);
-
   return (
-    <group ref={ref} position={startPos} scale={1.8}>
+    <group ref={ref} position={initialPos} scale={1.8}>
       {obstacle.type === 'car' ? (
         <group>
           <Box args={[0.7, 0.4, 1.2]} position={[0, 0.2, 0]} castShadow>
@@ -1921,6 +1919,69 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
       return;
     }
 
+    const currentList = dynamicObstaclesRef.current;
+    // If obstacles already exist and targetCount wasn't explicitly changed, NEVER wipe existing obstacles!
+    if (currentList.length > 0 && targetCount === undefined) {
+      return;
+    }
+
+    // If targetCount was provided, preserve existing live obstacles without despawning
+    if (currentList.length > 0) {
+      if (currentList.length === count) {
+        return;
+      }
+      if (currentList.length > count) {
+        // Trim excess without disturbing remaining live obstacles
+        const trimmed = currentList.slice(0, count);
+        setDynamicObstacles(trimmed);
+        dynamicObstaclesRef.current = trimmed;
+        return;
+      }
+
+      // Add only the difference so existing obstacles never disappear
+      const obs: DynamicObstacle[] = [...currentList];
+      const needed = count - currentList.length;
+      const spawnedPositions: GridPoint[] = obs.map(o => o.pos);
+
+      for (let i = 0; i < needed; i++) {
+        const isCar = Math.random() < 0.35;
+        let start = roads[Math.floor(Math.random() * roads.length)];
+        for (let attempt = 0; attempt < 20; attempt++) {
+          const tooClose = spawnedPositions.some(p => Math.abs(p.x - start.x) + Math.abs(p.y - start.y) < 4);
+          if (!tooClose) break;
+          start = roads[Math.floor(Math.random() * roads.length)];
+        }
+        spawnedPositions.push(start);
+
+        let end = roads[Math.floor(Math.random() * roads.length)];
+        for (let attempt = 0; attempt < 10; attempt++) {
+          if (Math.abs(start.x - end.x) + Math.abs(start.y - end.y) >= 8) break;
+          end = roads[Math.floor(Math.random() * roads.length)];
+        }
+
+        let path = calculatePath(start, end, [...(mapData.obstacles || []), ...userBlockers], mapData, true);
+        if (path.length <= 1) {
+          path = calculatePath(start, end, [...(mapData.obstacles || []), ...userBlockers], mapData, false);
+        }
+        if (path.length > 1) {
+          obs.push({
+            id: `obs_dyn_${Date.now()}_${obs.length}`,
+            type: isCar ? 'car' : 'person',
+            pos: path[0],
+            targetPos: end,
+            path,
+            currentIndex: 0,
+            speed: isCar ? 5.5 : (1.8 + Math.random() * 0.8),
+            isMoving: true
+          });
+        }
+      }
+      setDynamicObstacles(obs);
+      dynamicObstaclesRef.current = obs;
+      return;
+    }
+
+    // Fresh spawn (initial mount):
     const obs: DynamicObstacle[] = [];
     const carCount = count < 3 ? (count > 0 ? 1 : 0) : Math.min(8, Math.max(1, Math.round(count * 0.3)));
     
@@ -1994,7 +2055,9 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
   // Populate dynamic obstacles as soon as campus layout is loaded
   useEffect(() => {
     if (mapData && mapData.roads && mapData.roads.length > 0) {
-      initializeDynamicObstacles();
+      if (dynamicObstaclesRef.current.length === 0) {
+        initializeDynamicObstacles();
+      }
     }
   }, [mapData]);
 
@@ -2011,7 +2074,7 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
           const newPath = calculatePath(obs.pos, randEnd, [], mapData, true);
           if (newPath.length > 1) {
             obs.path = newPath;
-            obs.currentIndex = 0;
+            obs.currentIndex = 1;
             obs.targetPos = randEnd;
           }
         }
