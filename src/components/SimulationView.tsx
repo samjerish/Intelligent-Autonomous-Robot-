@@ -259,78 +259,112 @@ const MovingEntity = ({
       }
     }
     
-    // 2. Headway & Deadlock Prevention with Other Dynamic Obstacles:
-    // Prevents two oncoming obstacles from freezing in place indefinitely!
+    // 2. Physical Separation & Anti-Merging between Dynamic Obstacles:
+    // Guarantees obstacles NEVER merge into each other and maintain clean open space between each other!
     if (allObstaclesRef && allObstaclesRef.current) {
-      const minHeadway = obstacle.type === 'car' ? 1.6 : 0.95;
-      let isBlockedByOther = false;
+      const myRadius = obstacle.type === 'car' ? 0.95 : 0.45;
+      let isYieldingToOther = false;
+
       for (const other of allObstaclesRef.current) {
         if (other.id === obstacle.id || !other.currentPosVector) continue;
         const distToOther = currentPos.distanceTo(other.currentPosVector);
-        if (distToOther < minHeadway) {
+        const otherRadius = other.type === 'car' ? 0.95 : 0.45;
+        // Minimum visual clearance buffer between entity boundaries (ensures open space between obstacles)
+        const minBuffer = 0.55; 
+        const minSeparation = myRadius + otherRadius + minBuffer;
+
+        if (distToOther < minSeparation) {
+          // Calculate anti-merging repulsive push vector
+          const pushVector = new THREE.Vector3(
+            currentPos.x - other.currentPosVector.x,
+            0,
+            currentPos.z - other.currentPosVector.z
+          );
+          if (pushVector.lengthSq() < 0.0001) {
+            pushVector.set((Math.random() - 0.5) * 0.2, 0, (Math.random() - 0.5) * 0.2);
+          }
+          pushVector.normalize();
+
+          // Smoothly push apart to maintain non-overlapping space
+          const overlap = minSeparation - distToOther;
+          const pushAmount = Math.min(overlap * 0.6, delta * 3.5);
+          currentPos.add(pushVector.multiplyScalar(pushAmount));
+
+          // If the other obstacle is ahead in our movement corridor, yield so we do not ram or merge
           const toOther = new THREE.Vector3().subVectors(other.currentPosVector, currentPos).normalize();
-          if (moveDir.dot(toOther) > 0.3) {
-            isBlockedByOther = true;
-            break;
+          if (moveDir.dot(toOther) > 0.15) {
+            isYieldingToOther = true;
+          }
+        } else if (distToOther < minSeparation + 0.8) {
+          // Headway corridor buffer: slow down or hold back to prevent closing into other obstacle
+          const toOther = new THREE.Vector3().subVectors(other.currentPosVector, currentPos).normalize();
+          if (moveDir.dot(toOther) > 0.35) {
+            isYieldingToOther = true;
           }
         }
       }
 
-      if (isBlockedByOther) {
+      if (isYieldingToOther) {
         headwayWaitTimeRef.current += delta;
-        // If blocked by another obstacle for more than 0.7s, break deadlock so neither obstacle freezes in place!
-        if (headwayWaitTimeRef.current > 0.7) {
+        // If blocked behind another obstacle for > 1.2s, re-route to keep traffic moving cleanly
+        if (headwayWaitTimeRef.current > 1.2) {
           if (Date.now() - lastReverseTimeRef.current > 1800) {
             lastReverseTimeRef.current = Date.now();
             headwayWaitTimeRef.current = 0;
             if (mapData && mapData.roads && mapData.roads.length > 5) {
               const randRoad = mapData.roads[Math.floor(Math.random() * mapData.roads.length)];
-              const newPath = calculatePath(obstacle.pos, randRoad, [], mapData, true);
+              let newPath = calculatePath(obstacle.pos, randRoad, [], mapData, true);
+              if (newPath.length <= 1) {
+                newPath = calculatePath(obstacle.pos, randRoad, [], mapData, false);
+              }
               if (newPath.length > 1) {
                 obstacle.path = newPath;
                 obstacle.currentIndex = 1;
                 obstacle.targetPos = randRoad;
               } else {
-                obstacle.path.reverse();
+                obstacle.path = [...obstacle.path].reverse();
                 obstacle.currentIndex = 0;
               }
             } else {
-              obstacle.path.reverse();
+              obstacle.path = [...obstacle.path].reverse();
               obstacle.currentIndex = 0;
             }
           }
         } else {
-          return; // Brief headway pause to allow leading vehicle/person to advance
+          return; // Pause movement this frame to maintain clear open space
         }
       } else {
         headwayWaitTimeRef.current = 0;
       }
     }
 
-    // 3. Continuous Roaming & Motion Execution:
+    // 3. Continuous Roaming & Motion Execution (Never Disappear):
     const dist = currentPos.distanceTo(targetVector);
     if (dist < 0.08) {
       if (obstacle.currentIndex < obstacle.path.length - 1) {
         obstacle.currentIndex++;
       } else {
-        // Continuous roaming: when completing a route, pick a new random road node on campus and keep moving!
+        // Continuous roaming: when completing a route, seamlessly pick a new road destination and persist
         if (mapData && mapData.roads && mapData.roads.length > 5) {
           let nextEnd = mapData.roads[Math.floor(Math.random() * mapData.roads.length)];
-          for (let attempt = 0; attempt < 5; attempt++) {
-            if (Math.abs(obstacle.pos.x - nextEnd.x) + Math.abs(obstacle.pos.y - nextEnd.y) >= 5) break;
+          for (let attempt = 0; attempt < 8; attempt++) {
+            if (Math.abs(obstacle.pos.x - nextEnd.x) + Math.abs(obstacle.pos.y - nextEnd.y) >= 6) break;
             nextEnd = mapData.roads[Math.floor(Math.random() * mapData.roads.length)];
           }
-          const newPath = calculatePath(obstacle.pos, nextEnd, [], mapData, true);
+          let newPath = calculatePath(obstacle.pos, nextEnd, [], mapData, true);
+          if (newPath.length <= 1) {
+            newPath = calculatePath(obstacle.pos, nextEnd, [], mapData, false);
+          }
           if (newPath.length > 1) {
             obstacle.path = newPath;
             obstacle.currentIndex = 1;
             obstacle.targetPos = nextEnd;
           } else {
-            obstacle.path.reverse();
+            obstacle.path = [...obstacle.path].reverse();
             obstacle.currentIndex = 0;
           }
         } else {
-          obstacle.path.reverse();
+          obstacle.path = [...obstacle.path].reverse();
           obstacle.currentIndex = 0;
         }
       }
@@ -364,17 +398,20 @@ const MovingEntity = ({
           lastReverseTimeRef.current = Date.now();
           if (mapData && mapData.roads && mapData.roads.length > 5) {
             const randRoad = mapData.roads[Math.floor(Math.random() * mapData.roads.length)];
-            const newPath = calculatePath(obstacle.pos, randRoad, [], mapData, true);
+            let newPath = calculatePath(obstacle.pos, randRoad, [], mapData, true);
+            if (newPath.length <= 1) {
+              newPath = calculatePath(obstacle.pos, randRoad, [], mapData, false);
+            }
             if (newPath.length > 1) {
               obstacle.path = newPath;
               obstacle.currentIndex = 1;
               obstacle.targetPos = randRoad;
             } else {
-              obstacle.path.reverse();
+              obstacle.path = [...obstacle.path].reverse();
               obstacle.currentIndex = 0;
             }
           } else {
-            obstacle.path.reverse();
+            obstacle.path = [...obstacle.path].reverse();
             obstacle.currentIndex = 0;
           }
         }
