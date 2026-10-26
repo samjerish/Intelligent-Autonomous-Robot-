@@ -2846,7 +2846,7 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
         // Extinguish fire with high-pressure foam for 3.5 seconds
         setTimeout(() => {
           if (fireLoc) {
-            setFireHazards(prev => prev.filter(h => Math.abs(h.position.x - fireLoc.x) > 3 || Math.abs(h.position.y - fireLoc.y) > 3));
+            setFireHazards(fireHazards.filter(h => Math.abs(h.position.x - fireLoc.x) > 3 || Math.abs(h.position.y - fireLoc.y) > 3));
           } else {
             setFireHazards([]);
           }
