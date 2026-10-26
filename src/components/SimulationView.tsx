@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState, useMemo, useCallback } from 'react';
-import type { MapData, GridPoint, Room, FireHazardPoint, FireIncident, MissionTask } from '../types';
-import { calculatePath, calculateLongPath } from '../utils/simulationEngine';
+import type { MapData, GridPoint, Room, FireHazardPoint, FireIncident } from '../types';
+import { calculatePath, calculateLongPath, calculateEvadePath, calculateReversePath } from '../utils/simulationEngine';
 import { 
   Play, 
   RotateCcw, 
@@ -36,7 +36,6 @@ import {
 } from 'lucide-react';
 import { DeliveryModal } from './DeliveryModal';
 import { FireSimulationNode } from './FireSimulationNode';
-import { EmergencyLocationMarker } from './EmergencyLocationMarker';
 import { 
   BuildingModel, 
   CampusRoadsAndGround, 
@@ -85,7 +84,7 @@ export type PoliceState = {
 
 
 const CameraController = ({ cameraMode, isFollowing, robotPosRef, robotRotRef, controlsRef, triggerReset, onResetDone, gridSize, isMapView }: any) => {
-  const { camera, scene } = useThree();
+  const { camera } = useThree();
   // Smoothed look-target to prevent jitter when following
   const smoothTarget = useRef(new THREE.Vector3(0, 0.5, 0));
 
@@ -108,30 +107,24 @@ const CameraController = ({ cameraMode, isFollowing, robotPosRef, robotRotRef, c
 
     const mode = cameraMode || (isFollowing ? 'follow' : 'orbit');
 
-    // Toggle robot avatar visibility so FPV mode has a 100% clean dashcam view without robot limbs
-    const robotAvatarObj = scene.getObjectByName('robot_avatar_group');
-    if (robotAvatarObj) {
-      robotAvatarObj.visible = mode !== 'fpv';
-    }
-
     if (mode === 'fpv' && robotPosRef.current && robotRotRef?.current !== undefined) {
-      // 1st Person Robot Eye View - What the Robot Sees from the Front Side (Direct 60 FPS WebGL)
+      // 1st Person Robot Eye View - What the Robot Sees (Direct 60 FPS WebGL)
       const theta = robotRotRef.current;
-      const forwardX = Math.sin(theta);
-      const forwardZ = Math.cos(theta);
+      const forwardX = -Math.sin(theta);
+      const forwardZ = -Math.cos(theta);
 
-      // Mounted on front robot visor/head at eye height (1.05m)
+      // Mounted on robot sensor mast at eye height (0.95m)
       const eyePos = new THREE.Vector3(
-        robotPosRef.current.x + forwardX * 0.42,
-        robotPosRef.current.y + 1.05,
-        robotPosRef.current.z + forwardZ * 0.42
+        robotPosRef.current.x + forwardX * 0.35,
+        robotPosRef.current.y + 0.95,
+        robotPosRef.current.z + forwardZ * 0.35
       );
 
       // Snappy and smooth lerp for realistic head-tracking
       const lerpAlpha = 1 - Math.pow(0.0001, delta);
       camera.position.lerp(eyePos, lerpAlpha);
 
-      // Look straight forward along campus roadway/horizon in front of the robot
+      // Look straight forward along campus roadway/horizon
       const targetLook = new THREE.Vector3(
         eyePos.x + forwardX * 16.0,
         eyePos.y - 0.22,
@@ -201,8 +194,7 @@ const MovingEntity = ({
   isMapView, 
   robotPosRef, 
   allObstaclesRef,
-  robotStateRef,
-  mapData
+  robotStateRef
 }: { 
   obstacle: DynamicObstacle;
   gridSize: GridPoint;
@@ -210,33 +202,8 @@ const MovingEntity = ({
   robotPosRef?: React.MutableRefObject<THREE.Vector3 | null>;
   allObstaclesRef?: React.MutableRefObject<DynamicObstacle[]>;
   robotStateRef?: React.MutableRefObject<RobotState>;
-  mapData?: MapData | null;
 }) => {
   const ref = useRef<THREE.Group>(null);
-  const lastReverseTimeRef = useRef<number>(0);
-  const headwayWaitTimeRef = useRef<number>(0);
-  const lastPosRef = useRef<THREE.Vector3>(new THREE.Vector3());
-  const stallTimeRef = useRef<number>(0);
-
-  // Compute stable initial position once so React Three Fiber reconciler NEVER resets position during parent re-renders!
-  const initialPos = useMemo(() => {
-    if (obstacle.currentPosVector) {
-      return [obstacle.currentPosVector.x, obstacle.currentPosVector.y, obstacle.currentPosVector.z] as [number, number, number];
-    }
-    return getGridPosition(obstacle.path[0] || { x: 0, y: 0, f: 0 }, gridSize, obstacle.type === 'car' ? 0.2 : 0.5, isMapView);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  useEffect(() => {
-    if (ref.current) {
-      if (obstacle.currentPosVector) {
-        ref.current.position.copy(obstacle.currentPosVector);
-      } else {
-        ref.current.position.set(initialPos[0], initialPos[1], initialPos[2]);
-      }
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
   
   useFrame((_state, delta) => {
     if (!ref.current || obstacle.path.length === 0 || !obstacle.isMoving) return;
@@ -250,131 +217,50 @@ const MovingEntity = ({
     const moveDir = new THREE.Vector3().subVectors(targetVector, currentPos).normalize();
 
     // 1. Cooperative Yielding to Robot:
-    // When the robot is taking its lateral shoulder bypass around this obstacle,
-    // the obstacle yields smoothly (never reverses, teleports, or disappears).
+    // If the robot is backing up or waiting for clearance, the robot has yielded to let the obstacle pass!
+    // Obstacle should only pause if very close to a non-yielding robot and driving/walking directly towards it.
     if (robotPosRef && robotPosRef.current) {
       const isRobotYielding = robotStateRef && (robotStateRef.current === 'reversing' || robotStateRef.current === 'waiting_for_clearance');
       const distToRobot = currentPos.distanceTo(robotPosRef.current);
       
-      if (!isRobotYielding && distToRobot < (obstacle.type === 'car' ? 1.6 : 1.1)) {
+      if (!isRobotYielding && distToRobot < (obstacle.type === 'car' ? 1.5 : 0.9)) {
         const toRobot = new THREE.Vector3().subVectors(robotPosRef.current, currentPos).normalize();
-        if (moveDir.dot(toRobot) > 0.2) {
-          // Pause briefly while robot passes by via shoulder bypass
-          return;
+        if (moveDir.dot(toRobot) > 0.3) {
+          return; // Pause and let active robot pass
         }
       }
     }
     
-    // 2. Physical Separation & Anti-Merging between Dynamic Obstacles:
-    // Guarantees obstacles NEVER merge into each other and maintain clean open space between each other!
+    // 2. Headway & Anti-Overlap with Other Dynamic Obstacles:
+    // Uses real-time 3D vector positions to prevent cars and people from dog-piling or clipping
     if (allObstaclesRef && allObstaclesRef.current) {
-      const myRadius = obstacle.type === 'car' ? 0.95 : 0.45;
-      let isYieldingToOther = false;
-
+      const minHeadway = obstacle.type === 'car' ? 1.8 : 1.0;
       for (const other of allObstaclesRef.current) {
         if (other.id === obstacle.id || !other.currentPosVector) continue;
         const distToOther = currentPos.distanceTo(other.currentPosVector);
-        const otherRadius = other.type === 'car' ? 0.95 : 0.45;
-        // Minimum visual clearance buffer between entity boundaries (ensures open space between obstacles)
-        const minBuffer = 0.55; 
-        const minSeparation = myRadius + otherRadius + minBuffer;
-
-        if (distToOther < minSeparation) {
-          // Calculate anti-merging repulsive push vector
-          const pushVector = new THREE.Vector3(
-            currentPos.x - other.currentPosVector.x,
-            0,
-            currentPos.z - other.currentPosVector.z
-          );
-          if (pushVector.lengthSq() < 0.0001) {
-            pushVector.set((Math.random() - 0.5) * 0.2, 0, (Math.random() - 0.5) * 0.2);
-          }
-          pushVector.normalize();
-
-          // Smoothly push apart to maintain non-overlapping space
-          const overlap = minSeparation - distToOther;
-          const pushAmount = Math.min(overlap * 0.6, delta * 3.5);
-          currentPos.add(pushVector.multiplyScalar(pushAmount));
-
-          // If the other obstacle is ahead in our movement corridor, yield so we do not ram or merge
+        if (distToOther < minHeadway) {
           const toOther = new THREE.Vector3().subVectors(other.currentPosVector, currentPos).normalize();
-          if (moveDir.dot(toOther) > 0.15) {
-            isYieldingToOther = true;
-          }
-        } else if (distToOther < minSeparation + 0.8) {
-          // Headway corridor buffer: slow down or hold back to prevent closing into other obstacle
-          const toOther = new THREE.Vector3().subVectors(other.currentPosVector, currentPos).normalize();
+          // If the other obstacle is in our forward path cone, hold back to maintain headway
           if (moveDir.dot(toOther) > 0.35) {
-            isYieldingToOther = true;
+            return;
+          }
+          // Break deadlocks if two obstacles are very close in the same node
+          if (distToOther < 0.6 && obstacle.id > other.id) {
+            return;
           }
         }
-      }
-
-      if (isYieldingToOther) {
-        headwayWaitTimeRef.current += delta;
-        // If blocked behind another obstacle for > 1.2s, re-route to keep traffic moving cleanly
-        if (headwayWaitTimeRef.current > 1.2) {
-          if (Date.now() - lastReverseTimeRef.current > 1800) {
-            lastReverseTimeRef.current = Date.now();
-            headwayWaitTimeRef.current = 0;
-            if (mapData && mapData.roads && mapData.roads.length > 5) {
-              const randRoad = mapData.roads[Math.floor(Math.random() * mapData.roads.length)];
-              let newPath = calculatePath(obstacle.pos, randRoad, [], mapData, true);
-              if (newPath.length <= 1) {
-                newPath = calculatePath(obstacle.pos, randRoad, [], mapData, false);
-              }
-              if (newPath.length > 1) {
-                obstacle.path = newPath;
-                obstacle.currentIndex = 1;
-                obstacle.targetPos = randRoad;
-              } else {
-                obstacle.path = [...obstacle.path].reverse();
-                obstacle.currentIndex = Math.min(1, obstacle.path.length - 1);
-              }
-            } else {
-              obstacle.path = [...obstacle.path].reverse();
-              obstacle.currentIndex = Math.min(1, obstacle.path.length - 1);
-            }
-          }
-        } else {
-          return; // Pause movement this frame to maintain clear open space
-        }
-      } else {
-        headwayWaitTimeRef.current = 0;
       }
     }
 
-    // 3. Continuous Roaming & Motion Execution (Never Disappear):
     const dist = currentPos.distanceTo(targetVector);
-    if (dist < 0.08) {
+    if (dist < 0.05) {
       if (obstacle.currentIndex < obstacle.path.length - 1) {
         obstacle.currentIndex++;
       } else {
-        // Continuous roaming: when completing a route, seamlessly pick a new road destination and persist
-        if (mapData && mapData.roads && mapData.roads.length > 5) {
-          let nextEnd = mapData.roads[Math.floor(Math.random() * mapData.roads.length)];
-          for (let attempt = 0; attempt < 8; attempt++) {
-            if (Math.abs(obstacle.pos.x - nextEnd.x) + Math.abs(obstacle.pos.y - nextEnd.y) >= 6) break;
-            nextEnd = mapData.roads[Math.floor(Math.random() * mapData.roads.length)];
-          }
-          let newPath = calculatePath(obstacle.pos, nextEnd, [], mapData, true);
-          if (newPath.length <= 1) {
-            newPath = calculatePath(obstacle.pos, nextEnd, [], mapData, false);
-          }
-          if (newPath.length > 1) {
-            obstacle.path = newPath;
-            obstacle.currentIndex = 1;
-            obstacle.targetPos = nextEnd;
-          } else {
-            obstacle.path = [...obstacle.path].reverse();
-            obstacle.currentIndex = Math.min(1, obstacle.path.length - 1);
-          }
-        } else {
-          obstacle.path = [...obstacle.path].reverse();
-          obstacle.currentIndex = Math.min(1, obstacle.path.length - 1);
-        }
+        obstacle.path.reverse();
+        obstacle.currentIndex = 0;
       }
-      obstacle.pos = obstacle.path[Math.min(obstacle.currentIndex, obstacle.path.length - 1)];
+      obstacle.pos = obstacle.path[obstacle.currentIndex];
     } else {
       const moveDist = obstacle.speed * delta;
       if (moveDist >= dist) {
@@ -385,51 +271,20 @@ const MovingEntity = ({
         currentPos.add(direction.multiplyScalar(moveDist));
       }
       const rotDirection = new THREE.Vector3().subVectors(targetVector, currentPos);
-      if (rotDirection.lengthSq() > 0.01) {
+      if (rotDirection.lengthSq() > 0.001) {
         const targetRotation = Math.atan2(rotDirection.x, rotDirection.z);
         let diff = targetRotation - ref.current.rotation.y;
         while (diff < -Math.PI) diff += Math.PI * 2;
         while (diff > Math.PI) diff -= Math.PI * 2;
-        const turnRate = 1 - Math.exp(-12 * Math.min(delta, 0.08));
-        ref.current.rotation.y += diff * turnRate;
+        ref.current.rotation.y += diff * delta * 10;
       }
-    }
-
-    // 4. Motion Guarantee Watchdog: if entity hasn't moved in 2.0s, repath so it NEVER stays in one place
-    if (currentPos.distanceTo(lastPosRef.current) < 0.08) {
-      stallTimeRef.current += delta;
-      if (stallTimeRef.current > 2.0) {
-        stallTimeRef.current = 0;
-        if (Date.now() - lastReverseTimeRef.current > 1800) {
-          lastReverseTimeRef.current = Date.now();
-          if (mapData && mapData.roads && mapData.roads.length > 5) {
-            const randRoad = mapData.roads[Math.floor(Math.random() * mapData.roads.length)];
-            let newPath = calculatePath(obstacle.pos, randRoad, [], mapData, true);
-            if (newPath.length <= 1) {
-              newPath = calculatePath(obstacle.pos, randRoad, [], mapData, false);
-            }
-            if (newPath.length > 1) {
-              obstacle.path = newPath;
-              obstacle.currentIndex = 1;
-              obstacle.targetPos = randRoad;
-            } else {
-              obstacle.path = [...obstacle.path].reverse();
-              obstacle.currentIndex = Math.min(1, obstacle.path.length - 1);
-            }
-          } else {
-            obstacle.path = [...obstacle.path].reverse();
-            obstacle.currentIndex = Math.min(1, obstacle.path.length - 1);
-          }
-        }
-      }
-    } else {
-      stallTimeRef.current = 0;
-      lastPosRef.current.copy(currentPos);
     }
   });
 
+  const startPos = getGridPosition(obstacle.path[0] || {x:0, y:0, f:0}, gridSize, obstacle.type === 'car' ? 0.2 : 0.5, isMapView);
+
   return (
-    <group ref={ref} position={initialPos} scale={1.8}>
+    <group ref={ref} position={startPos} scale={1.8}>
       {obstacle.type === 'car' ? (
         <group>
           <Box args={[0.7, 0.4, 1.2]} position={[0, 0.2, 0]} castShadow>
@@ -835,6 +690,7 @@ export const DetailedRobot = ({
     const t = clock.current;
 
     if (bodyRef.current) bodyRef.current.position.y = 0.05;
+    if (headRef.current) headRef.current.rotation.y = 0;
     if (leftArmRef.current) {
       leftArmRef.current.rotation.x = isExtinguishing ? -Math.PI / 3 : 0;
     }
@@ -842,7 +698,7 @@ export const DetailedRobot = ({
       rightArmRef.current.rotation.x = isExtinguishing ? -Math.PI / 3 : 0;
     }
 
-    const ws = isMoving ? 8 : 0;
+    const ws = isMoving ? 8 : 0.5;
     if (leftWheelRef.current) leftWheelRef.current.rotation.x += delta * ws;
     if (rightWheelRef.current) rightWheelRef.current.rotation.x += delta * ws;
     if (frontWheelRef.current) frontWheelRef.current.rotation.x += delta * ws;
@@ -863,10 +719,9 @@ export const DetailedRobot = ({
     
     if (headRef.current) {
       if (isMoving) {
-        // Smooth, subtle scanning motion - prevents violent head vibration
-        headRef.current.rotation.y = Math.sin(t * 1.2) * 0.15;
+        headRef.current.rotation.y = Math.sin(t * 2.5) * 0.4;
       } else {
-        headRef.current.rotation.y = THREE.MathUtils.lerp(headRef.current.rotation.y, 0, 0.08);
+        headRef.current.rotation.y = THREE.MathUtils.lerp(headRef.current.rotation.y, 0, 0.1);
       }
     }
     
@@ -1129,7 +984,7 @@ export const DetailedRobot = ({
 };
 
 const Robot = ({
-  path, currentIndex, isPlaying, gridSize, isMapView, speed, dynamicObstaclesRef, userBlockers,
+  path, currentIndex, isPlaying, gridSize, isMapView, speed, dynamicObstaclesRef,
   onReachNode, onMissionComplete, onObstacleDetected, robotPosRef, robotRotRef, isEmergency = false,
   robotState
 }: {
@@ -1140,7 +995,6 @@ const Robot = ({
   isMapView: boolean;
   speed: number;
   dynamicObstaclesRef: React.MutableRefObject<DynamicObstacle[]>;
-  userBlockers?: GridPoint[];
   onReachNode: (idx: number) => void;
   onMissionComplete: () => void;
   onObstacleDetected: (obsPos: GridPoint) => void;
@@ -1153,13 +1007,9 @@ const Robot = ({
   const isMovingRef = useRef(false);
   const [isMoving, setIsMoving] = useState(false);
   const hasCompletedRef = useRef(false);
-  const lastReachedIndexRef = useRef(-1);
-  const lastObstacleDetectionTimeRef = useRef(0);
-  const targetYawRef = useRef(0);
 
   useEffect(() => {
     hasCompletedRef.current = false;
-    lastReachedIndexRef.current = -1;
   }, [path]);
 
   const pauseTimeRef = useRef(0);
@@ -1180,6 +1030,7 @@ const Robot = ({
     if (pauseTimeRef.current > 0) {
       pauseTimeRef.current -= delta;
       if (isMovingRef.current) { isMovingRef.current = false; setIsMoving(false); }
+      // Don't return early here, we still want to check for obstacles behind us
     }
     
     const dist = currentPos.distanceTo(targetVector);
@@ -1187,70 +1038,48 @@ const Robot = ({
     if (pauseTimeRef.current > 0) return; // Wait if still paused
 
     if (isPlaying) {
-      // --- Sensor Logic: Check for dynamic obstacles & road blockers ahead ---
-      if (robotState !== 'reversing' && robotState !== 'waiting_for_clearance') {
-        const now = Date.now();
-        if (now - lastObstacleDetectionTimeRef.current > 600) {
-          const upcomingPath = path.slice(currentIndex, currentIndex + 4);
-
-          // 1. Check upcoming road blockers placed on path
-          if (userBlockers && userBlockers.length > 0) {
-            for (const b of userBlockers) {
-              if (upcomingPath.some(p => p.x === b.x && p.y === b.y && p.f === b.f)) {
-                lastObstacleDetectionTimeRef.current = now;
-                onObstacleDetected(b);
-                return;
+      // --- Sensor Logic: Check for dynamic obstacles ahead ---
+      // When reversing or waiting for clearance, do not trigger obstacle alarms on obstacles we are clearing from
+      if (robotState !== 'reversing' && robotState !== 'waiting_for_clearance' && dynamicObstaclesRef && dynamicObstaclesRef.current.length > 0) {
+        const upcomingPath = path.slice(currentIndex, currentIndex + 4);
+        for (const obs of dynamicObstaclesRef.current) {
+          const obsTarget = obs.path[Math.min(obs.currentIndex, obs.path.length - 1)];
+          let detected = false;
+          for (const p of upcomingPath) {
+            if ((p.x === obs.pos.x && p.y === obs.pos.y) || (p.x === obsTarget.x && p.y === obsTarget.y)) {
+              detected = true;
+              break;
+            }
+          }
+          if (!detected && obs.currentPosVector) {
+            const d = currentPos.distanceTo(obs.currentPosVector);
+            if (d < 1.6) {
+              const forwardDir = new THREE.Vector3().subVectors(targetVector, currentPos).normalize();
+              const toObs = new THREE.Vector3().subVectors(obs.currentPosVector, currentPos).normalize();
+              if (forwardDir.dot(toObs) > 0.2) {
+                detected = true;
               }
             }
           }
-
-          // 2. Check dynamic pedestrians and vehicles
-          if (dynamicObstaclesRef && dynamicObstaclesRef.current.length > 0) {
-            for (const obs of dynamicObstaclesRef.current) {
-              const obsTarget = obs.path[Math.min(obs.currentIndex, obs.path.length - 1)];
-              let detected = false;
-              for (const p of upcomingPath) {
-                if ((p.x === obs.pos.x && p.y === obs.pos.y) || (p.x === obsTarget.x && p.y === obsTarget.y)) {
-                  detected = true;
-                  break;
-                }
-              }
-              if (!detected && obs.currentPosVector) {
-                const d = currentPos.distanceTo(obs.currentPosVector);
-                const detectDist = obs.type === 'car' ? 2.6 : 1.8;
-                if (d < detectDist) {
-                  const forwardDir = new THREE.Vector3().subVectors(targetVector, currentPos).normalize();
-                  const toObs = new THREE.Vector3().subVectors(obs.currentPosVector, currentPos).normalize();
-                  if (forwardDir.dot(toObs) > 0.35) {
-                    detected = true;
-                  }
-                }
-              }
-              if (detected) {
-                lastObstacleDetectionTimeRef.current = now;
-                onObstacleDetected(obs.pos);
-                return; // Trigger immediate diversion route
-              }
-            }
+          if (detected) {
+            onObstacleDetected(obs.pos);
+            return; // Pause movement this frame
           }
         }
       }
 
-      if (dist < 0.08) {
+
+      if (dist < 0.05) {
+        if (isMovingRef.current) { isMovingRef.current = false; setIsMoving(false); }
         if (currentIndex < path.length - 1) {
-          if (lastReachedIndexRef.current !== currentIndex + 1) {
-            lastReachedIndexRef.current = currentIndex + 1;
-            const curr = path[currentIndex];
-            const next = path[currentIndex + 1];
-            // Only pause if vertical floor transition occurs
-            if (curr.x === next.x && curr.y === next.y && curr.f !== next.f) {
-              pauseTimeRef.current = 2.0;
-              if (isMovingRef.current) { isMovingRef.current = false; setIsMoving(false); }
-            }
-            onReachNode(currentIndex + 1);
+          const curr = path[currentIndex];
+          const next = path[currentIndex + 1];
+          if (curr.x === next.x && curr.y === next.y) {
+             pauseTimeRef.current = 2.5; // Pause for 2.5 seconds
           }
-        } else if (currentIndex === path.length - 1) {
-          if (isMovingRef.current) { isMovingRef.current = false; setIsMoving(false); }
+          onReachNode(currentIndex + 1);
+        }
+        else if (currentIndex === path.length - 1) {
           if (!hasCompletedRef.current) {
             hasCompletedRef.current = true;
             onMissionComplete();
@@ -1258,42 +1087,31 @@ const Robot = ({
         }
       } else {
         if (!isMovingRef.current) { isMovingRef.current = true; setIsMoving(true); }
-        
-        // Calculate smooth turning and alignment
-        const rotDirection = new THREE.Vector3().subVectors(targetVector, currentPos);
-        if (rotDirection.lengthSq() > 0.02) {
-          targetYawRef.current = Math.atan2(rotDirection.x, rotDirection.z);
-        }
-        
-        let diff = targetYawRef.current - ref.current.rotation.y;
-        while (diff < -Math.PI) diff += Math.PI * 2;
-        while (diff > Math.PI) diff -= Math.PI * 2;
-        
-        // Critically damped rotation smoothing - zero overshoot, zero jitter/turbulence
-        const turnRate = 1 - Math.exp(-12 * Math.min(delta, 0.08));
-        ref.current.rotation.y += diff * turnRate;
-        
-        // Steering governor: gentle deceleration into sharp turns, full speed on straightaways
-        const turnAlignment = Math.max(0.35, Math.cos(diff));
-        const effectiveSpeed = speed * (Math.abs(diff) < 0.35 ? 1.0 : turnAlignment);
-        const moveDist = effectiveSpeed * delta;
-        
+        const moveDist = speed * delta;
         if (moveDist >= dist) {
           currentPos.copy(targetVector);
         } else {
           const direction = new THREE.Vector3().subVectors(targetVector, currentPos).normalize();
           currentPos.add(direction.multiplyScalar(moveDist));
         }
+        const rotDirection = new THREE.Vector3().subVectors(targetVector, currentPos);
+        if (rotDirection.lengthSq() > 0.01) {
+          const targetRotation = Math.atan2(rotDirection.x, rotDirection.z);
+          let diff = targetRotation - ref.current.rotation.y;
+          while (diff < -Math.PI) diff += Math.PI * 2;
+          while (diff > Math.PI) diff -= Math.PI * 2;
+          ref.current.rotation.y += diff * delta * 10;
+        }
       }
     } else {
       if (isMovingRef.current) { isMovingRef.current = false; setIsMoving(false); }
-      currentPos.lerp(targetVector, 0.15);
+      currentPos.lerp(targetVector, 0.2);
     }
   });
 
   const startPos = getGridPosition(path[0] || { x: 0, y: 0, f: 0 }, gridSize, 0.22, isMapView);
   return (
-    <group ref={ref} position={startPos} name="robot_avatar_group">
+    <group ref={ref} position={startPos}>
       <DetailedRobot 
         isMoving={isMoving} 
         isEmergency={isEmergency} 
@@ -1369,13 +1187,6 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
 
   const activeFireTargetRef = useRef<GridPoint | null>(null);
 
-  // Active Marked Emergency Location Point
-  const [markedEmergencyPoint, setMarkedEmergencyPoint] = useState<{
-    position: GridPoint;
-    label: string;
-    type: 'fire' | 'sos' | 'medical' | 'target' | 'hazard';
-  } | null>(null);
-
   const [path, setPath] = useState<GridPoint[]>([]);
   const [activePathColor, setActivePathColor] = useState<string>('#00ffff');
   const [speedLimit, setSpeedLimit] = useState(50);
@@ -1422,25 +1233,45 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
   useEffect(() => {
     if (isPlaying && path.length > 0 && currentPosIndex < path.length && mapData) {
        const currentLoc = path[currentPosIndex];
-       const targetLoc = destinationTargetRef.current || path[path.length - 1];
+       const targetLoc = path[path.length - 1];
        const allObstacles = [...(mapData.obstacles || []), ...userBlockers];
        // Check if current path is blocked
        const isBlocked = path.slice(currentPosIndex).some(p => 
           userBlockers.some(b => b.x === p.x && b.y === p.y && b.f === p.f)
        );
        if (isBlocked) {
-         let newPath = calculatePath(currentLoc, targetLoc, allObstacles, mapData, true);
-         if (newPath.length === 0) {
-           newPath = calculatePath(currentLoc, targetLoc, allObstacles, mapData, false);
-         }
+         const newPath = calculatePath(currentLoc, targetLoc, allObstacles, mapData);
          if (newPath.length > 0) {
            setPath(newPath);
            setCurrentPosIndex(0);
-           setIsPlaying(true);
-           setActivePathColor('#06b6d4');
-           addExplanation("⚠️ Blockage on path! Taking immediate diversion route around obstruction to destination...");
+           addExplanation("Road blocked! Rerouting to destination...");
+         } else {
+           const homeRoom = mapData.rooms?.find(r => r.name.toLowerCase().includes('generator')) || mapData.rooms?.[0];
+           let homePath: GridPoint[] = [];
+           if (homeRoom) {
+               homePath = calculatePath(currentLoc, homeRoom.door || homeRoom.start, allObstacles, mapData);
+           }
+           if (homePath.length > 0) {
+               setPath(homePath);
+               setCurrentPosIndex(0);
+               setRobotState('returning_home');
+               addExplanation("Road to destination is completely blocked! Returning to base.");
+           } else {
+               const evadePath = calculateEvadePath(currentLoc, allObstacles, mapData);
+               if (evadePath.length > 0) {
+                 setPath(evadePath);
+                 setCurrentPosIndex(0);
+                 setRobotState('evading_obstacle');
+                 addExplanation("Road completely blocked! Moving to give space for obstacles...");
+               } else {
+                 setIsPlaying(false);
+                 setRobotState('idle');
+                 addExplanation("Road completely blocked and cannot evade! Halting.");
+               }
+           }
          }
        }
+
     }
   }, [userBlockers]);
   
@@ -1452,7 +1283,7 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
   const isRecalculating = useRef(false);
 
   const [battery, setBattery] = useState(100);
-  const [robotState, setRobotState] = useState<RobotState>('patrol');
+  const [robotState, setRobotState] = useState<RobotState>('idle');
   const [isOn, setIsOn] = useState(isOnProp !== undefined ? isOnProp : true);
 
   useEffect(() => {
@@ -1460,25 +1291,17 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
       setIsOn(isOnProp);
     }
   }, [isOnProp]);
-  const [activeCCTab, setActiveCCTab] = useState<'dashboard' | 'emergency' | 'fire' | 'locations'>('dashboard');
+  const [activeCCTab, setActiveCCTab] = useState<'dashboard' | 'tools' | 'locations'>('dashboard');
   const [modalType, setModalType] = useState<'food' | 'medical' | null>(null);
   const [showRobotVisionPIP, setShowRobotVisionPIP] = useState(false);
 
+  const handleDeliverySubmit = (missionText: string) => {
+    if (onDispatchMission) onDispatchMission(missionText);
+    setModalType(null);
+  };
   const batteryRef = useRef(100);
-  const robotStateRef = useRef<RobotState>('patrol');
-  const originalMissionRef = useRef<{
-    path?: GridPoint[];
-    index?: number;
-    destination?: GridPoint;
-    destinationName?: string;
-    tasks?: MissionTask[];
-    taskIndex?: number;
-    previousState?: 'mission' | 'patrol' | 'returning_home' | 'idle';
-    strategyId?: string;
-    missionPath?: GridPoint[];
-  } | null>(null);
-  const destinationTargetRef = useRef<GridPoint | null>(null);
-  const waitForObstacleToClearRef = useRef<(() => void) | null>(null);
+  const robotStateRef = useRef<RobotState>('idle');
+  const originalMissionRef = useRef<{path: GridPoint[], index: number} | null>(null);
   const emergencyLocationRef = useRef<GridPoint | null>(null);
   const robotPosRef = useRef<THREE.Vector3 | null>(null);
   const robotRotRef = useRef<number>(0);
@@ -1487,33 +1310,6 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
   const currentTaskIndexRef = useRef(0);
   const emergencyTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const clearanceCheckRef = useRef<ReturnType<typeof setInterval> | null>(null);
-
-  // Dedicated Emergency State Guard: Strictly blocks other missions during emergency or crowd response
-  const isEmergencyActive = 
-    robotState === 'emergency_response' ||
-    robotState === 'crowd_control' ||
-    robotState === 'waiting_for_police' ||
-    robotState === 'extinguishing' ||
-    robotState === 'emergency_to_ctr' ||
-    robotState === 'ctr_to_emergency' ||
-    policeState.active ||
-    markedEmergencyPoint !== null ||
-    Boolean(activeFireIncident && activeFireIncident.status !== 'RESOLVED');
-
-  useEffect(() => {
-    window.dispatchEvent(new CustomEvent('robot_emergency_mode_change', { detail: { isEmergencyActive } }));
-  }, [isEmergencyActive]);
-
-  const handleDeliverySubmit = (missionText: string) => {
-    if (isEmergencyActive) {
-      addExplanation("⚠️ Delivery mission deferred: Robot is responding to an emergency at maximum priority.");
-      alert("🚨 Cannot accept missions: The robot is currently responding to an active emergency / crowd incident. Other missions are blocked until the emergency is completed.");
-      setModalType(null);
-      return;
-    }
-    if (onDispatchMission) onDispatchMission(missionText);
-    setModalType(null);
-  };
 
   useEffect(() => {
     switch(robotState) {
@@ -1786,9 +1582,7 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
           temperature: 35 + (Math.random() * (isPlaying ? 10 : 2)),
           cpu: isPlaying ? 30 + Math.random() * 40 : 5 + Math.random() * 5,
           network: 85 + Math.random() * 15,
-          speed: isPlaying ? 2.5 : 0,
-          emergencyPoint: markedEmergencyPoint?.position || (activeFireIncident && activeFireIncident.status !== 'RESOLVED' ? activeFireIncident.location?.coordinates : null),
-          emergencyLabel: markedEmergencyPoint?.label || (activeFireIncident && activeFireIncident.status !== 'RESOLVED' ? activeFireIncident.location?.building_name : null)
+          speed: isPlaying ? 2.5 : 0
         }
       }));
     }, isPlaying ? 100 : 500);
@@ -1797,116 +1591,28 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
 
   const prevIsIdleMode = useRef(isIdleMode);
 
-  // Auto-Patrol Logic with robust multi-room reachable search
+  // Auto-Patrol Logic
   useEffect(() => {
     let timeout: any;
     if (!isIdleMode && (robotState === 'idle' || robotState === 'patrol') && !isPlaying && isOn) {
       const waitTime = (prevIsIdleMode.current && !isIdleMode) ? 0 : 2500;
       timeout = setTimeout(() => {
-        if (!mapData || !mapData.rooms || mapData.rooms.length === 0) return;
+        if (!mapData || !mapData.rooms) return;
         addExplanation(waitTime === 0 ? 'Idle mode disabled. Resuming patrol immediately.' : 'Idle detected. Initiating autonomous patrol mode.');
-        const currentLoc = path.length > 0 && currentPosIndex < path.length ? path[currentPosIndex] : mapData.start;
-        
-        // Shuffle rooms to find the first reachable one
-        const shuffledRooms = [...mapData.rooms].sort(() => Math.random() - 0.5);
-        let patrolPath: GridPoint[] = [];
-        for (const room of shuffledRooms) {
-          const p = calculatePath(currentLoc, room.door || room.start, [...(mapData.obstacles || []), ...userBlockers], mapData, true);
-          if (p.length > 1) {
-            patrolPath = p;
-            break;
-          }
-        }
-        // Fallback: try off-road shoulder path if road is blocked
-        if (patrolPath.length === 0) {
-          for (const room of shuffledRooms) {
-            const p = calculatePath(currentLoc, room.door || room.start, [...(mapData.obstacles || []), ...userBlockers], mapData, false);
-            if (p.length > 1) {
-              patrolPath = p;
-              break;
-            }
-          }
-        }
-        // Fallback to campus center / start point
-        if (patrolPath.length === 0 && mapData.start) {
-          patrolPath = calculatePath(currentLoc, mapData.start, [...(mapData.obstacles || []), ...userBlockers], mapData, false);
-        }
-
+        const currentLoc = path.length > 0 ? path[currentPosIndex] : mapData.start;
+        const randomRoom = mapData.rooms[Math.floor(Math.random() * mapData.rooms.length)];
+        const patrolPath = calculatePath(currentLoc, randomRoom.door || randomRoom.start, [...(mapData.obstacles || []), ...userBlockers], mapData);
         if (patrolPath.length > 0) {
           setPath(patrolPath);
           setCurrentPosIndex(0);
           setRobotState('patrol');
           setIsPlaying(true);
-        } else {
-          setRobotState('idle');
         }
       }, waitTime);
     }
     prevIsIdleMode.current = isIdleMode;
     return () => clearTimeout(timeout);
-  }, [robotState, isPlaying, isOn, isIdleMode, mapData]);
-
-  // --- Autonomous Unstuck Watchdog ---
-  // Continuously monitors physical movement. If the robot has made zero forward progress
-  // while isPlaying is active, it detects a stall/deadlock and executes an automatic recovery.
-  useEffect(() => {
-    let lastCheckedPos: THREE.Vector3 | null = null;
-    let stationaryDuration = 0;
-
-    const watchdogInterval = setInterval(() => {
-      if (!isOn || !isPlaying || robotState === 'off' || robotState === 'charging' || robotState === 'extinguishing') {
-        stationaryDuration = 0;
-        return;
-      }
-
-      if (robotState === 'reversing' || robotState === 'waiting_for_clearance') {
-        return;
-      }
-
-      const currentPos = robotPosRef.current;
-      if (!currentPos) return;
-
-      if (lastCheckedPos) {
-        const movedDist = currentPos.distanceTo(lastCheckedPos);
-        if (movedDist < 0.12) {
-          stationaryDuration += 1;
-        } else {
-          stationaryDuration = 0;
-        }
-      }
-      lastCheckedPos = currentPos.clone();
-
-      // If robot has been stationary for 3+ consecutive seconds while marked isPlaying
-      if (stationaryDuration >= 3) {
-        stationaryDuration = 0;
-        if (!mapData) return;
-        
-        const currentLoc = (path.length > 0 && currentPosIndex < path.length)
-          ? path[currentPosIndex]
-          : getGridPointFromVector3(currentPos, mapData.gridSize);
-        
-        const orig = originalMissionRef.current;
-        const targetLoc = destinationTargetRef.current || (orig?.path && orig.path.length > 0
-          ? orig.path[orig.path.length - 1]
-          : (path.length > 0 ? path[path.length - 1] : mapData.start));
-
-        // Calculate an active unstuck recovery route directly to the destination (prefer roads, allow shoulder bypass)
-        let recoveryPath = calculatePath(currentLoc, targetLoc, [...(mapData.obstacles || []), ...userBlockers], mapData, true);
-        if (recoveryPath.length === 0) {
-          recoveryPath = calculatePath(currentLoc, targetLoc, [...(mapData.obstacles || []), ...userBlockers], mapData, false);
-        }
-
-        if (recoveryPath.length > 0) {
-          addExplanation('Autonomous Unstuck Watchdog: Taking forward diversion route to destination.');
-          setPath(recoveryPath);
-          setCurrentPosIndex(0);
-          setIsPlaying(true);
-        }
-      }
-    }, 1000);
-
-    return () => clearInterval(watchdogInterval);
-  }, [isOn, isPlaying, robotState, path, currentPosIndex, mapData, userBlockers]);
+  }, [robotState, isPlaying, path, currentPosIndex, mapData, isOn, isIdleMode]);
 
   const initializeDynamicObstacles = (robotPath?: GridPoint[], targetCount?: number) => {
     if (!mapData || !mapData.roads || mapData.roads.length < 5) return;
@@ -1919,99 +1625,23 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
       return;
     }
 
-    const currentList = dynamicObstaclesRef.current;
-    // If obstacles already exist and targetCount wasn't explicitly changed, NEVER wipe existing obstacles!
-    if (currentList.length > 0 && targetCount === undefined) {
-      return;
-    }
-
-    // If targetCount was provided, preserve existing live obstacles without despawning
-    if (currentList.length > 0) {
-      if (currentList.length === count) {
-        return;
-      }
-      if (currentList.length > count) {
-        // Trim excess without disturbing remaining live obstacles
-        const trimmed = currentList.slice(0, count);
-        setDynamicObstacles(trimmed);
-        dynamicObstaclesRef.current = trimmed;
-        return;
-      }
-
-      // Add only the difference so existing obstacles never disappear
-      const obs: DynamicObstacle[] = [...currentList];
-      const needed = count - currentList.length;
-      const spawnedPositions: GridPoint[] = obs.map(o => o.pos);
-
-      for (let i = 0; i < needed; i++) {
-        const isCar = Math.random() < 0.35;
-        let start = roads[Math.floor(Math.random() * roads.length)];
-        for (let attempt = 0; attempt < 20; attempt++) {
-          const tooClose = spawnedPositions.some(p => Math.abs(p.x - start.x) + Math.abs(p.y - start.y) < 4);
-          if (!tooClose) break;
-          start = roads[Math.floor(Math.random() * roads.length)];
-        }
-        spawnedPositions.push(start);
-
-        let end = roads[Math.floor(Math.random() * roads.length)];
-        for (let attempt = 0; attempt < 10; attempt++) {
-          if (Math.abs(start.x - end.x) + Math.abs(start.y - end.y) >= 8) break;
-          end = roads[Math.floor(Math.random() * roads.length)];
-        }
-
-        let path = calculatePath(start, end, [...(mapData.obstacles || []), ...userBlockers], mapData, true);
-        if (path.length <= 1) {
-          path = calculatePath(start, end, [...(mapData.obstacles || []), ...userBlockers], mapData, false);
-        }
-        if (path.length > 1) {
-          obs.push({
-            id: `obs_dyn_${Date.now()}_${obs.length}`,
-            type: isCar ? 'car' : 'person',
-            pos: path[0],
-            targetPos: end,
-            path,
-            currentIndex: 0,
-            speed: isCar ? 5.5 : (1.8 + Math.random() * 0.8),
-            isMoving: true
-          });
-        }
-      }
-      setDynamicObstacles(obs);
-      dynamicObstaclesRef.current = obs;
-      return;
-    }
-
-    // Fresh spawn (initial mount):
     const obs: DynamicObstacle[] = [];
     const carCount = count < 3 ? (count > 0 ? 1 : 0) : Math.min(8, Math.max(1, Math.round(count * 0.3)));
     
-    // Track spawn positions to ensure obstacles start with ample space between each other
-    const spawnedPositions: GridPoint[] = [];
-
     for (let i = 0; i < count; i++) {
       const isCar = i < carCount;
-      // Pick start node with guaranteed separation from previously spawned obstacles
+      // Pick start and end nodes with reasonable separation to prevent bunching
       let start = roads[Math.floor(Math.random() * roads.length)];
-      for (let attempt = 0; attempt < 20; attempt++) {
-        const tooClose = spawnedPositions.some(p => Math.abs(p.x - start.x) + Math.abs(p.y - start.y) < 4);
-        if (!tooClose) break;
-        start = roads[Math.floor(Math.random() * roads.length)];
-      }
-      spawnedPositions.push(start);
-
       let end = roads[Math.floor(Math.random() * roads.length)];
-      for (let attempt = 0; attempt < 10; attempt++) {
-        if (Math.abs(start.x - end.x) + Math.abs(start.y - end.y) >= 8) break;
+      for (let attempt = 0; attempt < 6; attempt++) {
+        if (Math.abs(start.x - end.x) + Math.abs(start.y - end.y) >= 6) break;
         end = roads[Math.floor(Math.random() * roads.length)];
       }
 
-      let path = calculatePath(start, end, [...(mapData.obstacles || []), ...userBlockers], mapData, true);
-      if (path.length <= 1) {
-        path = calculatePath(start, end, [...(mapData.obstacles || []), ...userBlockers], mapData, false);
-      }
+      const path = calculatePath(start, end, [...(mapData.obstacles || []), ...userBlockers], mapData, true);
       if (path.length > 1) {
         obs.push({
-          id: `obs_dyn_${i}`,
+          id: `obs_${i}_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
           type: isCar ? 'car' : 'person',
           pos: path[0],
           targetPos: end,
@@ -2036,7 +1666,7 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
         const crossPath = [crossStart, crossPoint, crossEnd];
 
         obs.push({
-          id: `obs_dyn_crosser`,
+          id: `sudden_crosser_${Date.now()}`,
           type: 'person',
           pos: crossStart,
           targetPos: crossEnd,
@@ -2055,32 +1685,8 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
   // Populate dynamic obstacles as soon as campus layout is loaded
   useEffect(() => {
     if (mapData && mapData.roads && mapData.roads.length > 0) {
-      if (dynamicObstaclesRef.current.length === 0) {
-        initializeDynamicObstacles();
-      }
+      initializeDynamicObstacles();
     }
-  }, [mapData]);
-
-  // Obstacle Continuous Movement Guarantee:
-  // Periodically ensures all dynamic obstacles have isMoving=true and active paths
-  useEffect(() => {
-    if (!mapData || !mapData.roads || mapData.roads.length < 5) return;
-    const roads = mapData.roads;
-    const livenessInterval = setInterval(() => {
-      dynamicObstaclesRef.current.forEach(obs => {
-        obs.isMoving = true;
-        if (!obs.path || obs.path.length < 2) {
-          const randEnd = roads[Math.floor(Math.random() * roads.length)];
-          const newPath = calculatePath(obs.pos, randEnd, [], mapData, true);
-          if (newPath.length > 1) {
-            obs.path = newPath;
-            obs.currentIndex = 1;
-            obs.targetPos = randEnd;
-          }
-        }
-      });
-    }, 2500);
-    return () => clearInterval(livenessInterval);
   }, [mapData]);
 
   // Adjust dynamic obstacles count
@@ -2271,16 +1877,17 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
 
   const resumeMissionTo = (currentLoc: GridPoint, targetLoc: GridPoint) => {
     if (!mapData) return;
-    destinationTargetRef.current = targetLoc;
     const allObstacles = [...(mapData.obstacles || []), ...userBlockers];
     
     let nextPath = calculatePath(currentLoc, targetLoc, allObstacles, mapData);
     if (nextPath.length === 0) {
-      nextPath = calculatePath(currentLoc, targetLoc, allObstacles, mapData, false);
+      nextPath = calculateLongPath(currentLoc, targetLoc, allObstacles, mapData);
+      if (nextPath.length > 0) {
+        addExplanation(`Taking a detour to reach target.`);
+      }
     }
     
     if (nextPath.length > 0) {
-      originalMissionRef.current = { path: [...nextPath], index: 0 };
       setPath(nextPath);
       setActivePathColor('#00ffff');
       setCurrentPosIndex(0);
@@ -2340,10 +1947,7 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
       }
       // Delivery Missions (from Mobile Dashboard or console)
       else if (lowerMsg.startsWith('deliver ') || lowerMsg.includes('delivery') || lowerMsg.includes('food') || lowerMsg.includes('medicine') || lowerMsg.includes('medical')) {
-        if (isEmergencyActive) {
-          reply = `🚨 MISSION REJECTED: The robot is currently responding to an active emergency / crowd incident. Other missions are blocked until the emergency is completed.`;
-          addExplanation(`Mission rejected: Robot is dedicated to emergency response.`);
-        } else if (onDispatchMission) {
+        if (onDispatchMission) {
           onDispatchMission(userMsg);
           reply = `Dispatching mission: "${userMsg}". AI path computation in progress.`;
           addExplanation(`Mission dispatched: "${userMsg}"`);
@@ -2351,9 +1955,15 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
           reply = `Acknowledged delivery mission: "${userMsg}".`;
         }
       } else if (lowerMsg.startsWith('go to ') || lowerMsg.startsWith('come to ')) {
-        if (isEmergencyActive) {
-          reply = `🚨 MISSION REJECTED: Robot is responding to a critical emergency / crowd. Other missions are blocked until the emergency is completed.`;
-          addExplanation(`Mission rejected: Emergency protocol active.`);
+        if (robotState === 'emergency_response') {
+          const roomName = lowerMsg.replace(/^(go to |come to )/, '').trim();
+          const targetRoom = mapData?.rooms?.find(r => r.name.toLowerCase().includes(roomName));
+          if (targetRoom) {
+            reply = `Emergency side-task accepted. Proceeding to ${targetRoom.name} and will return here shortly.`;
+            dispatchLocalMission(targetRoom.door || targetRoom.start, userMsg, true);
+          } else {
+            reply = `I could not find a location matching "${roomName}".`;
+          }
         } else if (onDispatchMission) {
           onDispatchMission(userMsg);
           reply = `Navigating to designated location: "${userMsg}".`;
@@ -2377,13 +1987,12 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
         const roomName = lowerMsg.replace(/^(emergency at |emergency in )/, '').trim();
         const targetRoom = mapData?.rooms?.find(r => r.name.toLowerCase().includes(roomName));
         if (robotState === 'charging') {
-          reply = `I am currently charging. Emergency override activated: Disconnecting charger and responding.`;
-          if (targetRoom) {
-            handleEmergencyCall(targetRoom.door || targetRoom.start, `${targetRoom.name} Emergency`, 'sos');
-          }
+          reply = `I am currently charging. Cannot respond to emergency.`;
+        } else if (robotState === 'mission' || robotState === 'emergency_response') {
+          reply = `I must complete my current task first before accepting new emergencies.`;
         } else if (targetRoom) {
-          reply = `🚨 EMERGENCY OVERRIDE ACCEPTED. Diverting immediately to ${targetRoom.name}! All other tasks suspended.`;
-          handleEmergencyCall(targetRoom.door || targetRoom.start, `${targetRoom.name} Emergency`, 'sos');
+          reply = `EMERGENCY ACCEPTED. Dispatched to ${targetRoom.name} immediately.`;
+          handleEmergencyCall(targetRoom.door || targetRoom.start);
         } else {
           reply = `I could not find a building matching "${roomName}".`;
         }
@@ -2393,16 +2002,11 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
         if (robotState === 'patrol') reply = "I am currently on a routine patrol across the campus.";
         else if (robotState === 'mission') reply = "I am currently executing a designated mission task.";
         else if (robotState === 'emergency_response') reply = "I am responding to an emergency at a high priority!";
-        else if (robotState === 'crowd_control') reply = "I am at a crowd gathering site, dispersing crowd and coordinating police escort.";
-        else if (robotState === 'waiting_for_police') reply = "I am holding perimeter at the crowd scene awaiting police arrival.";
-        else if (robotState === 'extinguishing') reply = "I am extinguishing an active fire with fire suppression foam!";
         else if (robotState === 'charging') reply = "I am currently recharging my battery at the Generator Room.";
         else if (robotState === 'returning_home') reply = "I am currently returning to the base station.";
         else reply = "I am currently idle and awaiting instructions.";
       } else {
-        if (isEmergencyActive) {
-          reply = `🚨 MISSION BLOCKED: Active emergency in progress. The robot cannot take other missions until the emergency is completed.`;
-        } else if (onDispatchMission) {
+        if (onDispatchMission) {
           onDispatchMission(userMsg);
           reply = `Processing mission: "${userMsg}". AI path computation in progress.`;
         } else {
@@ -2433,12 +2037,8 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
     window.dispatchEvent(new CustomEvent('local_ctr_messages_update', { detail: ctrMessages }));
   }, [ctrMessages]);
 
-  const resetSimulation = (asMission: boolean = false) => {
+  const resetSimulation = () => {
     if (!mapData) return;
-    if (isEmergencyActive) {
-      addExplanation("Action held: Active emergency / crowd protocol in progress. Missions cannot override emergency.");
-      return;
-    }
     // Preserve current location if robot is active
     const currentLoc = (path.length > 0 && currentPosIndex < path.length) ? path[currentPosIndex] : mapData.start;
     
@@ -2450,13 +2050,25 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
       setBattery(100); 
     }
     
-    originalMissionRef.current = null;
+    // Check if we are doing a side-task during emergency response
+    const isEmergencySideTask = robotStateRef.current === 'emergency_response' && mapData.tasks && mapData.tasks.length > 0;
+    
+    if (!isEmergencySideTask) {
+       originalMissionRef.current = null;
+    }
+    
     currentTaskIndexRef.current = 0;
     
-    if (asMission && mapData.tasks && mapData.tasks.length > 0) {
-      const target = mapData.tasks[0]?.location || mapData.end;
-      let initialPath: GridPoint[] = [];
-      
+    const target = mapData.tasks?.[0]?.location || mapData.end;
+    let initialPath: GridPoint[] = [];
+    
+    if (isEmergencySideTask) {
+      const emergencyLoc = path.length > 0 ? path[path.length - 1] : mapData.start;
+      emergencyLocationRef.current = emergencyLoc;
+      const fPath = calculatePath(currentLoc, target, [...(mapData.obstacles || []), ...userBlockers], mapData);
+      initialPath = fPath;
+      setActivePathColor('#00ffff');
+    } else {
       const fPath = calculatePath(currentLoc, target, [...(mapData.obstacles || []), ...userBlockers], mapData);
       let sPath = calculateLongPath(currentLoc, target, [...(mapData.obstacles || []), ...userBlockers], mapData);
       if (sPath.length === 0) sPath = calculatePath(currentLoc, target, [...(mapData.obstacles || []), ...userBlockers], mapData);
@@ -2471,38 +2083,34 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
         initialPath = fPath;
         setActivePathColor('#00ffff');
       }
+    }
+    
+    if (initialPath.length > 0 && mapData.tasks && mapData.tasks.length > 0) {
+      setPath(initialPath);
+      addExplanation(`Planned route to destination. Estimated distance: ${initialPath.length}m.`);
       
-      if (initialPath.length > 0) {
-        destinationTargetRef.current = target;
-        const targetRoom = mapData.rooms?.find(r => Math.abs(r.door.x - target.x) <= 2 && Math.abs(r.door.y - target.y) <= 2);
-        originalMissionRef.current = { 
-          path: [...initialPath], 
-          index: 0,
-          destination: target,
-          destinationName: targetRoom?.name || 'Mission Destination',
-          tasks: mapData.tasks,
-          taskIndex: 0,
-          previousState: 'mission',
-          strategyId: selectedStrategyId
-        };
-        setPath(initialPath);
-        addExplanation(`Planned mission route to ${targetRoom?.name || 'target'}. Estimated distance: ${initialPath.length}m.`);
-        setRobotState('mission');
-        setIsPlaying(true);
+      // dynamic obstacles no longer factored in as they get out of the way
+      const isBlocked = false;
+      if (isBlocked && dynamicObstaclesRef.current.length > 0) {
+         addExplanation("WARNING: Detected dynamic obstacles intersecting optimal path. Using AI dynamic rerouting.");
+      }
+      
+      if (isEmergencySideTask) {
+         setRobotState('emergency_to_ctr');
+         if (emergencyTimeoutRef.current) {
+           clearTimeout(emergencyTimeoutRef.current);
+           emergencyTimeoutRef.current = null;
+         }
+         setIsPlaying(true);
+      } else {
+         setRobotState('mission');
+         setIsPlaying(true);
       }
     } else {
-      // Robot remains in Patrol Mode by default until other modes/missions are activated
-      destinationTargetRef.current = null;
-      originalMissionRef.current = null;
-      setRobotState('patrol');
       setPath([]);
-      setIsPlaying(false);
-      addExplanation("Robot in Autonomous Patrol Mode. Ready for campus patrols and emergency response.");
+      setRobotState(prev => prev === 'emergency_response' ? prev : 'idle');
     }
-    // Only initialize dynamic obstacles if they don't already exist (so they never disappear)
-    if (dynamicObstaclesRef.current.length === 0) {
-      initializeDynamicObstacles();
-    }
+    initializeDynamicObstacles(initialPath);
   };
 
   const handleLowBattery = () => {
@@ -2539,7 +2147,7 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
     
     setTimeout(() => {
       const currentLoc = path[path.length - 1] || mapData.start;
-      if (orig?.path && orig.path.length > 0) {
+      if (orig && orig.path.length > 0) {
         const finalTarget = orig.path[orig.path.length - 1];
         resumeMissionTo(currentLoc, finalTarget);
       } else {
@@ -2549,115 +2157,29 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
     }, 1500);
   };
 
-  const resumeInterruptedMissionOrWork = useCallback(() => {
-    if (!mapData) return;
-    const interrupted = originalMissionRef.current;
-    const curLoc = robotPosRef.current 
-      ? getGridPointFromVector3(robotPosRef.current, mapData.gridSize) 
-      : (path.length > 0 && currentPosIndex < path.length ? path[currentPosIndex] : mapData.start);
-    
-    setMarkedEmergencyPoint(null);
-    emergencyLocationRef.current = null;
-    activeFireTargetRef.current = null;
-
-    if (turnOffAfterEmergencyRef.current) {
-       addExplanation("Emergency override complete. Returning to Robot Home to power off.");
-       turnOffAfterEmergencyRef.current = false;
-       setIsOn(false);
-       originalMissionRef.current = null;
-       const homeRoom = mapData?.rooms?.find(r => r.name.toLowerCase().includes('generator')) || mapData?.rooms?.[0];
-       if (homeRoom) {
-         const homePath = calculatePath(curLoc, homeRoom.door || homeRoom.start, [...(mapData.obstacles || []), ...userBlockers], mapData);
-         if (homePath.length > 0) {
-           setPath(homePath);
-           setCurrentPosIndex(0);
-           setActivePathColor('#eab308');
-           setRobotState('returning_home');
-           setIsPlaying(true);
-         }
-       }
-       return;
-    }
-
-    // 1. If an active mission was interrupted, calculate direct route from emergency site to destination:
-    if (interrupted && interrupted.previousState === 'mission' && (interrupted.destination || (interrupted.path && interrupted.path.length > 0))) {
-       const dest = interrupted.destination || interrupted.path![interrupted.path!.length - 1];
-       let resumePath = calculatePath(curLoc, dest, [...(mapData.obstacles || []), ...userBlockers], mapData, true);
-       if (resumePath.length === 0) {
-         resumePath = calculatePath(curLoc, dest, [...(mapData.obstacles || []), ...userBlockers], mapData, false);
-       }
-       if (resumePath.length > 0) {
-         destinationTargetRef.current = dest;
-         currentTaskIndexRef.current = interrupted.taskIndex || 0;
-         setPath(resumePath);
-         setCurrentPosIndex(0);
-         setActivePathColor('#22c55e'); // Green for mission
-         setRobotState('mission');
-         setIsPlaying(true);
-         originalMissionRef.current = null;
-         addExplanation(`✅ Emergency completed! Resuming previous mission to ${interrupted.destinationName || 'destination'} (${resumePath.length}m route calculated).`);
-         return;
-       }
-    }
-
-    // 2. If robot was returning home:
-    if (interrupted && interrupted.previousState === 'returning_home') {
-       const homeRoom = mapData?.rooms?.find(r => r.name.toLowerCase().includes('generator')) || mapData?.rooms?.[0];
-       if (homeRoom) {
-         const homePath = calculatePath(curLoc, homeRoom.door || homeRoom.start, [...(mapData.obstacles || []), ...userBlockers], mapData);
-         if (homePath.length > 0) {
-           setPath(homePath);
-           setCurrentPosIndex(0);
-           setActivePathColor('#eab308');
-           setRobotState('returning_home');
-           setIsPlaying(true);
-           originalMissionRef.current = null;
-           addExplanation("✅ Emergency completed! Resuming return to Robot Home.");
-           return;
-         }
-       }
-    }
-
-    // 3. Otherwise resume patrol or other normal campus work:
-    originalMissionRef.current = null;
-    const randomRoom = mapData.rooms?.[Math.floor(Math.random() * mapData.rooms.length)];
-    const targetPoint = randomRoom ? (randomRoom.door || randomRoom.start) : mapData.end;
-    const patrolPath = calculatePath(curLoc, targetPoint, [...(mapData.obstacles || []), ...userBlockers], mapData);
-    if (patrolPath.length > 0) {
-       setPath(patrolPath);
-       setCurrentPosIndex(0);
-       setActivePathColor('#3b82f6'); // Blue for patrol
-       setRobotState('patrol');
-       setIsPlaying(true);
-       addExplanation(`✅ Emergency completed! Resuming autonomous campus patrol route.`);
-    } else {
-       setRobotState('idle');
-       setIsPlaying(false);
-       addExplanation(`✅ Emergency completed! Standing by in idle standby state.`);
-    }
-  }, [mapData, userBlockers, path, currentPosIndex]);
-
   const handlePoliceReachDestination = useCallback((phase: string) => {
     if (phase === 'dispatching') {
-       addExplanation('Police unit arrived at crowd scene! Dispersing assembly and escorting crowd off-campus...');
+       addExplanation('Police arrived! Escorting crowd out of the campus. Resuming robot operations...');
        
        setCrowds(prev => prev.filter(c => c.x !== policeStateRef.current.targetPos?.x || c.y !== policeStateRef.current.targetPos?.y));
        
        if (mapData && policeStateRef.current.targetPos) {
          let returnPath = calculatePath(policeStateRef.current.targetPos, mapData.start, [...(mapData.obstacles || []), ...userBlockers], mapData);
-         if (returnPath.length === 0) returnPath = [policeStateRef.current.targetPos, mapData.start];
+         if (returnPath.length === 0) returnPath = [policeStateRef.current.targetPos, mapData.start]; // Fallback to direct teleport/slide if blocked
          setPoliceState(prev => ({
            ...prev,
            path: returnPath,
            phase: 'escorting'
          }));
        }
+       
+       handleEmergencyComplete();
+       
     } else if (phase === 'escorting') {
        setPoliceState({ active: false, path: [], targetPos: null, phase: 'idle' });
-       addExplanation('✅ CROWD DISPERSED: Crowd safely escorted out of campus by police unit.');
-       resumeInterruptedMissionOrWork();
+       addExplanation('Crowd successfully escorted out of the campus.');
     }
-  }, [mapData, userBlockers, resumeInterruptedMissionOrWork]);
+  }, [mapData, userBlockers]);
 
   const handleCrowdEmergency = (targetPos: GridPoint) => {
     if (!isOn) {
@@ -2669,71 +2191,16 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
     }
     
     if (!mapData) return;
-    
-    // Save interrupted mission state if robot was active
-    if (!originalMissionRef.current && (robotState === 'mission' || robotState === 'patrol' || robotState === 'returning_home')) {
-      const dest = destinationTargetRef.current || (path.length > 0 ? path[path.length - 1] : mapData.end);
-      const destName = (mapData.rooms?.find(r => dest && Math.abs(r.door.x - dest.x) <= 2 && Math.abs(r.door.y - dest.y) <= 2)?.name) || 'Designated Destination';
-      originalMissionRef.current = {
-        path: [...path],
-        index: currentPosIndex,
-        destination: dest,
-        destinationName: destName,
-        tasks: mapData.tasks,
-        taskIndex: currentTaskIndexRef.current,
-        previousState: (robotState === 'mission' || robotState === 'patrol' || robotState === 'returning_home') ? robotState : 'idle',
-        strategyId: selectedStrategyId
-      };
-    }
-    
-    // Mark crowd incident point
-    setMarkedEmergencyPoint({
-      position: targetPos,
-      label: `Crowd Gathering (${targetPos.x}, ${targetPos.y})`,
-      type: 'crowd' as any
-    });
-    
-    // Ensure crowd coordinate is in crowds list
-    setCrowds(prev => {
-      const exists = prev.some(c => c.x === targetPos.x && c.y === targetPos.y);
-      return exists ? prev : [...prev, targetPos];
-    });
-
-    addExplanation(`🚨 CROWD EMERGENCY: Diverting immediately to (${targetPos.x}, ${targetPos.y})! All other tasks suspended.`);
+    addExplanation(`CROWD EMERGENCY: Diverting immediately to (${targetPos.x}, ${targetPos.y})! All other tasks suspended.`);
     setIsPlaying(false);
     isRecalculating.current = true;
     
-    const currentLoc = robotPosRef.current 
-      ? getGridPointFromVector3(robotPosRef.current, mapData.gridSize) 
-      : (path.length > 0 && currentPosIndex < path.length ? path[currentPosIndex] : mapData.start);
+    if (robotState === 'mission' || robotState === 'patrol' || robotState === 'emergency_response') {
+      originalMissionRef.current = { path: [...path], index: currentPosIndex };
+    }
     
-    // Robust concentric radial candidate approach around crowd target to reach ANY point of map
-    const offsets = [
-      { dx: 0, dy: 0 },
-      { dx: 0, dy: 1 }, { dx: 0, dy: -1 }, { dx: 1, dy: 0 }, { dx: -1, dy: 0 },
-      { dx: 1, dy: 1 }, { dx: -1, dy: -1 }, { dx: 1, dy: -1 }, { dx: -1, dy: 1 },
-      { dx: 0, dy: 2 }, { dx: 0, dy: -2 }, { dx: 2, dy: 0 }, { dx: -2, dy: 0 },
-      { dx: 0, dy: 3 }, { dx: 0, dy: -3 }, { dx: 3, dy: 0 }, { dx: -3, dy: 0 }
-    ];
-
-    let emergencyPath: GridPoint[] = [];
-    for (const off of offsets) {
-      const candidate: GridPoint = { x: targetPos.x + off.dx, y: targetPos.y + off.dy, f: targetPos.f || 0 };
-      if (candidate.x >= 0 && candidate.x < mapData.gridSize.x && candidate.y >= 0 && candidate.y < mapData.gridSize.y) {
-        let p = calculatePath(currentLoc, candidate, [...(mapData.obstacles || []), ...userBlockers], mapData, true);
-        if (p.length === 0) {
-          p = calculatePath(currentLoc, candidate, [...(mapData.obstacles || []), ...userBlockers], mapData, false);
-        }
-        if (p.length > 0) {
-          emergencyPath = p;
-          break;
-        }
-      }
-    }
-
-    if (emergencyPath.length === 0) {
-      emergencyPath = calculatePath(currentLoc, targetPos, [...(mapData.obstacles || []), ...userBlockers], mapData, false);
-    }
+    const currentLoc = path.length > 0 && currentPosIndex < path.length ? path[currentPosIndex] : mapData.start;
+    const emergencyPath = calculatePath(currentLoc, targetPos, [...(mapData.obstacles || []), ...userBlockers], mapData);
     
     if (emergencyPath.length > 0) {
       setPath(emergencyPath);
@@ -2741,16 +2208,13 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
       setCurrentPosIndex(0);
       setRobotState('crowd_control');
       setIsPlaying(true);
-      isRecalculating.current = false;
-      addExplanation(`🚨 CROWD CONTROL EN ROUTE: High-priority direct route (${emergencyPath.length}m) to crowd at (${targetPos.x}, ${targetPos.y}).`);
     } else {
-      addExplanation(`Emergency route calculation failed. Unable to reach crowd at (${targetPos.x}, ${targetPos.y}).`);
+      addExplanation(`Emergency route calculation failed. Unable to reach crowd.`);
       setIsPlaying(true);
-      isRecalculating.current = false;
     }
   };
 
-  const handleEmergencyCall = (targetPos: GridPoint, customLabel?: string, emergencyType: 'fire' | 'sos' | 'medical' | 'target' = 'sos') => {
+  const handleEmergencyCall = (targetPos: GridPoint) => {
     if (!isOn) {
       addExplanation("Emergency override! Powering ON to respond to critical emergency.");
       setIsOn(true);
@@ -2760,94 +2224,35 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
     }
     
     if (!mapData) return;
+    if (robotState === 'emergency_response' || robotState === 'charging' || robotState === 'emergency_to_ctr' || robotState === 'ctr_to_emergency') return;
     
-    const resolvedLabel = customLabel || (mapData.rooms?.find(r => 
-      targetPos.x >= r.start.x && targetPos.x <= r.end.x &&
-      targetPos.y >= r.start.y && targetPos.y <= r.end.y
-    )?.name) || `Emergency Location (${targetPos.x}, ${targetPos.y})`;
-
-    // PROPERLY MARK THE EMERGENCY LOCATION POINT ON THE CAMPUS MAP!
-    setMarkedEmergencyPoint({
-      position: targetPos,
-      label: resolvedLabel,
-      type: emergencyType
-    });
-
-    addExplanation(`EMERGENCY CALL: Diverting immediately to marked point at ${resolvedLabel} (${targetPos.x}, ${targetPos.y})! All other tasks suspended.`);
+    addExplanation(`EMERGENCY CALL: Diverting immediately to (${targetPos.x}, ${targetPos.y})!`);
     setIsPlaying(false);
     isRecalculating.current = true;
     
-    // Save interrupted mission state if robot was active
-    if (!originalMissionRef.current && (robotState === 'mission' || robotState === 'patrol' || robotState === 'returning_home')) {
-      const dest = destinationTargetRef.current || (path.length > 0 ? path[path.length - 1] : mapData.end);
-      const destName = (mapData.rooms?.find(r => dest && Math.abs(r.door.x - dest.x) <= 2 && Math.abs(r.door.y - dest.y) <= 2)?.name) || 'Designated Destination';
-      originalMissionRef.current = {
-        path: [...path],
-        index: currentPosIndex,
-        destination: dest,
-        destinationName: destName,
-        tasks: mapData.tasks,
-        taskIndex: currentTaskIndexRef.current,
-        previousState: (robotState === 'mission' || robotState === 'patrol' || robotState === 'returning_home') ? robotState : 'idle',
-        strategyId: selectedStrategyId
-      };
+    if (robotState === 'patrol' || robotState === 'mission' || robotState === 'returning_home') {
+      originalMissionRef.current = { path: [...path], index: currentPosIndex };
     }
     
-    const currentLoc = robotPosRef.current 
-      ? getGridPointFromVector3(robotPosRef.current, mapData.gridSize) 
-      : (path[currentPosIndex] || mapData.start);
-
-    // Candidates adjacent in case targetPos is inside building or on obstacle
-    const offsets = [
-      { dx: 0, dy: 0 },
-      { dx: 0, dy: 1 }, { dx: 0, dy: -1 }, { dx: 1, dy: 0 }, { dx: -1, dy: 0 },
-      { dx: 1, dy: 1 }, { dx: -1, dy: -1 }, { dx: 1, dy: -1 }, { dx: -1, dy: 1 },
-      { dx: 0, dy: 2 }, { dx: 0, dy: -2 }, { dx: 2, dy: 0 }, { dx: -2, dy: 0 },
-      { dx: 0, dy: 3 }, { dx: 0, dy: -3 }, { dx: 3, dy: 0 }, { dx: -3, dy: 0 }
-    ];
-
-    let bestPath: GridPoint[] = [];
-    for (const off of offsets) {
-      const candidate: GridPoint = { x: targetPos.x + off.dx, y: targetPos.y + off.dy, f: targetPos.f || 0 };
-      if (candidate.x >= 0 && candidate.x < mapData.gridSize.x && candidate.y >= 0 && candidate.y < mapData.gridSize.y) {
-        let p = calculatePath(currentLoc, candidate, [...(mapData.obstacles || []), ...userBlockers], mapData, true);
-        if (p.length === 0) {
-          p = calculatePath(currentLoc, candidate, [...(mapData.obstacles || []), ...userBlockers], mapData, false);
-        }
-        if (p.length > 0) {
-          bestPath = p;
-          break;
-        }
-      }
-    }
-
-    if (bestPath.length === 0) {
-      bestPath = calculatePath(currentLoc, targetPos, [...(mapData.obstacles || []), ...userBlockers], mapData, false);
-    }
+    const currentLoc = path[currentPosIndex] || mapData.start;
+    const emergencyPath = calculatePath(currentLoc, targetPos, [...(mapData.obstacles || []), ...userBlockers], mapData);
     
-    if (bestPath.length > 0) {
-      activeFireTargetRef.current = targetPos;
-      setTimeout(() => {
-        setPath(bestPath);
-        setActivePathColor('#ef4444');
-        setCurrentPosIndex(0);
-        setRobotState('emergency_response');
-        setIsPlaying(true);
-        isRecalculating.current = false;
-        addExplanation(`🚨 EN ROUTE: Robot dispatched to marked emergency point at ${resolvedLabel}.`);
-      }, 200);
-    } else {
-      addExplanation(`Emergency route calculation failed. Unable to reach target at (${targetPos.x}, ${targetPos.y}).`);
+    if (emergencyPath.length > 0) {
+      setPath(emergencyPath);
+      setActivePathColor('#00ffff');
+      setCurrentPosIndex(0);
+      setRobotState('emergency_response');
       setIsPlaying(true);
-      isRecalculating.current = false;
+    } else {
+      addExplanation(`Emergency route calculation failed. Unable to reach target.`);
+      setIsPlaying(true);
     }
+    isRecalculating.current = false;
   };
-
 
   const handleEmergencyComplete = () => {
     if (!mapData) return;
-    const destName = markedEmergencyPoint?.label || (activeFireIncident?.location?.building_name) || 'emergency location';
-    addExplanation(`🚨 ARRIVED AT MARKED EMERGENCY POINT: Robot on-scene at ${destName}. Securing perimeter and providing assistance...`);
+    addExplanation(`Arrived at emergency location. Providing assistance for 5 seconds...`);
     setIsPlaying(false);
     
     if (emergencyTimeoutRef.current) {
@@ -2856,31 +2261,18 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
     
     emergencyTimeoutRef.current = setTimeout(() => {
       // Dispatch local request to trigger the global confirmation modal for completion
-      window.dispatchEvent(new CustomEvent('local_emergency_request', { detail: markedEmergencyPoint?.position || {x: 0, y: 0} }));
+      window.dispatchEvent(new CustomEvent('local_emergency_request', { detail: {x: 0, y: 0} }));
       emergencyTimeoutRef.current = null;
-    }, 4000);
+    }, 5000);
   };
 
-  const dispatchRobotToExtinguish = (fireCoord: GridPoint, locationLabel?: string) => {
+  const dispatchRobotToExtinguish = (fireCoord: GridPoint) => {
     if (!mapData) return;
     if (!isOn) {
       setIsOn(true);
       if (onPowerChange) onPowerChange(true);
     }
     const robotP = robotPosRef.current ? getGridPointFromVector3(robotPosRef.current, mapData.gridSize) : mapData.start;
-
-    // Resolve location label for proper marking
-    const resolvedLabel = locationLabel || (mapData.rooms?.find(r => 
-      fireCoord.x >= r.start.x && fireCoord.x <= r.end.x &&
-      fireCoord.y >= r.start.y && fireCoord.y <= r.end.y
-    )?.name) || `Fire Emergency Sector (${fireCoord.x}, ${fireCoord.y})`;
-
-    // PROPERLY MARK THE EMERGENCY LOCATION POINT ON THE CAMPUS MAP!
-    setMarkedEmergencyPoint({
-      position: fireCoord,
-      label: resolvedLabel,
-      type: 'fire'
-    });
 
     // Candidates directly adjacent to fire (standoff ~1.5 to 2.5 units)
     const offsets = [
@@ -2896,10 +2288,7 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
     for (const off of offsets) {
       const candidate: GridPoint = { x: fireCoord.x + off.dx, y: fireCoord.y + off.dy, f: fireCoord.f || 0 };
       if (candidate.x >= 0 && candidate.x < mapData.gridSize.x && candidate.y >= 0 && candidate.y < mapData.gridSize.y) {
-        let p = calculatePath(robotP, candidate, [...(mapData.obstacles || []), ...userBlockers], mapData, true);
-        if (p.length === 0) {
-          p = calculatePath(robotP, candidate, [...(mapData.obstacles || []), ...userBlockers], mapData, false);
-        }
+        const p = calculatePath(robotP, candidate, [...(mapData.obstacles || []), ...userBlockers], mapData);
         if (p.length > 0) {
           bestPath = p;
           targetPoint = candidate;
@@ -2909,7 +2298,7 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
     }
 
     if (bestPath.length === 0) {
-      bestPath = calculatePath(robotP, targetPoint, [...(mapData.obstacles || []), ...userBlockers], mapData, false);
+      bestPath = calculatePath(robotP, targetPoint, [...(mapData.obstacles || []), ...userBlockers], mapData);
     }
 
     if (bestPath.length > 0) {
@@ -2918,21 +2307,6 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
       currentTaskIndexRef.current = 9999;
       activeFireTargetRef.current = fireCoord;
 
-      if (!originalMissionRef.current && (robotState === 'mission' || robotState === 'patrol' || robotState === 'returning_home')) {
-        const remainingTasks = mapData.tasks ? mapData.tasks.slice(currentTaskIndexRef.current) : undefined;
-        const origDest = destinationTargetRef.current || (path.length > 0 ? path[path.length - 1] : undefined);
-        originalMissionRef.current = {
-          path: [...path],
-          index: currentPosIndex,
-          tasks: remainingTasks && remainingTasks.length > 0 ? remainingTasks : undefined,
-          taskIndex: currentTaskIndexRef.current,
-          destination: origDest,
-          previousState: robotState
-        };
-      }
-
-      window.dispatchEvent(new CustomEvent('robot_emergency_mode_change', { detail: { active: true, type: 'fire' } }));
-
       setTimeout(() => {
         setPath(bestPath);
         setCurrentPosIndex(0);
@@ -2940,7 +2314,7 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
         setRobotState('emergency_response');
         setIsPlaying(true);
         isRecalculating.current = false;
-        addExplanation(`🚨 CRITICAL FIRE EMERGENCY: Dispatched to marked point at ${resolvedLabel} (${fireCoord.x}, ${fireCoord.y}). Siren and Fire Extinguisher Unit active.`);
+        addExplanation(`🚨 CRITICAL FIRE EMERGENCY: Dispatched to (${fireCoord.x}, ${fireCoord.y}). Emergency siren and Fire Extinguisher Unit active.`);
       }, 200);
     } else {
       addExplanation(`⚠️ Road to fire at (${fireCoord.x}, ${fireCoord.y}) is blocked. Cannot establish clear path.`);
@@ -3008,43 +2382,39 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
     return () => clearInterval(interval);
   }, [fireHazards, activeFireIncident, mapData, userBlockers, onFireDetected]);
 
-  // Reactive listener to automatically dispatch to marked emergency point when activeFireIncident triggers
-  const lastHandledFireIdRef = useRef<string | null>(null);
-  useEffect(() => {
-    if (!activeFireIncident || activeFireIncident.status === 'RESOLVED') {
-      if (activeFireIncident?.status === 'RESOLVED') {
-        setMarkedEmergencyPoint(prev => prev?.type === 'fire' ? null : prev);
-      }
-      return;
-    }
-
-    if (activeFireIncident.status === 'ACTIVE_EMERGENCY' || activeFireIncident.status === 'ACKNOWLEDGED') {
-      const fireCoord = activeFireIncident.location?.coordinates as GridPoint | undefined;
-      if (fireCoord && lastHandledFireIdRef.current !== activeFireIncident.id) {
-        lastHandledFireIdRef.current = activeFireIncident.id;
-        const bldgName = activeFireIncident.location?.building_name || activeFireIncident.location?.display_location;
-        dispatchRobotToExtinguish(fireCoord, bldgName);
-      }
-    }
-  }, [activeFireIncident]);
-
-  // Reactive listener for remote emergency target events (e.g. mobile controller)
-  useEffect(() => {
-    const handleRemoteEmergencyTarget = (e: any) => {
-      const detail = e.detail;
-      if (detail && typeof detail.x === 'number' && typeof detail.y === 'number') {
-        handleEmergencyCall({ x: detail.x, y: detail.y, f: detail.f || 0 }, 'Mobile Emergency Target', 'target');
-      }
-    };
-    window.addEventListener('remote_emergency_target', handleRemoteEmergencyTarget);
-    return () => window.removeEventListener('remote_emergency_target', handleRemoteEmergencyTarget);
-  }, [mapData, userBlockers, isOn]);
 
   useEffect(() => {
     const handleRemoteApprove = () => {
-      setMarkedEmergencyPoint(null);
-      window.dispatchEvent(new CustomEvent('robot_emergency_mode_change', { detail: { active: false, type: 'emergency' } }));
-      resumeInterruptedMissionOrWork();
+      if (!mapData) return;
+      if (turnOffAfterEmergencyRef.current) {
+         addExplanation("Emergency override complete. Returning to Robot Home to power off.");
+         turnOffAfterEmergencyRef.current = false;
+         setIsOn(false);
+         originalMissionRef.current = null;
+         const homeRoom = mapData?.rooms?.find(r => r.name.toLowerCase().includes('generator')) || mapData?.rooms?.[0];
+         if (homeRoom) {
+           const currentLoc = path[path.length - 1] || mapData.start;
+           const homePath = calculatePath(currentLoc, homeRoom.door || homeRoom.start, [...(mapData.obstacles || []), ...userBlockers], mapData);
+           setPath(homePath);
+           setCurrentPosIndex(0);
+           setRobotState('returning_home');
+           setIsPlaying(true);
+         }
+      } else {
+         addExplanation(`Emergency resolved. Returning to patrol mode.`);
+         const currentLoc = path[path.length - 1] || mapData.start;
+         const randomRoom = mapData.rooms[Math.floor(Math.random() * mapData.rooms.length)];
+         const patrolPath = calculatePath(currentLoc, randomRoom.door || randomRoom.start, [...(mapData.obstacles || []), ...userBlockers], mapData);
+         if (patrolPath.length > 0) {
+           setPath(patrolPath);
+           setCurrentPosIndex(0);
+           setRobotState('patrol');
+           setIsPlaying(true);
+         } else {
+           setRobotState('idle'); 
+         }
+      }
+      originalMissionRef.current = null;
     };
 
     const handleRemoteDeny = () => {
@@ -3053,11 +2423,12 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
 
     window.addEventListener('remote_emergency_approve', handleRemoteApprove);
     window.addEventListener('remote_emergency_deny', handleRemoteDeny);
+
     return () => {
       window.removeEventListener('remote_emergency_approve', handleRemoteApprove);
       window.removeEventListener('remote_emergency_deny', handleRemoteDeny);
     };
-  }, [resumeInterruptedMissionOrWork]);
+  }, [mapData, isOn, robotState, path, currentPosIndex]);
 
   const waitForObstacleToClear = () => {
     if (clearanceCheckRef.current) {
@@ -3066,7 +2437,7 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
     }
 
     let checkCount = 0;
-    const maxChecks = 14; // Check every 500ms for up to 7s
+    const maxChecks = 15; // Check every 800ms for up to ~12s
 
     clearanceCheckRef.current = setInterval(() => {
       checkCount++;
@@ -3076,68 +2447,59 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
       }
 
       const orig = originalMissionRef.current;
-      const targetLoc = destinationTargetRef.current || (orig?.path && orig.path.length > 0
+      const targetLoc = (orig && orig.path.length > 0)
         ? orig.path[orig.path.length - 1]
-        : (path.length > 0 ? path[path.length - 1] : mapData.start));
+        : (path.length > 0 ? path[path.length - 1] : mapData.start);
 
       const currentLoc = (path.length > 0 && currentPosIndex < path.length)
         ? path[currentPosIndex]
         : (robotPosRef.current ? getGridPointFromVector3(robotPosRef.current, mapData.gridSize) : mapData.start);
 
-      // Check current live dynamic obstacle positions (focused on those in forward vicinity)
-      const dynamicPositions = dynamicObstaclesRef.current
-        .filter(o => o.currentPosVector && robotPosRef.current ? o.currentPosVector.distanceTo(robotPosRef.current) < 3.5 : true)
-        .map(o => o.pos);
+      // Check current live dynamic obstacle positions
+      const dynamicPositions = dynamicObstaclesRef.current.map(o => o.pos);
       const currentObstacles = [...(mapData.obstacles || []), ...userBlockers, ...dynamicPositions];
 
-      // Try forward path directly to the original target destination (prefer roads, fallback to shoulder bypass)
-      let forwardPath = calculatePath(currentLoc, targetLoc, currentObstacles, mapData, true);
-      if (forwardPath.length === 0) {
-        forwardPath = calculatePath(currentLoc, targetLoc, currentObstacles, mapData, false);
-      }
+      // Try forward path to target
+      const forwardPath = calculatePath(currentLoc, targetLoc, currentObstacles, mapData, true);
 
       if (forwardPath.length > 0) {
         if (clearanceCheckRef.current) {
           clearInterval(clearanceCheckRef.current);
           clearanceCheckRef.current = null;
         }
-        addExplanation('Clearance verified! Path to destination is clear. Resuming autonomous navigation forward.');
+        addExplanation('Obstacle has moved! Road is now clear. Resuming mission forward.');
         setPath(forwardPath);
         setCurrentPosIndex(0);
-        setRobotState(orig?.previousState === 'mission' ? 'mission' : 'patrol');
+        setRobotState(orig ? 'mission' : 'patrol');
         setIsPlaying(true);
-        setTimeout(() => { isRecalculating.current = false; }, 800);
+        originalMissionRef.current = null;
+        isRecalculating.current = false;
         return;
       }
 
-      if (checkCount % 4 === 0) {
-        addExplanation(`Dynamic obstacles in motion on route. Holding position safely and waiting for clearance (${Math.round(checkCount * 0.5)}s)...`);
-      }
-
       if (checkCount >= maxChecks) {
-        const unconstrainedPath = calculatePath(currentLoc, targetLoc, [...(mapData.obstacles || []), ...userBlockers], mapData, false);
-        if (unconstrainedPath.length > 0) {
-          if (clearanceCheckRef.current) {
-            clearInterval(clearanceCheckRef.current);
-            clearanceCheckRef.current = null;
-          }
-          addExplanation('Waited for obstacles to clear. Resuming route directly to destination.');
-          setPath(unconstrainedPath);
-          setCurrentPosIndex(0);
-          setRobotState(orig?.previousState === 'mission' ? 'mission' : 'patrol');
-          setIsPlaying(true);
-        } else {
-          checkCount = 0;
-          addExplanation('Corridor congested. Continuing safe wait for obstacle passage...');
+        if (clearanceCheckRef.current) {
+          clearInterval(clearanceCheckRef.current);
+          clearanceCheckRef.current = null;
         }
-        setTimeout(() => { isRecalculating.current = false; }, 800);
+        // Try detour if route remains obstructed
+        const detourPath = calculateLongPath(currentLoc, targetLoc, currentObstacles, mapData);
+        if (detourPath.length > 0) {
+          addExplanation('Obstacle still present. Taking wide perimeter detour to destination.');
+          setPath(detourPath);
+          setCurrentPosIndex(0);
+          setRobotState(orig ? 'mission' : 'patrol');
+          setIsPlaying(true);
+          originalMissionRef.current = null;
+        } else {
+          addExplanation('Obstacle holding position. Continuing to monitor corridor safely...');
+          // Keep checking
+          setTimeout(() => waitForObstacleToClear(), 1500);
+        }
+        isRecalculating.current = false;
       }
-    }, 500);
+    }, 800);
   };
-
-  useEffect(() => {
-    waitForObstacleToClearRef.current = waitForObstacleToClear;
-  });
 
   const handleObstacleDetected = (obsPos: GridPoint) => {
     if (isRecalculating.current) return;
@@ -3152,162 +2514,99 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
       ? path[currentPosIndex]
       : (robotPosRef.current ? getGridPointFromVector3(robotPosRef.current, mapData.gridSize) : mapData.start);
     
-    // Always preserve and target the exact destination
     const orig = originalMissionRef.current;
-    const targetLoc = destinationTargetRef.current || (orig?.path && orig.path.length > 0
+    const targetLoc = (orig && orig.path.length > 0)
       ? orig.path[orig.path.length - 1]
-      : (path.length > 0 ? path[path.length - 1] : mapData.start));
+      : (path.length > 0 ? path[path.length - 1] : mapData.start);
     
-    destinationTargetRef.current = targetLoc;
-
-    // Save original state & path if not already in temporary detour state
-    if (robotState !== 'charging' && robotState !== 'emergency_response') {
-      if (!originalMissionRef.current) {
-        originalMissionRef.current = { 
-          path: [...path], 
-          index: currentPosIndex,
-          previousState: (robotState === 'mission' ? 'mission' : robotState === 'returning_home' ? 'returning_home' : robotState === 'idle' ? 'idle' : 'patrol') 
-        };
-      }
+    // Save original mission if we are not already in temporary detour state
+    if (robotState !== 'evading_obstacle' && robotState !== 'charging' && robotState !== 'emergency_response') {
+      originalMissionRef.current = { path: [...path], index: currentPosIndex };
     }
     
-    // Gather active dynamic obstacle positions without deleting or modifying them
+    // Gather all active dynamic obstacles
     const dynamicPositions = dynamicObstaclesRef.current.map(o => o.pos);
     const allObstacles = [...(mapData.obstacles || []), ...userBlockers, obsPos, ...dynamicPositions];
-
-    // Identify past nodes behind the robot to strictly forbid reversing / returning back
-    const pastNodes: GridPoint[] = [];
-    if (path.length > 0) {
-      for (let i = Math.max(0, currentPosIndex - 5); i < currentPosIndex; i++) {
-        pastNodes.push(path[i]);
+    
+    let intermediateTarget = null;
+    for (let i = currentPosIndex; i < path.length - 1; i++) {
+      if (path[i].x === path[i+1].x && path[i].y === path[i+1].y && path[i].f === path[i+1].f) {
+        intermediateTarget = path[i];
+        break;
       }
     }
-    const antiBacktrackObstacles = [...allObstacles, ...pastNodes];
-    const antiBacktrackSet = new Set(antiBacktrackObstacles.map(o => `${o.x},${o.y},${o.f}`));
-
-    // Forward heading unit vector
-    const nextNode = (path.length > currentPosIndex + 1)
-      ? path[currentPosIndex + 1]
-      : obsPos;
-    const fwdDx = Math.sign(nextNode.x - currentLoc.x);
-    const fwdDy = Math.sign(nextNode.y - currentLoc.y);
-
-    // Lateral vectors perpendicular to forward heading
-    // Priority: standard traffic right-hand bypass, fallback to left
-    const rightLateral = { dx: -fwdDy, dy: fwdDx };
-    const leftLateral = { dx: fwdDy, dy: -fwdDx };
-
-    let diversionPath: GridPoint[] = [];
-
-    // 1. Primary Strategy: Seamless Forward Lateral Bypass (Veer to shoulder/lane and advance forward)
-    // Try right-forward, pure right, left-forward, pure left
-    const bypassCandidates = [
-      { dx: rightLateral.dx + fwdDx, dy: rightLateral.dy + fwdDy },
-      { dx: rightLateral.dx, dy: rightLateral.dy },
-      { dx: leftLateral.dx + fwdDx, dy: leftLateral.dy + fwdDy },
-      { dx: leftLateral.dx, dy: leftLateral.dy }
-    ];
-
-    for (const offset of bypassCandidates) {
-      const stepPt: GridPoint = {
-        x: currentLoc.x + offset.dx,
-        y: currentLoc.y + offset.dy,
-        f: currentLoc.f
-      };
-
-      if (
-        stepPt.x >= 0 && stepPt.x < mapData.gridSize.x &&
-        stepPt.y >= 0 && stepPt.y < mapData.gridSize.y &&
-        !antiBacktrackSet.has(`${stepPt.x},${stepPt.y},${stepPt.f}`)
-      ) {
-        // Compute forward path from the lateral step point to destination (forbidding past nodes)
-        const forwardPath = calculatePath(stepPt, targetLoc, antiBacktrackObstacles, mapData, false);
-        if (forwardPath.length > 0) {
-          diversionPath = [currentLoc, ...forwardPath];
-          break;
-        }
+    
+    let newPath: GridPoint[] = [];
+    if (intermediateTarget) {
+      const fPath = calculatePath(currentLoc, intermediateTarget, allObstacles, mapData, true);
+      const rPath = calculatePath(intermediateTarget, targetLoc, allObstacles, mapData, true);
+      if (fPath.length > 0 && rPath.length > 0) {
+        newPath = [...fPath, fPath[fPath.length - 1], ...rPath.slice(1)];
+      }
+    } else {
+      newPath = calculatePath(currentLoc, targetLoc, allObstacles, mapData, true);
+    }
+    
+    if (newPath.length === 0) {
+      if (intermediateTarget) {
+         const fPath = calculateLongPath(currentLoc, intermediateTarget, allObstacles, mapData);
+         const rPath = calculateLongPath(intermediateTarget, targetLoc, allObstacles, mapData);
+         if (fPath.length > 0 && rPath.length > 0) {
+           newPath = [...fPath, fPath[fPath.length - 1], ...rPath.slice(1)];
+         }
+      } else {
+         newPath = calculateLongPath(currentLoc, targetLoc, allObstacles, mapData);
       }
     }
-
-    // 2. Secondary Strategy: Shoulder / Sidewalk forward bypass directly to targetLoc without backtracking
-    if (diversionPath.length === 0) {
-      const shoulderPath = calculatePath(currentLoc, targetLoc, antiBacktrackObstacles, mapData, false);
-      if (shoulderPath.length > 1) {
-        diversionPath = shoulderPath;
-      }
-    }
-
-    // 3. Tertiary Strategy: Alternate forward road corridor (without backtracking)
-    if (diversionPath.length === 0) {
-      const roadPath = calculatePath(currentLoc, targetLoc, antiBacktrackObstacles, mapData, true);
-      if (roadPath.length > 1) {
-        diversionPath = roadPath;
-      }
-    }
-
-    // 4. Quaternary Strategy: Distance-minimizing forward neighbor step (strictly approaching targetLoc)
-    if (diversionPath.length === 0) {
-      const allDirs = [
-        { dx: 0, dy: 1 }, { dx: 0, dy: -1 }, { dx: 1, dy: 0 }, { dx: -1, dy: 0 },
-        { dx: 1, dy: 1 }, { dx: -1, dy: -1 }, { dx: 1, dy: -1 }, { dx: -1, dy: 1 }
-      ];
-      // Sort strictly by closest distance to targetLoc so the robot ALWAYS moves forward towards the goal
-      allDirs.sort((a, b) => {
-        const da = Math.hypot(targetLoc.x - (currentLoc.x + a.dx), targetLoc.y - (currentLoc.y + a.dy));
-        const db = Math.hypot(targetLoc.x - (currentLoc.x + b.dx), targetLoc.y - (currentLoc.y + b.dy));
-        return da - db;
-      });
-
-      for (const d of allDirs) {
-        const pt: GridPoint = { x: currentLoc.x + d.dx, y: currentLoc.y + d.dy, f: currentLoc.f };
-        if (
-          pt.x >= 0 && pt.x < mapData.gridSize.x &&
-          pt.y >= 0 && pt.y < mapData.gridSize.y &&
-          !antiBacktrackSet.has(`${pt.x},${pt.y},${pt.f}`)
-        ) {
-          const sub = calculatePath(pt, targetLoc, [...(mapData.obstacles || []), ...userBlockers, obsPos], mapData, false);
-          if (sub.length > 0) {
-            diversionPath = [currentLoc, ...sub];
-            break;
-          }
-        }
-      }
-    }
-
-    if (diversionPath.length > 0) {
-      setPath(diversionPath);
+    
+    // 1. Intelligent bypass around obstacles if road network allows
+    if (newPath.length > 0) {
+      setPath(newPath);
       setCurrentPosIndex(0);
       setIsPlaying(true);
-      // Retain current mode (patrol stays patrol, mission stays mission)
-      if (robotState !== 'emergency_response' && robotState !== 'crowd_control' && robotState !== 'returning_home') {
-        setRobotState(prev => (prev === 'mission' ? 'mission' : 'patrol'));
-      }
-      setActivePathColor('#06b6d4'); // Dynamic diversion cyan
-      addExplanation(`⚠️ Obstacle detected at (${obsPos.x}, ${obsPos.y}). Taking proper diversion around obstacle to destination (${diversionPath.length}m route).`);
-    } else {
-      // In the rare event of all sides physically walled off, recalculate direct path
-      addExplanation(`⚠️ Congested corridor. Rerouting around obstruction...`);
-      const directFallback = calculatePath(currentLoc, targetLoc, [...(mapData.obstacles || []), ...userBlockers], mapData, false);
-      if (directFallback.length > 0) {
-        setPath(directFallback);
-        setCurrentPosIndex(0);
-        setIsPlaying(true);
-      }
-    }
-
-    setTimeout(() => {
+      addExplanation(`Dynamic obstacle detected! Smart lane bypass calculated. Navigating around obstacle...`);
       isRecalculating.current = false;
-    }, 600);
+      return;
+    }
+    
+    // 2. Obstacle not leaving the way: back up to yield space for obstacle to pass
+    const reversePath = calculateReversePath(currentLoc, obsPos, path, currentPosIndex, allObstacles, mapData, 2);
+    if (reversePath.length > 1) {
+      addExplanation(`Obstacle blocking single lane. Backing up to create space for obstacle to pass...`);
+      setPath(reversePath);
+      setCurrentPosIndex(0);
+      setRobotState('reversing');
+      setIsPlaying(true);
+      isRecalculating.current = false;
+      return;
+    }
+    
+    // 3. If cannot reverse back, hold position safely and wait for obstacle to clear
+    addExplanation(`Corridor blocked ahead. Holding position safely and waiting for obstacle to move...`);
+    setIsPlaying(false);
+    setRobotState('waiting_for_clearance');
+    isRecalculating.current = false;
+    waitForObstacleToClear();
   };
 
+
   const startSimulation = () => { 
-    if (mapData) {
-      if (isEmergencyActive) {
-        addExplanation('Cannot execute mission: Active emergency has priority.');
-        return;
-      }
-      // Explicit mission execution requested by operator
-      resetSimulation(true);
+    if (mapData && path.length > 0) {
+      setRobotState(prev => {
+         if (prev === 'emergency_response') return prev;
+         return (prev === 'idle') ? 'patrol' : prev; // default to patrol instead of mission
+      });
+      
+      // Hide the popup if we are starting a movement during an emergency
+      setRobotState(prev => {
+         if (prev === 'emergency_response') {
+           window.dispatchEvent(new CustomEvent('local_emergency_request', { detail: null }));
+         }
+         return prev;
+      });
+      
+      setIsPlaying(true);
+      addExplanation('Executing mission. Moving to target.');
     }
   };
 
@@ -3362,12 +2661,23 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
           }
 
           activeFireTargetRef.current = null;
-          setMarkedEmergencyPoint(null);
-          window.dispatchEvent(new CustomEvent('robot_emergency_mode_change', { detail: { active: false, type: 'fire' } }));
           addExplanation(`✅ Fire hazard extinguished and secured! Extinguisher foam deployed successfully.`);
 
           setTimeout(() => {
-            resumeInterruptedMissionOrWork();
+            setRobotState('patrol');
+            addExplanation(`PATROL CLEAR: Robot Patrol Unit #1 resuming autonomous campus route.`);
+            if (mapData && mapData.tasks && mapData.tasks.length > 0) {
+              currentTaskIndexRef.current = 0;
+              const firstTask = mapData.tasks[0];
+              const curLoc = path.length > 0 ? path[path.length - 1] : mapData.start;
+              const resumePath = calculatePath(curLoc, firstTask.location, [...(mapData.obstacles || []), ...userBlockers], mapData);
+              if (resumePath.length > 0) {
+                setPath(resumePath);
+                setCurrentPosIndex(0);
+                setActivePathColor('#00ffff');
+                setIsPlaying(true);
+              }
+            }
           }, 1200);
         }, 3500);
         return;
@@ -3424,7 +2734,7 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
     } else if (robotState === 'evading_obstacle') {
       addExplanation('Evaded obstacle. Retrying route to target...');
       const orig = originalMissionRef.current;
-      if (orig?.path && orig.path.length > 0) {
+      if (orig && orig.path.length > 0) {
         const target = orig.path[orig.path.length - 1];
         const currentLoc = path[path.length - 1] || mapData!.start;
         resumeMissionTo(currentLoc, target);
@@ -3448,8 +2758,6 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
           const nextPath = calculatePath(currentLoc, nextTask.location, [...(mapData.obstacles || []), ...userBlockers], mapData);
           
           if (nextPath.length > 0) {
-            destinationTargetRef.current = nextTask.location;
-            originalMissionRef.current = { path: [...nextPath], index: 0 };
             setPath(nextPath);
             setCurrentPosIndex(0);
             setRobotState(prev => prev === 'mission' ? 'mission' : 'patrol');
@@ -3468,12 +2776,7 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
           addExplanation('Mission complete. Idle mode active, standing by.');
         } else {
           setRobotState('patrol');
-          addExplanation('Mission complete. Resuming autonomous campus patrol in 2.5s...');
-          setTimeout(() => {
-            if (!isIdleMode && isOn) {
-              setIsPlaying(false); // Triggers auto-patrol effect cleanly
-            }
-          }, 2500);
+          addExplanation('Mission complete. Waiting 2.5s before returning to patrol mode.');
         }
       }
     }
@@ -3493,7 +2796,6 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
       return;
     }
     if (!mapData) return;
-    destinationTargetRef.current = targetPos;
     currentTaskIndexRef.current = mapData.tasks ? mapData.tasks.length : 0;
     setIsPlaying(false);
     isRecalculating.current = true;
@@ -3509,7 +2811,6 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
          const forwardPath = calculatePath(currentLoc, targetPos, [...(mapData.obstacles || []), ...userBlockers], mapData);
          
          if (forwardPath.length > 0) {
-           originalMissionRef.current = { path: [...forwardPath], index: 0 };
            setPath(forwardPath);
            setCurrentPosIndex(0);
            setRobotState('emergency_to_ctr');
@@ -3526,7 +2827,6 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
          const shortPath = calculatePath(currentLoc, targetPos, [...(mapData.obstacles || []), ...userBlockers], mapData);
          
          if (shortPath.length > 0) {
-           originalMissionRef.current = { path: [...shortPath], index: 0 };
            setPath(shortPath);
            setCurrentPosIndex(0);
            setRobotState('mission');
@@ -3740,22 +3040,6 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
               </span>
             </div>
 
-            {/* Active Marked Emergency Location Point Pill */}
-            {(markedEmergencyPoint || (activeFireIncident && activeFireIncident.status !== 'RESOLVED' && activeFireIncident.location?.coordinates)) && (
-              <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-xl text-[11px] font-mono bg-red-500/20 border border-red-500/50 text-red-300 shadow-[0_0_15px_rgba(239,68,68,0.3)] animate-pulse">
-                <span className="w-2 h-2 rounded-full bg-red-400 animate-ping shrink-0" />
-                <span className="font-bold uppercase tracking-wider text-[10px] hidden sm:inline">
-                  TARGET:
-                </span>
-                <span className="font-bold text-white max-w-[120px] truncate">
-                  {markedEmergencyPoint?.label || activeFireIncident?.location?.building_name || 'Emergency Point'}
-                </span>
-                <span className="text-cyan-300 font-bold text-[10px]">
-                  ({(markedEmergencyPoint?.position || activeFireIncident?.location?.coordinates)?.x}, {(markedEmergencyPoint?.position || activeFireIncident?.location?.coordinates)?.y})
-                </span>
-              </div>
-            )}
-
             <div className="h-5 w-px bg-white/10 mx-0.5" />
 
             {/* CTR Terminal Trigger */}
@@ -3889,8 +3173,6 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
             battery={battery}
             robotState={robotState}
             fireHazards={fireHazards}
-            crowds={crowds}
-            markedEmergencyPoint={markedEmergencyPoint}
             dynamicObstaclesRef={dynamicObstaclesRef}
             userBlockers={userBlockers}
             isNight={isNight}
@@ -3949,7 +3231,7 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
               }
               setIsEmergencyTargeting(false);
               document.body.style.cursor = 'auto';
-              handleEmergencyCall(gridP, `Target Emergency (${gridP.x}, ${gridP.y})`, 'target');
+              handleEmergencyCall(gridP);
             }} 
             onMapRightClick={(p) => {
               const gridP = getGridPointFromVector3(p, gridSize);
@@ -4021,25 +3303,6 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
               onRemove={() => handleRemoveFireHazard(hazard.id)}
             />
           ))}
-
-          {/* Properly Marked 3D/2D Emergency Location Point */}
-          {(markedEmergencyPoint || (activeFireIncident && activeFireIncident.status !== 'RESOLVED' && activeFireIncident.location?.coordinates)) && (
-            <EmergencyLocationMarker
-              position={markedEmergencyPoint ? markedEmergencyPoint.position : (activeFireIncident!.location.coordinates as GridPoint)}
-              gridSize={gridSize}
-              label={markedEmergencyPoint ? markedEmergencyPoint.label : (activeFireIncident!.location.building_name || activeFireIncident!.location.display_location)}
-              type={markedEmergencyPoint ? markedEmergencyPoint.type : 'fire'}
-              isMapView={isMapView}
-              robotPosRef={robotPosRef}
-              onClear={() => {
-                setMarkedEmergencyPoint(null);
-                if (activeFireIncident && onResolveIncident) {
-                  onResolveIncident(activeFireIncident.id);
-                }
-              }}
-            />
-          )}
-
           <PoliceVehicle policeState={policeState} policeStateRef={policeStateRef} gridSize={gridSize} isMapView={isMapView} onReachDestination={handlePoliceReachDestination} />
 
           {/* Starting Gate */}
@@ -4061,7 +3324,6 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
               robotPosRef={robotPosRef}
               allObstaclesRef={dynamicObstaclesRef}
               robotStateRef={robotStateRef}
-              mapData={mapData}
             />
           ))}
 
@@ -4074,7 +3336,6 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
               isMapView={isMapView} 
               speed={(robotState === 'emergency_response' ? 25 : (robotState === 'reversing' ? 6 : 10)) * (speedLimit / 50)} 
               dynamicObstaclesRef={dynamicObstaclesRef}
-              userBlockers={userBlockers}
               onReachNode={handleReachNode}
               onMissionComplete={handleMissionComplete}
               onObstacleDetected={handleObstacleDetected}
@@ -4321,10 +3582,10 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
         {!isCCMinimized && (
         <div className="flex-1 flex flex-col overflow-hidden">
           {/* Segmented Tabs */}
-          <div className="grid grid-cols-4 border-b border-white/10 bg-black/50 p-1 gap-1 shrink-0">
+          <div className="flex border-b border-white/10 bg-black/50 p-1 gap-1 shrink-0">
             <button 
               onClick={() => setActiveCCTab('dashboard')} 
-              className={`py-2 px-1 rounded-lg text-[9px] font-bold uppercase tracking-wider transition-all flex flex-col items-center justify-center gap-1 ${
+              className={`flex-1 py-2 rounded-lg text-[10px] font-bold uppercase tracking-wider transition-all flex items-center justify-center gap-1.5 ${
                 activeCCTab === 'dashboard' 
                   ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 shadow-[0_0_12px_rgba(6,182,212,0.2)]' 
                   : 'text-gray-400 hover:text-white hover:bg-white/5'
@@ -4334,30 +3595,19 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
               <span>Telemetry</span>
             </button>
             <button 
-              onClick={() => setActiveCCTab('emergency')} 
-              className={`py-2 px-1 rounded-lg text-[9px] font-bold uppercase tracking-wider transition-all flex flex-col items-center justify-center gap-1 ${
-                activeCCTab === 'emergency' 
-                  ? 'bg-purple-500/20 text-purple-300 border border-purple-500/40 shadow-[0_0_12px_rgba(168,85,247,0.3)]' 
-                  : 'text-gray-400 hover:text-white hover:bg-white/5'
-              }`}
-            >
-              <Users className="w-3.5 h-3.5" />
-              <span>Emergency</span>
-            </button>
-            <button 
-              onClick={() => setActiveCCTab('fire')} 
-              className={`py-2 px-1 rounded-lg text-[9px] font-bold uppercase tracking-wider transition-all flex flex-col items-center justify-center gap-1 ${
-                activeCCTab === 'fire' 
-                  ? 'bg-red-500/20 text-red-300 border border-red-500/40 shadow-[0_0_12px_rgba(239,68,68,0.3)]' 
+              onClick={() => setActiveCCTab('tools')} 
+              className={`flex-1 py-2 rounded-lg text-[10px] font-bold uppercase tracking-wider transition-all flex items-center justify-center gap-1.5 ${
+                activeCCTab === 'tools' 
+                  ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 shadow-[0_0_12px_rgba(6,182,212,0.2)]' 
                   : 'text-gray-400 hover:text-white hover:bg-white/5'
               }`}
             >
               <Flame className="w-3.5 h-3.5" />
-              <span>Fire</span>
+              <span>Hazards</span>
             </button>
             <button 
               onClick={() => setActiveCCTab('locations')} 
-              className={`py-2 px-1 rounded-lg text-[9px] font-bold uppercase tracking-wider transition-all flex flex-col items-center justify-center gap-1 ${
+              className={`flex-1 py-2 rounded-lg text-[10px] font-bold uppercase tracking-wider transition-all flex items-center justify-center gap-1.5 ${
                 activeCCTab === 'locations' 
                   ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 shadow-[0_0_12px_rgba(6,182,212,0.2)]' 
                   : 'text-gray-400 hover:text-white hover:bg-white/5'
@@ -4511,7 +3761,7 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
                     <span>{isPlaying ? 'EXECUTING ROUTE...' : 'EXECUTE MISSION'}</span>
                   </button>
                   <button
-                    onClick={() => resetSimulation(false)}
+                    onClick={resetSimulation}
                     className="p-3 bg-white/5 border border-white/10 rounded-xl hover:bg-white/10 transition-colors group"
                     title="Reset Robot Coordinates"
                   >
@@ -4521,287 +3771,18 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
               </div>
             )}
 
-            {/* ── EMERGENCY & CROWD DETECTION TAB ── */}
-            {activeCCTab === 'emergency' && (
-              <div className="p-4 space-y-4 animate-in fade-in duration-300">
-                {/* EMERGENCY & CROWD STATUS BANNER */}
-                <div className="bg-[#120726]/95 border border-purple-500/40 rounded-2xl p-4 space-y-3.5 shadow-[0_0_25px_rgba(168,85,247,0.2)] relative overflow-hidden backdrop-blur-md">
-                  <div className={`absolute -top-12 -right-12 w-36 h-36 rounded-full blur-3xl pointer-events-none transition-all duration-700 ${
-                    crowds.length > 0 || markedEmergencyPoint
-                      ? 'bg-purple-500/30'
-                      : 'bg-purple-900/10'
-                  }`} />
-
-                  <div className="flex items-start justify-between gap-2 relative z-10">
-                    <div className="flex items-center gap-2.5">
-                      <div className={`p-2 rounded-xl border transition-all ${
-                        crowds.length > 0 || markedEmergencyPoint
-                          ? 'bg-purple-500/20 text-purple-300 border-purple-500/60 shadow-[0_0_15px_rgba(168,85,247,0.5)]'
-                          : 'bg-purple-500/10 text-purple-400 border-purple-500/30'
-                      }`}>
-                        <Users className={`w-4 h-4 ${crowds.length > 0 ? 'animate-bounce' : ''}`} />
-                      </div>
-                      <div>
-                        <h3 className="font-black uppercase tracking-wider text-xs text-white">EMERGENCY & CROWD DETECTION</h3>
-                        <p className="text-[10px] text-purple-300/70 font-mono tracking-tight">Vision Density & Perimeter Assistance</p>
-                      </div>
-                    </div>
-
-                    <span className={`px-2.5 py-1 rounded-full text-[9px] font-mono font-black tracking-wider uppercase border shrink-0 transition-all ${
-                      crowds.length > 0
-                        ? 'bg-purple-500/20 text-purple-300 border-purple-500/60 animate-pulse shadow-[0_0_15px_rgba(168,85,247,0.4)]'
-                        : markedEmergencyPoint
-                        ? 'bg-pink-500/20 text-pink-300 border-pink-500/60 animate-pulse'
-                        : 'bg-emerald-500/15 text-emerald-400 border-emerald-500/40'
-                    }`}>
-                      {crowds.length > 0
-                        ? `CROWD DETECTED (${crowds.length})`
-                        : markedEmergencyPoint
-                        ? 'SOS ACTIVE'
-                        : 'PERIMETER SECURE'}
-                    </span>
-                  </div>
-
-                  {/* Active Police Status Indicator */}
-                  {policeState.active && (
-                    <div className="p-2.5 bg-blue-950/60 border border-blue-500/40 rounded-xl flex items-center justify-between text-[10px] font-mono">
-                      <span className="flex items-center gap-1.5 text-blue-300 font-bold">
-                        <span className="w-2 h-2 rounded-full bg-blue-400 animate-ping" />
-                        POLICE RESPONSE: {policeState.phase.toUpperCase()}
-                      </span>
-                      <span className="text-gray-400">Escorting crowd off-campus</span>
-                    </div>
-                  )}
-
-                  {/* Primary Placement Action Buttons */}
-                  <div className="grid grid-cols-2 gap-2 relative z-10">
-                    <button
-                      onClick={() => {
-                        setIsPlacingCrowd(!isPlacingCrowd);
-                        if (!isPlacingCrowd) { setIsEmergencyTargeting(false); setIsPlacingBlocker(false); }
-                      }}
-                      className={`py-2.5 px-3 border rounded-xl font-bold text-xs uppercase tracking-wider transition-all flex items-center justify-center gap-1.5 active:scale-[0.98] ${
-                        isPlacingCrowd 
-                          ? 'bg-purple-500/30 text-purple-200 border-purple-400 shadow-[0_0_20px_rgba(168,85,247,0.5)] animate-pulse' 
-                          : 'bg-purple-900/30 text-purple-300 border-purple-500/40 hover:bg-purple-900/50 hover:text-white'
-                      }`}
-                    >
-                      <Users className="w-3.5 h-3.5" />
-                      <span>{isPlacingCrowd ? 'Click Map for Crowd' : 'Place Crowd Anywhere'}</span>
-                    </button>
-
-                    <button
-                      onClick={() => {
-                        setIsEmergencyTargeting(!isEmergencyTargeting);
-                        if (!isEmergencyTargeting) { setIsPlacingCrowd(false); setIsPlacingBlocker(false); }
-                      }}
-                      className={`py-2.5 px-3 border rounded-xl font-bold text-xs uppercase tracking-wider transition-all flex items-center justify-center gap-1.5 active:scale-[0.98] ${
-                        isEmergencyTargeting 
-                          ? 'bg-pink-500/30 text-pink-200 border-pink-400 shadow-[0_0_20px_rgba(236,72,153,0.5)] animate-pulse' 
-                          : 'bg-pink-950/30 text-pink-300 border-pink-500/40 hover:bg-pink-900/50 hover:text-white'
-                      }`}
-                    >
-                      <ShieldAlert className="w-3.5 h-3.5" />
-                      <span>{isEmergencyTargeting ? 'Click Map for SOS' : 'Place Emergency SOS'}</span>
-                    </button>
-                  </div>
-
-                  {/* Quick Hotspot Dispatch Buttons */}
-                  <div className="space-y-1.5 pt-1">
-                    <span className="text-[10px] font-mono text-gray-400 uppercase tracking-widest">Simulate Crowd Hotspots:</span>
-                    <div className="grid grid-cols-3 gap-1.5">
-                      <button
-                        onClick={() => {
-                          const target: GridPoint = { x: 14, y: 14, f: 0 };
-                          setCrowds(prev => [...prev, target]);
-                          handleCrowdEmergency(target);
-                        }}
-                        className="p-1.5 bg-white/5 hover:bg-purple-500/20 border border-white/10 hover:border-purple-400 rounded-lg text-[9px] font-mono text-gray-300 hover:text-purple-300 transition-all text-center truncate"
-                        title="Central Quad Plaza"
-                      >
-                        Quad Plaza
-                      </button>
-                      <button
-                        onClick={() => {
-                          const target: GridPoint = { x: 20, y: 8, f: 0 };
-                          setCrowds(prev => [...prev, target]);
-                          handleCrowdEmergency(target);
-                        }}
-                        className="p-1.5 bg-white/5 hover:bg-purple-500/20 border border-white/10 hover:border-purple-400 rounded-lg text-[9px] font-mono text-gray-300 hover:text-purple-300 transition-all text-center truncate"
-                        title="Auditorium Front"
-                      >
-                        Auditorium
-                      </button>
-                      <button
-                        onClick={() => {
-                          const target: GridPoint = { x: 8, y: 22, f: 0 };
-                          setCrowds(prev => [...prev, target]);
-                          handleCrowdEmergency(target);
-                        }}
-                        className="p-1.5 bg-white/5 hover:bg-purple-500/20 border border-white/10 hover:border-purple-400 rounded-lg text-[9px] font-mono text-gray-300 hover:text-purple-300 transition-all text-center truncate"
-                        title="Library Entrance"
-                      >
-                        Library Walk
-                      </button>
-                    </div>
-                  </div>
-
-                  {/* Clear Crowds Action */}
-                  {crowds.length > 0 && (
-                    <button
-                      onClick={() => {
-                        setCrowds([]);
-                        setPoliceState({ active: false, path: [], phase: 'idle', targetPos: null });
-                        addExplanation('All campus crowds manually cleared.');
-                        if (isEmergencyActive) {
-                          window.dispatchEvent(new CustomEvent('robot_emergency_mode_change', { detail: { active: false, type: 'emergency' } }));
-                          resumeInterruptedMissionOrWork();
-                        }
-                      }}
-                      className="w-full py-1.5 bg-purple-500/20 hover:bg-purple-500/30 text-purple-300 border border-purple-500/40 rounded-xl text-[10px] font-bold uppercase transition-all flex items-center justify-center gap-1.5"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                      <span>Clear All Crowds ({crowds.length})</span>
-                    </button>
-                  )}
-                </div>
-
-                {/* DYNAMIC OBSTACLE & PEDESTRIAN DENSITY */}
-                <div className="bg-white/5 border border-cyan-500/30 rounded-2xl p-4 space-y-3 shadow-lg">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <div className="p-1.5 rounded-lg bg-cyan-500/20 text-cyan-400">
-                        <Sliders className="w-4 h-4" />
-                      </div>
-                      <span className="font-bold uppercase tracking-wider text-xs text-white">Pedestrian & Obstacle Density</span>
-                    </div>
-                    <span className="px-2.5 py-0.5 rounded-full text-xs font-mono font-bold bg-cyan-500/20 text-cyan-300 border border-cyan-500/40">
-                      {dynamicObstacleCount} Entities
-                    </span>
-                  </div>
-
-                  <div className="space-y-1">
-                    <div className="flex justify-between text-[10px] text-gray-400 font-mono">
-                      <span>Clear (0)</span>
-                      <span>Moderate (10)</span>
-                      <span>Congested (30)</span>
-                    </div>
-                    <input
-                      type="range"
-                      min={0}
-                      max={30}
-                      step={1}
-                      value={dynamicObstacleCount}
-                      onChange={(e) => handleUpdateObstacleCount(Number(e.target.value))}
-                      className="w-full accent-cyan-400 cursor-pointer h-1.5 bg-white/10 rounded-lg appearance-none"
-                    />
-                  </div>
-
-                  <div className="grid grid-cols-4 gap-1.5 pt-1">
-                    {[
-                      { label: '0 None', val: 0 },
-                      { label: '5 Light', val: 5 },
-                      { label: '10 Norm', val: 10 },
-                      { label: '20 Heavy', val: 20 },
-                    ].map(p => (
-                      <button
-                        key={p.val}
-                        onClick={() => handleUpdateObstacleCount(p.val)}
-                        className={`py-1 rounded-lg text-[10px] font-bold font-mono transition-all ${
-                          dynamicObstacleCount === p.val 
-                            ? 'bg-cyan-500 text-black shadow-[0_0_10px_rgba(6,182,212,0.4)]' 
-                            : 'bg-white/5 text-gray-400 hover:text-white hover:bg-white/10'
-                        }`}
-                      >
-                        {p.label}
-                      </button>
-                    ))}
-                  </div>
-
-                  <div className="flex items-center justify-between text-[11px] font-mono text-gray-400 border-t border-white/10 pt-2">
-                    <span className="flex items-center gap-1.5">
-                      <Car className="w-3.5 h-3.5 text-blue-400" />
-                      <span>{dynamicObstacles.filter(o => o.type === 'car').length} Campus Vehicles</span>
-                    </span>
-                    <span className="flex items-center gap-1.5">
-                      <Users className="w-3.5 h-3.5 text-purple-400" />
-                      <span>{dynamicObstacles.filter(o => o.type === 'person').length} Pedestrians</span>
-                    </span>
-                  </div>
-                </div>
-
-                {/* ROADBLOCK & OBSTRUCTION CONTROLS */}
-                <div className="space-y-2">
-                  <div className="flex items-center justify-between">
-                    <h4 className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Roadblock Tools</h4>
-                    {userBlockers.length > 0 && (
-                      <span className="text-[10px] font-mono text-orange-400 font-bold">
-                        {userBlockers.length} Active Blocker{userBlockers.length > 1 ? 's' : ''}
-                      </span>
-                    )}
-                  </div>
-
-                  <div className="flex flex-col gap-2.5">
-                    <button
-                      onClick={() => {
-                        setIsPlacingBlocker(!isPlacingBlocker);
-                        if (!isPlacingBlocker) { setIsEmergencyTargeting(false); setIsPlacingCrowd(false); }
-                      }}
-                      className={`w-full p-3.5 border rounded-xl transition-all flex items-center gap-3.5 text-left ${
-                        isPlacingBlocker 
-                          ? 'bg-orange-500/20 text-orange-400 border-orange-500 shadow-[0_0_20px_rgba(249,115,22,0.3)]' 
-                          : 'bg-white/5 text-gray-400 border-white/10 hover:bg-white/10 hover:text-white'
-                      }`}
-                    >
-                      <div className={`p-2 rounded-lg ${isPlacingBlocker ? 'bg-orange-500 text-white' : 'bg-white/10'}`}>
-                        <Construction className="w-4 h-4" />
-                      </div>
-                      <div className="flex-1">
-                        <div className="font-bold uppercase tracking-wider text-xs">
-                          {isPlacingBlocker ? 'Click on Road to Place' : 'Place Road Blocker'}
-                        </div>
-                        <div className="text-[10px] opacity-70 mt-0.5 font-mono">
-                          {isPlacingBlocker ? 'Left-click: Add • Right-click: Remove' : 'Manually block a road segment'}
-                        </div>
-                      </div>
-                    </button>
-
-                    <div className="grid grid-cols-2 gap-2">
-                      <button
-                        onClick={handleAddRandomRoadblock}
-                        className="p-2.5 bg-white/5 hover:bg-white/10 border border-white/10 hover:border-orange-500/50 rounded-xl text-xs font-bold text-gray-300 hover:text-orange-400 transition-all flex items-center justify-center gap-1.5"
-                        title="Spawn Random Roadblock"
-                      >
-                        <Plus className="w-3.5 h-3.5" />
-                        <span>Random Block</span>
-                      </button>
-
-                      <button
-                        onClick={handleClearAllRoadblocks}
-                        disabled={userBlockers.length === 0}
-                        className="p-2.5 bg-white/5 hover:bg-red-500/20 border border-white/10 hover:border-red-500/40 rounded-xl text-xs font-bold text-gray-400 hover:text-red-400 disabled:opacity-30 disabled:pointer-events-none transition-all flex items-center justify-center gap-1.5"
-                        title="Clear All Roadblocks"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                        <span>Clear All</span>
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {/* ── FIRE & SMOKE DETECTION TAB ── */}
-            {activeCCTab === 'fire' && (
+            {/* ── TOOLS & HAZARDS TAB ── */}
+            {activeCCTab === 'tools' && (
               <div className="p-4 space-y-4 animate-in fade-in duration-300">
                 {/* AI FIRE EMERGENCY & SURVEILLANCE CONTROL PANEL */}
-                <div className="bg-[#1f0909]/95 border border-red-500/40 rounded-2xl p-4 space-y-3.5 shadow-[0_0_25px_rgba(239,68,68,0.2)] relative overflow-hidden backdrop-blur-md">
+                <div className="bg-[#0b1329]/95 border border-cyan-500/30 rounded-2xl p-4 space-y-3.5 shadow-[0_0_25px_rgba(6,182,212,0.15)] relative overflow-hidden backdrop-blur-md">
+                  {/* Ambient Cybernetic Glow */}
                   <div className={`absolute -top-12 -right-12 w-36 h-36 rounded-full blur-3xl pointer-events-none transition-all duration-700 ${
                     activeFireIncident && activeFireIncident.status !== 'RESOLVED'
-                      ? 'bg-red-500/35'
+                      ? 'bg-red-500/25'
                       : robotState === 'extinguishing'
-                      ? 'bg-amber-500/25'
-                      : 'bg-red-500/10'
+                      ? 'bg-amber-500/20'
+                      : 'bg-cyan-500/10'
                   }`} />
 
                   {/* Header Row */}
@@ -4812,16 +3793,17 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
                           ? 'bg-red-500/20 text-red-400 border-red-500/50 shadow-[0_0_15px_rgba(239,68,68,0.5)]'
                           : robotState === 'extinguishing'
                           ? 'bg-amber-500/20 text-amber-400 border-amber-500/50 shadow-[0_0_15px_rgba(245,158,11,0.4)]'
-                          : 'bg-red-500/15 text-red-400 border-red-500/40'
+                          : 'bg-cyan-500/15 text-cyan-400 border-cyan-500/40'
                       }`}>
                         <Flame className={`w-4 h-4 ${activeFireIncident && activeFireIncident.status !== 'RESOLVED' ? 'animate-bounce' : ''}`} />
                       </div>
                       <div>
-                        <h3 className="font-black uppercase tracking-wider text-xs text-white">AI FIRE & SMOKE DETECTION</h3>
-                        <p className="text-[10px] text-orange-400/80 font-mono tracking-tight">YOLOv8 Real-Time OpenCV Vision</p>
+                        <h3 className="font-black uppercase tracking-wider text-xs text-white">AI FIRE SURVEILLANCE</h3>
+                        <p className="text-[10px] text-gray-400 font-mono tracking-tight">YOLOv8 Real-Time OpenCV Vision</p>
                       </div>
                     </div>
 
+                    {/* Status Pill Badge */}
                     <span className={`px-2.5 py-1 rounded-full text-[9px] font-mono font-black tracking-wider uppercase border shrink-0 transition-all ${
                       activeFireIncident && activeFireIncident.status !== 'RESOLVED'
                         ? 'bg-red-500/20 text-red-400 border-red-500/60 animate-pulse shadow-[0_0_15px_rgba(239,68,68,0.4)]'
@@ -4830,7 +3812,7 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
                         : 'bg-emerald-500/15 text-emerald-400 border-emerald-500/40 shadow-[0_0_12px_rgba(16,185,129,0.25)]'
                     }`}>
                       {activeFireIncident && activeFireIncident.status !== 'RESOLVED'
-                        ? 'FIRE ALERT'
+                        ? 'EMERGENCY ALERT'
                         : robotState === 'extinguishing'
                         ? 'DISPENSING FOAM'
                         : 'SURVEILLANCE OK'}
@@ -4856,7 +3838,7 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
                           dispatchRobotToExtinguish(fallback);
                         }
                       }}
-                      className="w-full py-2.5 px-3 bg-gradient-to-r from-red-600/40 to-orange-600/30 hover:from-red-600/60 hover:to-orange-600/50 border border-red-500/50 hover:border-red-400 rounded-xl text-white font-bold text-xs uppercase tracking-wider transition-all flex items-center justify-center gap-1.5 shadow-[0_0_15px_rgba(239,68,68,0.3)] active:scale-[0.98]"
+                      className="w-full py-2.5 px-3 bg-gradient-to-r from-red-600/30 to-orange-600/20 hover:from-red-600/50 hover:to-orange-600/40 border border-red-500/40 hover:border-red-400 rounded-xl text-white font-bold text-xs uppercase tracking-wider transition-all flex items-center justify-center gap-1.5 shadow-[0_0_15px_rgba(239,68,68,0.25)] active:scale-[0.98]"
                     >
                       <Flame className="w-3.5 h-3.5 text-orange-400 animate-pulse" />
                       <span>Simulate Fire</span>
@@ -4870,11 +3852,11 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
                       className={`py-2.5 px-3 border rounded-xl font-bold text-xs uppercase tracking-wider transition-all flex items-center justify-center gap-1.5 active:scale-[0.98] ${
                         isPlacingFire
                           ? 'bg-orange-500/25 border-orange-500 text-orange-300 shadow-[0_0_20px_rgba(249,115,22,0.4)] animate-pulse'
-                          : 'bg-white/5 border-white/10 hover:border-red-500/50 text-gray-300 hover:text-white'
+                          : 'bg-white/5 border-white/10 hover:border-cyan-500/50 text-gray-300 hover:text-white'
                       }`}
                     >
-                      <Crosshair className="w-3.5 h-3.5 text-orange-400" />
-                      <span>{isPlacingFire ? 'Click Map for Fire' : 'Map Pin Fire'}</span>
+                      <Crosshair className="w-3.5 h-3.5 text-cyan-400" />
+                      <span>Map Pin Fire</span>
                     </button>
                   </div>
 
@@ -4895,7 +3877,7 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
                         e.target.value = '';
                       }}
                       defaultValue=""
-                      className="bg-transparent text-orange-300 font-bold focus:outline-none cursor-pointer max-w-[200px] truncate text-right"
+                      className="bg-transparent text-cyan-300 font-bold focus:outline-none cursor-pointer max-w-[200px] truncate text-right"
                     >
                       <option value="" disabled className="bg-slate-900 text-gray-400">Choose Building...</option>
                       {(mapData?.rooms || []).map(r => (
@@ -4963,24 +3945,169 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
                       </div>
                     </div>
                   )}
+                </div>
 
-                  {/* Active Fire Hazards counter and Clear button */}
-                  {fireHazards.length > 0 && (
+                {/* DYNAMIC OBSTACLE DENSITY CONTROLLER */}
+                <div className="bg-white/5 border border-cyan-500/30 rounded-2xl p-4 space-y-3 shadow-lg">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <div className="p-1.5 rounded-lg bg-cyan-500/20 text-cyan-400">
+                        <Sliders className="w-4 h-4" />
+                      </div>
+                      <span className="font-bold uppercase tracking-wider text-xs text-white">Obstacle Density</span>
+                    </div>
+                    <span className="px-2.5 py-0.5 rounded-full text-xs font-mono font-bold bg-cyan-500/20 text-cyan-300 border border-cyan-500/40">
+                      {dynamicObstacleCount} Entities
+                    </span>
+                  </div>
+
+                  {/* Range Slider */}
+                  <div className="space-y-1">
+                    <div className="flex justify-between text-[10px] text-gray-400 font-mono">
+                      <span>Clear (0)</span>
+                      <span>Moderate (10)</span>
+                      <span>Congested (30)</span>
+                    </div>
+                    <input
+                      type="range"
+                      min={0}
+                      max={30}
+                      step={1}
+                      value={dynamicObstacleCount}
+                      onChange={(e) => handleUpdateObstacleCount(Number(e.target.value))}
+                      className="w-full accent-cyan-400 cursor-pointer h-1.5 bg-white/10 rounded-lg appearance-none"
+                    />
+                  </div>
+
+                  {/* Quick Preset Buttons */}
+                  <div className="grid grid-cols-4 gap-1.5 pt-1">
+                    {[
+                      { label: '0 None', val: 0 },
+                      { label: '5 Light', val: 5 },
+                      { label: '10 Norm', val: 10 },
+                      { label: '20 Heavy', val: 20 },
+                    ].map(p => (
+                      <button
+                        key={p.val}
+                        onClick={() => handleUpdateObstacleCount(p.val)}
+                        className={`py-1 rounded-lg text-[10px] font-bold font-mono transition-all ${
+                          dynamicObstacleCount === p.val 
+                            ? 'bg-cyan-500 text-black shadow-[0_0_10px_rgba(6,182,212,0.4)]' 
+                            : 'bg-white/5 text-gray-400 hover:text-white hover:bg-white/10'
+                        }`}
+                      >
+                        {p.label}
+                      </button>
+                    ))}
+                  </div>
+
+                  {/* Entity Composition Breakdown */}
+                  <div className="flex items-center justify-between text-[11px] font-mono text-gray-400 border-t border-white/10 pt-2">
+                    <span className="flex items-center gap-1.5">
+                      <Car className="w-3.5 h-3.5 text-blue-400" />
+                      <span>{dynamicObstacles.filter(o => o.type === 'car').length} Autonomous Cars</span>
+                    </span>
+                    <span className="flex items-center gap-1.5">
+                      <Users className="w-3.5 h-3.5 text-purple-400" />
+                      <span>{dynamicObstacles.filter(o => o.type === 'person').length} Pedestrians</span>
+                    </span>
+                  </div>
+                </div>
+
+                {/* ROADBLOCK & OBSTRUCTION CONTROLS */}
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <h4 className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Roadblock Tools</h4>
+                    {userBlockers.length > 0 && (
+                      <span className="text-[10px] font-mono text-orange-400 font-bold">
+                        {userBlockers.length} Active Blocker{userBlockers.length > 1 ? 's' : ''}
+                      </span>
+                    )}
+                  </div>
+
+                  <div className="flex flex-col gap-2.5">
                     <button
                       onClick={() => {
-                        setFireHazards([]);
-                        addExplanation('All campus fire hazards cleared.');
-                        if (isEmergencyActive) {
-                          window.dispatchEvent(new CustomEvent('robot_emergency_mode_change', { detail: { active: false, type: 'fire' } }));
-                          resumeInterruptedMissionOrWork();
-                        }
+                        setIsPlacingBlocker(!isPlacingBlocker);
+                        if (!isPlacingBlocker) { setIsEmergencyTargeting(false); setIsPlacingCrowd(false); }
                       }}
-                      className="w-full py-1.5 bg-red-600/20 hover:bg-red-600/30 text-red-300 border border-red-500/40 rounded-xl text-[10px] font-bold uppercase transition-all flex items-center justify-center gap-1.5"
+                      className={`w-full p-3.5 border rounded-xl transition-all flex items-center gap-3.5 text-left ${
+                        isPlacingBlocker 
+                          ? 'bg-orange-500/20 text-orange-400 border-orange-500 shadow-[0_0_20px_rgba(249,115,22,0.3)]' 
+                          : 'bg-white/5 text-gray-400 border-white/10 hover:bg-white/10 hover:text-white'
+                      }`}
                     >
-                      <Trash2 className="w-3.5 h-3.5" />
-                      <span>Clear All Fire Hazards ({fireHazards.length})</span>
+                      <div className={`p-2 rounded-lg ${isPlacingBlocker ? 'bg-orange-500 text-white' : 'bg-white/10'}`}>
+                        <Construction className="w-4 h-4" />
+                      </div>
+                      <div className="flex-1">
+                        <div className="font-bold uppercase tracking-wider text-xs">
+                          {isPlacingBlocker ? 'Click on Road to Place' : 'Place Road Blocker'}
+                        </div>
+                        <div className="text-[10px] opacity-70 mt-0.5 font-mono">
+                          {isPlacingBlocker ? 'Left-click: Add • Right-click: Remove' : 'Manually block a road segment'}
+                        </div>
+                      </div>
                     </button>
-                  )}
+
+                    <div className="grid grid-cols-2 gap-2">
+                      <button
+                        onClick={handleAddRandomRoadblock}
+                        className="p-2.5 bg-white/5 hover:bg-white/10 border border-white/10 hover:border-orange-500/50 rounded-xl text-xs font-bold text-gray-300 hover:text-orange-400 transition-all flex items-center justify-center gap-1.5"
+                        title="Spawn Random Roadblock"
+                      >
+                        <Plus className="w-3.5 h-3.5" />
+                        <span>Random Block</span>
+                      </button>
+
+                      <button
+                        onClick={handleClearAllRoadblocks}
+                        disabled={userBlockers.length === 0}
+                        className="p-2.5 bg-white/5 hover:bg-red-500/20 border border-white/10 hover:border-red-500/40 rounded-xl text-xs font-bold text-gray-400 hover:text-red-400 disabled:opacity-30 disabled:pointer-events-none transition-all flex items-center justify-center gap-1.5"
+                        title="Clear All Roadblocks"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                        <span>Clear All</span>
+                      </button>
+                    </div>
+
+                    <button
+                      onClick={() => {
+                        setIsPlacingCrowd(!isPlacingCrowd);
+                        if (!isPlacingCrowd) { setIsEmergencyTargeting(false); setIsPlacingBlocker(false); }
+                      }}
+                      className={`w-full p-3.5 border rounded-xl transition-all flex items-center gap-3.5 text-left ${
+                        isPlacingCrowd 
+                          ? 'bg-purple-500/20 text-purple-400 border-purple-500 shadow-[0_0_20px_rgba(168,85,247,0.3)]' 
+                          : 'bg-white/5 text-gray-400 border-white/10 hover:bg-white/10 hover:text-white'
+                      }`}
+                    >
+                      <div className={`p-2 rounded-lg ${isPlacingCrowd ? 'bg-purple-500 text-white' : 'bg-white/10'}`}>
+                        <Users className="w-4 h-4" />
+                      </div>
+                      <div>
+                        <div className="font-bold uppercase tracking-wider text-xs">Place Crowd</div>
+                        <div className="text-[10px] opacity-70 mt-0.5 font-mono">Trigger crowd dispersal protocol</div>
+                      </div>
+                    </button>
+
+                    <button
+                      onClick={() => setIsEmergencyTargeting(!isEmergencyTargeting)}
+                      className={`w-full p-3.5 border rounded-xl transition-all flex items-center gap-3.5 text-left ${
+                        isEmergencyTargeting 
+                          ? 'bg-red-500/20 text-red-400 border-red-500 shadow-[0_0_20px_rgba(239,68,68,0.3)]' 
+                          : 'bg-white/5 text-gray-400 border-white/10 hover:bg-white/10 hover:text-white'
+                      }`}
+                    >
+                      <div className={`p-2 rounded-lg ${isEmergencyTargeting ? 'bg-red-500 text-white' : 'bg-white/10'}`}>
+                        <ShieldAlert className="w-4 h-4" />
+                      </div>
+                      <div>
+                        <div className="font-bold uppercase tracking-wider text-xs">Target Emergency</div>
+                        <div className="text-[10px] opacity-70 mt-0.5 font-mono">Dispatch robot to emergency location</div>
+                      </div>
+                    </button>
+                  </div>
                 </div>
               </div>
             )}
@@ -5059,7 +4186,7 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
                           <span className="text-[10px] font-bold uppercase tracking-wider text-center">Medical</span>
                         </button>
                         <button 
-                          onClick={() => handleEmergencyCall(selectedRoom.door || selectedRoom.start, `${selectedRoom.name} SOS Priority`, 'sos')} 
+                          onClick={() => handleEmergencyCall(selectedRoom.door || selectedRoom.start)} 
                           className="flex flex-col items-center justify-center gap-1.5 p-3.5 bg-red-500/15 hover:bg-red-500/30 text-red-400 border border-red-500/40 rounded-xl transition-all shadow-sm hover:shadow-[0_0_15px_rgba(239,68,68,0.4)] group active:scale-[0.98]"
                         >
                           <ShieldAlert className="w-5 h-5 group-hover:scale-110 transition-transform" /> 

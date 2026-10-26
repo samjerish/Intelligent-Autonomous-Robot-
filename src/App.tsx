@@ -7,7 +7,7 @@ import { ModelAnalysisDashboard } from './components/ModelAnalysisDashboard';
 
 import { useLocalStorage } from './hooks/useLocalStorage';
 import type { MissionHistoryItem, MissionResult, FireIncident, FireHazardPoint, GridPoint } from './types';
-import { QrCode, History, Check, Copy, ExternalLink, Wifi, Smartphone, Sliders, Globe, RefreshCw, AlertTriangle, Flame, BarChart3, Users } from 'lucide-react';
+import { QrCode, History, Check, Copy, ExternalLink, Wifi, Smartphone, Sliders, Globe, RefreshCw, AlertTriangle, Flame, BarChart3 } from 'lucide-react';
 import QRCode from 'react-qr-code';
 import { io } from 'socket.io-client';
 
@@ -48,7 +48,6 @@ function App() {
   const [isPlacingFire, setIsPlacingFire] = useState(false);
   const [robotTelemetryPos, setRobotTelemetryPos] = useState<GridPoint>({ x: 61, y: 81, f: 0 });
   const [robotStatusText, setRobotStatusText] = useState<string>('Autonomous Patrol');
-  const [isEmergencyActive, setIsEmergencyActive] = useState<{ active: boolean; type?: 'emergency' | 'fire' | 'crowd' }>({ active: false });
 
   const [networkIp, setNetworkIp] = useState<string>('');
   const [networkInterfaces, setNetworkInterfaces] = useState<Array<{ name: string; label: string; address: string; isHotspot?: boolean }>>([]);
@@ -263,7 +262,7 @@ function App() {
          window.dispatchEvent(new CustomEvent('remote_console_command', { detail: data.command }));
       }
       if (data.action === 'emergency_target') {
-         window.dispatchEvent(new CustomEvent('remote_emergency_target', { detail: { x: Number(data.x), y: Number(data.y) } }));
+         window.dispatchEvent(new CustomEvent('local_emergency_request', { detail: data }));
       }
       if (data.action === 'emergency_action') {
          if (data.type === 'ESTOP') {
@@ -487,11 +486,6 @@ function App() {
   */
   
   const handleGenerate = async (missionText: string) => {
-    if (isEmergencyActive.active || (activeFireIncident && activeFireIncident.status !== 'RESOLVED')) {
-      alert("🚨 EMERGENCY ACTIVE: The robot cannot accept other missions until the emergency or crowd incident is completed.");
-      return;
-    }
-
     try {
       let startPoint = undefined;
       const getPos = () => new Promise(resolve => {
@@ -545,16 +539,9 @@ function App() {
     const handleRemoteConsoleCommand = (e: any) => {
       handleGenerate(e.detail);
     };
-    const handleEmergencyModeChange = (e: any) => {
-      setIsEmergencyActive({ active: !!e.detail?.active, type: e.detail?.type });
-    };
     window.addEventListener('remote_console_command', handleRemoteConsoleCommand);
-    window.addEventListener('robot_emergency_mode_change', handleEmergencyModeChange);
-    return () => {
-      window.removeEventListener('remote_console_command', handleRemoteConsoleCommand);
-      window.removeEventListener('robot_emergency_mode_change', handleEmergencyModeChange);
-    };
-  }, [isEmergencyActive, activeFireIncident]);
+    return () => window.removeEventListener('remote_console_command', handleRemoteConsoleCommand);
+  }, []);
 
   /*
   const handleSelectStrategy = (strategyId: string) => {
@@ -723,35 +710,6 @@ function App() {
                 >
                   Resolve
                 </button>
-              </div>
-            </div>
-          )}
-
-          {/* Floating Emergency & Crowd Banner - Kept separate from Fire Detection */}
-          {isEmergencyActive.active && isEmergencyActive.type !== 'fire' && (
-            <div className="bg-purple-950/85 border border-purple-500/50 backdrop-blur-md px-4 py-2.5 rounded-xl shadow-[0_0_30px_rgba(168,85,247,0.35)] flex items-center justify-between gap-3 animate-in fade-in slide-in-from-top-2 duration-300">
-              <div className="flex items-center gap-3">
-                <div className="p-1.5 rounded-lg bg-purple-500/30 text-purple-300 animate-bounce">
-                  <Users className="w-4 h-4 text-purple-400" />
-                </div>
-                <div>
-                  <div className="flex items-center gap-2">
-                    <span className="text-white font-black text-xs uppercase tracking-wider">
-                      👥 EMERGENCY / CROWD DISPERSAL ACTIVE
-                    </span>
-                    <span className="px-2 py-0.5 rounded text-[9px] font-mono font-bold bg-purple-500/30 text-purple-300 border border-purple-500/50 animate-pulse">
-                      PRIORITY OVERRIDE
-                    </span>
-                  </div>
-                  <p className="text-[10px] text-purple-200 font-mono">
-                    Robot Status: [{robotStatusText}] • Responding immediately to campus emergency • Other missions locked until resolved
-                  </p>
-                </div>
-              </div>
-              <div className="flex items-center gap-2">
-                <span className="text-[10px] text-purple-300 font-mono font-bold px-2.5 py-1 bg-purple-900/40 rounded-lg border border-purple-500/30">
-                  DISPATCH LOCKED
-                </span>
               </div>
             </div>
           )}

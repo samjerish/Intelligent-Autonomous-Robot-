@@ -88,19 +88,6 @@ export function MobileEmergencyMap({ sendCommand, mapData, telemetry }: any) {
              />
           )}
 
-          {/* Render Active Marked Emergency Location Point */}
-          {telemetry?.emergencyPoint && (
-            <g transform={`translate(${telemetry.emergencyPoint.x}, ${telemetry.emergencyPoint.y})`}>
-              <circle r="3.5" fill="none" stroke="#ef4444" strokeWidth="0.8" className="animate-ping" />
-              <circle r="1.8" fill="none" stroke="#f97316" strokeWidth="0.5" />
-              <circle r="0.8" fill="#ef4444" />
-              <path d="M 0 -4 L 0 -1.5 M 0 1.5 L 0 4 M -4 0 L -1.5 0 M 1.5 0 L 4 0" stroke="#ef4444" strokeWidth="0.4" />
-              <text y="-5" fill="#ef4444" fontSize="2.5" textAnchor="middle" className="font-mono font-bold drop-shadow">
-                EMERGENCY POINT ({telemetry.emergencyPoint.x}, {telemetry.emergencyPoint.y})
-              </text>
-            </g>
-          )}
-
           {/* Target Reticle */}
           {target && (
             <g transform={`translate(${target.x}, ${target.y})`}>
@@ -120,15 +107,13 @@ export function MobileEmergencyMap({ sendCommand, mapData, telemetry }: any) {
               <div>
                 <div className="text-[10px] text-gray-400 font-mono mb-1">SELECTED TARGET</div>
                 <div className="font-mono text-lg text-white">
-                  X: {target.x.toFixed(0)} <br/>
-                  Y: {target.y.toFixed(0)}
+                  LAT: {target.x.toFixed(2)} <br/>
+                  LNG: {target.y.toFixed(2)}
                 </div>
               </div>
               <div className="text-right">
                 <div className="text-[10px] text-gray-400 font-mono mb-1">EST DISTANCE</div>
-                <div className="font-mono text-lg text-yellow-400">
-                  {telemetry?.position ? `${Math.hypot(target.x - telemetry.position.x, target.y - telemetry.position.y).toFixed(1)}m` : '--'}
-                </div>
+                <div className="font-mono text-lg text-yellow-400">14.2m</div>
               </div>
             </div>
             
@@ -143,38 +128,13 @@ export function MobileEmergencyMap({ sendCommand, mapData, telemetry }: any) {
                 onClick={handleConfirm}
                 className="flex-1 bg-red-500 hover:bg-red-600 text-white py-3 rounded-lg flex items-center justify-center gap-2 text-sm font-bold tracking-widest"
               >
-                <Check className="w-4 h-4" /> TRANSMIT DISPATCH
+                <Check className="w-4 h-4" /> CONFIRM
               </button>
             </div>
           </>
-        ) : telemetry?.emergencyPoint ? (
-          <div className="flex flex-col justify-between h-full space-y-2">
-            <div className="flex justify-between items-start">
-              <div>
-                <div className="flex items-center gap-1.5 text-[10px] text-red-400 font-mono font-bold uppercase">
-                  <span className="w-2 h-2 rounded-full bg-red-500 animate-ping" />
-                  ACTIVE EMERGENCY POINT MARKED
-                </div>
-                <div className="font-bold text-white text-base mt-0.5">
-                  {telemetry.emergencyLabel || 'Emergency Target Point'}
-                </div>
-                <div className="text-cyan-300 font-mono text-xs">
-                  COORDINATES: ({telemetry.emergencyPoint.x}, {telemetry.emergencyPoint.y})
-                </div>
-              </div>
-              <div className="text-right font-mono text-xs">
-                <span className="px-2 py-0.5 rounded bg-red-500/20 text-red-400 border border-red-500/40 uppercase font-bold">
-                  EN ROUTE
-                </span>
-              </div>
-            </div>
-            <div className="text-[10px] text-gray-400 font-mono">
-              Robot is actively navigating to marked emergency coordinates. Tap map to re-target.
-            </div>
-          </div>
         ) : (
           <div className="h-full flex items-center justify-center text-gray-500 font-mono text-sm text-center">
-            TAP MAP TO SET EMERGENCY OVERRIDE TARGET
+            AWAITING COORDINATE SELECTION...
           </div>
         )}
       </div>
