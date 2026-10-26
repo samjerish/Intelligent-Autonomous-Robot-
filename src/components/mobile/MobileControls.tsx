@@ -43,8 +43,7 @@ export function MobileControls({ telemetry, sendCommand, obstacleCount = 9, onSe
           <img 
             src={visionFrame.image} 
             alt="Robot Camera Stream" 
-            decoding="async"
-            className="w-full h-full object-cover" 
+            className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" 
           />
         ) : (
           <div className="flex items-center gap-2 text-cyan-400 font-mono text-xs">

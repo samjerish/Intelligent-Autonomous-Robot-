@@ -48,14 +48,12 @@ interface VisionFrame {
 
 interface MobileRobotVisionProps {
   visionFrame: VisionFrame | null;
-  robotPose?: any;
-  mapData?: any;
   sendCommand: (action: string, payload?: any) => void;
   telemetry: any;
   isConnected: boolean;
 }
 
-export function MobileRobotVision({ visionFrame, robotPose, mapData: _mapData, sendCommand, telemetry, isConnected }: MobileRobotVisionProps) {
+export function MobileRobotVision({ visionFrame, sendCommand, telemetry, isConnected }: MobileRobotVisionProps) {
   const [visionMode, setVisionMode] = useState<'yolo' | 'rgb' | 'night' | 'flir'>('yolo');
   const [showDriveOverlay, setShowDriveOverlay] = useState(true);
   const [headlightOn, setHeadlightOn] = useState(false);
@@ -143,11 +141,11 @@ export function MobileRobotVision({ visionFrame, robotPose, mapData: _mapData, s
     setTimeout(() => setSnapshotTaken(false), 2000);
   };
 
-  const heading = visionFrame?.heading ?? robotPose?.heading ?? 0;
-  const speed = visionFrame?.speed ?? robotPose?.speed ?? telemetry?.speed ?? 0;
-  const battery = visionFrame?.battery ?? robotPose?.battery ?? telemetry?.battery ?? 100;
-  const pos = visionFrame?.position ?? (robotPose ? { x: Math.round(robotPose.x), y: Math.round(robotPose.z) } : telemetry?.position ?? { x: 61, y: 81 });
-  const robotState = visionFrame?.robotState ?? robotPose?.robotState ?? telemetry?.state ?? 'ACTIVE';
+  const heading = visionFrame?.heading ?? 0;
+  const speed = visionFrame?.speed ?? telemetry?.speed ?? 0;
+  const battery = visionFrame?.battery ?? telemetry?.battery ?? 100;
+  const pos = visionFrame?.position ?? telemetry?.position ?? { x: 61, y: 81 };
+  const robotState = visionFrame?.robotState ?? telemetry?.state ?? 'ACTIVE';
   const nearestObstacle = visionFrame?.nearestObstacleDist ?? 12.0;
 
   // Vision mode filter styling
@@ -237,8 +235,7 @@ export function MobileRobotVision({ visionFrame, robotPose, mapData: _mapData, s
             src={visionFrame.image}
             alt="Robot Real-Time Vision Feed"
             style={{ filter: getFilterStyle() }}
-            decoding="async"
-            className="w-full h-full object-cover will-change-contents"
+            className="w-full h-full object-cover transition-all duration-300"
           />
         ) : (
           /* High-Tech Standby Scanner HUD */
@@ -281,7 +278,7 @@ export function MobileRobotVision({ visionFrame, robotPose, mapData: _mapData, s
               <span className={`w-2 h-2 rounded-full ${isConnected ? 'bg-red-500 animate-ping' : 'bg-gray-500'}`}></span>
               <span className="font-bold text-white tracking-widest">LIVE FPV</span>
               <span className="text-gray-400">|</span>
-              <span className="text-cyan-400 font-mono font-bold">30 FPS ULTRA-SMOOTH</span>
+              <span className="text-cyan-400 font-mono">10 FPS</span>
             </div>
 
             {/* Mini Compass Heading */}

@@ -56,7 +56,6 @@ import {
 } from '@react-three/drei';
 import * as THREE from 'three';
 import { RobotVisionBroadcaster } from './RobotVisionBroadcaster';
-import { RobotVisionPIP } from './RobotVisionPIP';
 
 const CELL_SIZE = 1;
 
@@ -70,7 +69,6 @@ export type DynamicObstacle = {
   speed: number;
   isMoving: boolean;
   currentPosVector?: THREE.Vector3;
-  stuckTimer?: number;
 };
 
 export type RobotState = 'idle' | 'mission' | 'patrol' | 'charging' | 'emergency_response' | 'emergency_to_ctr' | 'ctr_to_emergency' | 'crowd_control' | 'waiting_for_police' | 'evading_obstacle' | 'returning_home' | 'off' | 'reversing' | 'waiting_for_clearance' | 'extinguishing';
@@ -84,7 +82,7 @@ export type PoliceState = {
 };
 
 
-const CameraController = ({ cameraMode, isFollowing, robotPosRef, robotRotRef, controlsRef, triggerReset, onResetDone, gridSize, isMapView }: any) => {
+const CameraController = ({ isFollowing, robotPosRef, robotRotRef, controlsRef, triggerReset, onResetDone, gridSize, isMapView }: any) => {
   const { camera } = useThree();
   // Smoothed look-target to prevent jitter when following
   const smoothTarget = useRef(new THREE.Vector3(0, 0.5, 0));
@@ -106,38 +104,7 @@ const CameraController = ({ cameraMode, isFollowing, robotPosRef, robotRotRef, c
       if (onResetDone) onResetDone();
     }
 
-    const mode = cameraMode || (isFollowing ? 'follow' : 'orbit');
-
-    if (mode === 'fpv' && robotPosRef.current && robotRotRef?.current !== undefined) {
-      // 1st Person Robot Eye View - What the Robot Sees (Direct 60 FPS WebGL)
-      const theta = robotRotRef.current;
-      const forwardX = -Math.sin(theta);
-      const forwardZ = -Math.cos(theta);
-
-      // Mounted on robot sensor mast at eye height (0.95m)
-      const eyePos = new THREE.Vector3(
-        robotPosRef.current.x + forwardX * 0.35,
-        robotPosRef.current.y + 0.95,
-        robotPosRef.current.z + forwardZ * 0.35
-      );
-
-      // Snappy and smooth lerp for realistic head-tracking
-      const lerpAlpha = 1 - Math.pow(0.0001, delta);
-      camera.position.lerp(eyePos, lerpAlpha);
-
-      // Look straight forward along campus roadway/horizon
-      const targetLook = new THREE.Vector3(
-        eyePos.x + forwardX * 16.0,
-        eyePos.y - 0.22,
-        eyePos.z + forwardZ * 16.0
-      );
-      smoothTarget.current.lerp(targetLook, lerpAlpha);
-      camera.lookAt(smoothTarget.current);
-
-      if (controlsRef.current) {
-        controlsRef.current.target.copy(smoothTarget.current);
-      }
-    } else if (mode === 'follow' && robotPosRef.current && robotRotRef?.current !== undefined) {
+    if (isFollowing && robotPosRef.current && robotRotRef?.current !== undefined) {
       // 3rd Person Follow Camera
       const theta = robotRotRef.current;
       const behindDist = 4.5;
@@ -195,9 +162,7 @@ const MovingEntity = ({
   isMapView, 
   robotPosRef, 
   allObstaclesRef,
-  robotStateRef,
-  mapDataRef,
-  userBlockersRef
+  robotStateRef
 }: { 
   obstacle: DynamicObstacle;
   gridSize: GridPoint;
@@ -205,49 +170,16 @@ const MovingEntity = ({
   robotPosRef?: React.MutableRefObject<THREE.Vector3 | null>;
   allObstaclesRef?: React.MutableRefObject<DynamicObstacle[]>;
   robotStateRef?: React.MutableRefObject<RobotState>;
-  mapDataRef?: React.MutableRefObject<MapData | null>;
-  userBlockersRef?: React.MutableRefObject<GridPoint[]>;
 }) => {
   const ref = useRef<THREE.Group>(null);
   
-  // Memoize initial position by obstacle.id so parent re-renders do NOT reset the ThreeJS position
-  const initialPos = useMemo(() => {
-    const node = obstacle.pos || obstacle.path[0] || { x: 0, y: 0, f: 0 };
-    return getGridPosition(node, gridSize, obstacle.type === 'car' ? 0.2 : 0.5, isMapView);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [obstacle.id]);
-
   useFrame((_state, delta) => {
-    if (!ref.current || !obstacle.isMoving) return;
+    if (!ref.current || obstacle.path.length === 0 || !obstacle.isMoving) return;
     const currentPos = ref.current.position;
     obstacle.currentPosVector = currentPos.clone();
     obstacle.pos = getGridPointFromVector3(currentPos, gridSize);
-
-    // If path is missing or has <= 1 node, find a new road path across campus
-    if (!obstacle.path || obstacle.path.length <= 1) {
-      if (mapDataRef?.current?.roads && mapDataRef.current.roads.length > 5) {
-        const roads = mapDataRef.current.roads;
-        let randEnd = roads[Math.floor(Math.random() * roads.length)];
-        for (let a = 0; a < 8; a++) {
-          if (Math.abs(randEnd.x - obstacle.pos.x) + Math.abs(randEnd.y - obstacle.pos.y) >= 6) break;
-          randEnd = roads[Math.floor(Math.random() * roads.length)];
-        }
-        const blockers = [...(mapDataRef.current.obstacles || []), ...(userBlockersRef?.current || [])];
-        const newP = calculatePath(obstacle.pos, randEnd, blockers, mapDataRef.current, true);
-        if (newP.length > 1) {
-          obstacle.path = newP;
-          obstacle.currentIndex = 1;
-          obstacle.targetPos = randEnd;
-        }
-      }
-      if (!obstacle.path || obstacle.path.length <= 1) return;
-    }
-
-    if (obstacle.currentIndex >= obstacle.path.length) {
-      obstacle.currentIndex = obstacle.path.length - 1;
-    }
     
-    const targetNode = obstacle.path[obstacle.currentIndex];
+    const targetNode = obstacle.path[Math.min(obstacle.currentIndex, obstacle.path.length - 1)];
     const [tx, ty, tz] = getGridPosition(targetNode, gridSize, obstacle.type === 'car' ? 0.2 : 0.5, isMapView);
     const targetVector = new THREE.Vector3(tx, ty, tz);
     const moveDir = new THREE.Vector3().subVectors(targetVector, currentPos).normalize();
@@ -255,19 +187,14 @@ const MovingEntity = ({
     // 1. Cooperative Yielding to Robot:
     // If the robot is backing up or waiting for clearance, the robot has yielded to let the obstacle pass!
     // Obstacle should only pause if very close to a non-yielding robot and driving/walking directly towards it.
-    let isWaitingForRobot = false;
     if (robotPosRef && robotPosRef.current) {
       const isRobotYielding = robotStateRef && (robotStateRef.current === 'reversing' || robotStateRef.current === 'waiting_for_clearance');
       const distToRobot = currentPos.distanceTo(robotPosRef.current);
       
       if (!isRobotYielding && distToRobot < (obstacle.type === 'car' ? 1.5 : 0.9)) {
         const toRobot = new THREE.Vector3().subVectors(robotPosRef.current, currentPos).normalize();
-        if (moveDir.dot(toRobot) > 0.35) {
-          isWaitingForRobot = true;
-          obstacle.stuckTimer = (obstacle.stuckTimer || 0) + delta;
-          if (obstacle.stuckTimer < 2.0) {
-            return; // Pause briefly and let active robot pass
-          }
+        if (moveDir.dot(toRobot) > 0.3) {
+          return; // Pause and let active robot pass
         }
       }
     }
@@ -275,78 +202,31 @@ const MovingEntity = ({
     // 2. Headway & Anti-Overlap with Other Dynamic Obstacles:
     // Uses real-time 3D vector positions to prevent cars and people from dog-piling or clipping
     if (allObstaclesRef && allObstaclesRef.current) {
-      const minHeadway = obstacle.type === 'car' ? 1.6 : 0.9;
+      const minHeadway = obstacle.type === 'car' ? 1.8 : 1.0;
       for (const other of allObstaclesRef.current) {
         if (other.id === obstacle.id || !other.currentPosVector) continue;
         const distToOther = currentPos.distanceTo(other.currentPosVector);
         if (distToOther < minHeadway) {
           const toOther = new THREE.Vector3().subVectors(other.currentPosVector, currentPos).normalize();
           // If the other obstacle is in our forward path cone, hold back to maintain headway
-          if (moveDir.dot(toOther) > 0.4) {
-            obstacle.stuckTimer = (obstacle.stuckTimer || 0) + delta;
-            if (obstacle.stuckTimer < 1.8) {
-              return;
-            }
+          if (moveDir.dot(toOther) > 0.35) {
+            return;
           }
-          // Break deadlocks if two obstacles are very close in the same node:
-          // After 1.5s, reroute to another destination so both never stay frozen
-          if (distToOther < 0.6) {
-            obstacle.stuckTimer = (obstacle.stuckTimer || 0) + delta;
-            if (obstacle.stuckTimer > 1.5) {
-              obstacle.stuckTimer = 0;
-              if (mapDataRef?.current?.roads && mapDataRef.current.roads.length > 5) {
-                const roads = mapDataRef.current.roads;
-                let nextDest = roads[Math.floor(Math.random() * roads.length)];
-                const blockers = [...(mapDataRef.current.obstacles || []), ...(userBlockersRef?.current || [])];
-                const reroutePath = calculatePath(obstacle.pos, nextDest, blockers, mapDataRef.current, true);
-                if (reroutePath.length > 1) {
-                  obstacle.path = reroutePath;
-                  obstacle.currentIndex = 1;
-                  obstacle.targetPos = nextDest;
-                  return;
-                }
-              }
-            }
-            if (obstacle.id > other.id && obstacle.stuckTimer < 1.0) {
-              return;
-            }
+          // Break deadlocks if two obstacles are very close in the same node
+          if (distToOther < 0.6 && obstacle.id > other.id) {
+            return;
           }
         }
       }
     }
 
-    if (!isWaitingForRobot) {
-      obstacle.stuckTimer = Math.max(0, (obstacle.stuckTimer || 0) - delta * 0.5);
-    }
-
     const dist = currentPos.distanceTo(targetVector);
-    if (dist < 0.12) {
+    if (dist < 0.05) {
       if (obstacle.currentIndex < obstacle.path.length - 1) {
         obstacle.currentIndex++;
       } else {
-        // Reached end of path! Keep moving continuously by finding a new destination across campus roads
-        let foundNewPath = false;
-        if (mapDataRef?.current?.roads && mapDataRef.current.roads.length > 5) {
-          const roads = mapDataRef.current.roads;
-          let nextDest = roads[Math.floor(Math.random() * roads.length)];
-          for (let attempt = 0; attempt < 8; attempt++) {
-            if (Math.abs(nextDest.x - obstacle.pos.x) + Math.abs(nextDest.y - obstacle.pos.y) >= 6) break;
-            nextDest = roads[Math.floor(Math.random() * roads.length)];
-          }
-          const blockers = [...(mapDataRef.current.obstacles || []), ...(userBlockersRef?.current || [])];
-          const newPath = calculatePath(obstacle.pos, nextDest, blockers, mapDataRef.current, true);
-          if (newPath.length > 1) {
-            obstacle.path = newPath;
-            obstacle.currentIndex = 1;
-            obstacle.targetPos = nextDest;
-            foundNewPath = true;
-          }
-        }
-        if (!foundNewPath) {
-          // Fallback: reverse path and head towards next node
-          obstacle.path.reverse();
-          obstacle.currentIndex = Math.min(1, obstacle.path.length - 1);
-        }
+        obstacle.path.reverse();
+        obstacle.currentIndex = 0;
       }
       obstacle.pos = obstacle.path[obstacle.currentIndex];
     } else {
@@ -369,8 +249,10 @@ const MovingEntity = ({
     }
   });
 
+  const startPos = getGridPosition(obstacle.path[0] || {x:0, y:0, f:0}, gridSize, obstacle.type === 'car' ? 0.2 : 0.5, isMapView);
+
   return (
-    <group ref={ref} position={initialPos} scale={1.8}>
+    <group ref={ref} position={startPos} scale={1.8}>
       {obstacle.type === 'car' ? (
         <group>
           <Box args={[0.7, 0.4, 1.2]} position={[0, 0.2, 0]} castShadow>
@@ -629,109 +511,6 @@ const CrowdsRender = React.memo(({ crowds, gridSize }: { crowds: GridPoint[], gr
           </group>
         );
       })}
-    </group>
-  );
-});
-
-interface EmergencyMarkerRenderProps {
-  markedPoint: { position: GridPoint; label: string; type: string } | null;
-  gridSize: GridPoint;
-  onClear?: () => void;
-}
-
-const EmergencyMarkerRender = React.memo(({ markedPoint, gridSize, onClear }: EmergencyMarkerRenderProps) => {
-  const beaconRef = useRef<THREE.Group>(null);
-  const ringRef = useRef<THREE.Mesh>(null);
-  const lightRef = useRef<THREE.PointLight>(null);
-
-  useFrame(({ clock }) => {
-    const t = clock.getElapsedTime();
-    if (beaconRef.current) {
-      beaconRef.current.position.y = 1.9 + Math.sin(t * 4) * 0.25;
-      beaconRef.current.rotation.y = t * 1.5;
-    }
-    if (ringRef.current) {
-      ringRef.current.rotation.z = -t * 0.8;
-      const s = 1 + Math.sin(t * 3) * 0.15;
-      ringRef.current.scale.set(s, s, s);
-    }
-    if (lightRef.current) {
-      lightRef.current.intensity = 2.5 + Math.sin(t * 8) * 1.5;
-    }
-  });
-
-  if (!markedPoint || !markedPoint.position) return null;
-
-  const [x, , z] = getGridPosition(markedPoint.position, gridSize, 0);
-
-  return (
-    <group position={[x, 0, z]}>
-      {/* Strobe Point Light */}
-      <pointLight ref={lightRef} position={[0, 2.5, 0]} color="#ec4899" distance={15} decay={2} />
-
-      {/* Vertical Holographic Light Pillar */}
-      <mesh position={[0, 3, 0]}>
-        <cylinderGeometry args={[0.15, 0.5, 6, 16]} />
-        <meshBasicMaterial color="#ec4899" transparent opacity={0.35} />
-      </mesh>
-
-      {/* Ground Concentric Shockwave & Target Rings */}
-      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.04, 0]}>
-        <ringGeometry args={[0.3, 2.2, 32]} />
-        <meshBasicMaterial color="#ec4899" transparent opacity={0.25} side={THREE.DoubleSide} />
-      </mesh>
-
-      <mesh ref={ringRef} rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.05, 0]}>
-        <ringGeometry args={[1.5, 1.8, 32]} />
-        <meshBasicMaterial color="#f43f5e" transparent opacity={0.7} side={THREE.DoubleSide} />
-      </mesh>
-
-      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.06, 0]}>
-        <circleGeometry args={[0.4, 16]} />
-        <meshBasicMaterial color="#ec4899" transparent opacity={0.9} side={THREE.DoubleSide} />
-      </mesh>
-
-      {/* Floating 3D Emergency Octahedron Beacon */}
-      <group ref={beaconRef}>
-        <mesh castShadow>
-          <octahedronGeometry args={[0.65, 0]} />
-          <meshStandardMaterial 
-            color="#ec4899" 
-            emissive="#f43f5e" 
-            emissiveIntensity={1.2} 
-            metalness={0.8} 
-            roughness={0.2} 
-          />
-        </mesh>
-        <mesh>
-          <octahedronGeometry args={[0.85, 0]} />
-          <meshBasicMaterial color="#ffffff" wireframe transparent opacity={0.4} />
-        </mesh>
-      </group>
-
-      {/* Floating Holographic Cybernetic HUD Label */}
-      <Html position={[0, 3.8, 0]} center distanceFactor={26} zIndexRange={[50, 0]}>
-        <div className="bg-black/95 border-2 border-pink-500 rounded-xl px-3 py-1.5 shadow-[0_0_25px_rgba(236,72,153,0.8)] backdrop-blur-md flex flex-col items-center pointer-events-auto select-none whitespace-nowrap animate-in fade-in zoom-in-95 duration-200">
-          <div className="flex items-center gap-1.5 text-pink-400 font-mono font-black text-xs uppercase tracking-wider">
-            <span className="w-2 h-2 rounded-full bg-pink-500 animate-ping" />
-            <span>🚨 EMERGENCY TARGET</span>
-          </div>
-          <div className="text-[10px] font-mono text-gray-200 font-bold mt-0.5">
-            GRID ({markedPoint.position.x}, {markedPoint.position.y}) • {markedPoint.label || 'PRIORITY DISPATCH'}
-          </div>
-          {onClear && (
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                onClear();
-              }}
-              className="mt-1 px-2 py-0.5 rounded bg-pink-500/20 hover:bg-pink-500/40 border border-pink-500/50 text-pink-200 text-[9px] font-mono font-bold uppercase transition-all"
-            >
-              Clear Marker
-            </button>
-          )}
-        </div>
-      </Html>
     </group>
   );
 });
@@ -1387,14 +1166,7 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
   const [isPlaying, setIsPlaying] = useState(false);
   const [isMapView, setIsMapView] = useState(false);
 
-  const [cameraMode, setCameraMode] = useState<'orbit' | 'follow' | 'fpv'>('orbit');
-  const isFollowing = cameraMode === 'follow';
-  const setIsFollowing = (val: boolean | ((prev: boolean) => boolean)) => {
-    setCameraMode(prev => {
-      const nextBool = typeof val === 'function' ? val(prev === 'follow') : val;
-      return nextBool ? 'follow' : 'orbit';
-    });
-  };
+  const [isFollowing, setIsFollowing] = useState(false);
   const [triggerReset, setTriggerReset] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [showReasoningLog, setShowReasoningLog] = useState(false);
@@ -1413,11 +1185,6 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
   const [isIdleMode, setIsIdleMode] = useState(false);
   const [userBlockers, setUserBlockers] = useState<GridPoint[]>([]);
   const [crowds, setCrowds] = useState<GridPoint[]>([]);
-  const [markedEmergencyPoint, setMarkedEmergencyPoint] = useState<{
-    position: GridPoint;
-    label: string;
-    type: string;
-  } | null>(null);
 
   const [policeState, setPoliceState] = useState<PoliceState>({ active: false, path: [], targetPos: null, phase: 'idle' });
   const policeStateRef = useRef<PoliceState>(policeState);
@@ -1488,6 +1255,15 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
   const [activeCCTab, setActiveCCTab] = useState<'dashboard' | 'tools' | 'locations'>('dashboard');
   const [modalType, setModalType] = useState<'food' | 'medical' | null>(null);
   const [showRobotVisionPIP, setShowRobotVisionPIP] = useState(false);
+  const [desktopVisionFrame, setDesktopVisionFrame] = useState<any>(null);
+
+  useEffect(() => {
+    const handleVisionFrame = (e: any) => {
+      setDesktopVisionFrame(e.detail);
+    };
+    window.addEventListener('local_robot_vision_frame', handleVisionFrame);
+    return () => window.removeEventListener('local_robot_vision_frame', handleVisionFrame);
+  }, []);
 
   const handleDeliverySubmit = (missionText: string) => {
     if (onDispatchMission) onDispatchMission(missionText);
@@ -1504,10 +1280,6 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
   const currentTaskIndexRef = useRef(0);
   const emergencyTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const clearanceCheckRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const mapDataRef = useRef<MapData | null>(mapData);
-  useEffect(() => { mapDataRef.current = mapData; }, [mapData]);
-  const userBlockersRef = useRef<GridPoint[]>(userBlockers);
-  useEffect(() => { userBlockersRef.current = userBlockers; }, [userBlockers]);
 
   useEffect(() => {
     switch(robotState) {
@@ -1825,25 +1597,18 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
 
     const obs: DynamicObstacle[] = [];
     const carCount = count < 3 ? (count > 0 ? 1 : 0) : Math.min(8, Math.max(1, Math.round(count * 0.3)));
-    const blockers = [...(mapData.obstacles || []), ...userBlockers];
     
     for (let i = 0; i < count; i++) {
       const isCar = i < carCount;
       // Pick start and end nodes with reasonable separation to prevent bunching
       let start = roads[Math.floor(Math.random() * roads.length)];
       let end = roads[Math.floor(Math.random() * roads.length)];
-      for (let attempt = 0; attempt < 10; attempt++) {
-        if (Math.abs(start.x - end.x) + Math.abs(start.y - end.y) >= 8) break;
+      for (let attempt = 0; attempt < 6; attempt++) {
+        if (Math.abs(start.x - end.x) + Math.abs(start.y - end.y) >= 6) break;
         end = roads[Math.floor(Math.random() * roads.length)];
       }
 
-      let path = calculatePath(start, end, blockers, mapData, true);
-      for (let retry = 0; retry < 8 && path.length < 3; retry++) {
-        start = roads[Math.floor(Math.random() * roads.length)];
-        end = roads[Math.floor(Math.random() * roads.length)];
-        path = calculatePath(start, end, blockers, mapData, true);
-      }
-
+      const path = calculatePath(start, end, [...(mapData.obstacles || []), ...userBlockers], mapData, true);
       if (path.length > 1) {
         obs.push({
           id: `obs_${i}_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
@@ -1852,7 +1617,7 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
           targetPos: end,
           path,
           currentIndex: 0,
-          speed: isCar ? (4.2 + Math.random() * 1.8) : (1.7 + Math.random() * 0.8),
+          speed: isCar ? 5.5 : (1.8 + Math.random() * 0.8),
           isMoving: true
         });
       }
@@ -2191,9 +1956,13 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
       } else if (lowerMsg.startsWith('emergency at ') || lowerMsg.startsWith('emergency in ')) {
         const roomName = lowerMsg.replace(/^(emergency at |emergency in )/, '').trim();
         const targetRoom = mapData?.rooms?.find(r => r.name.toLowerCase().includes(roomName));
-        if (targetRoom) {
+        if (robotState === 'charging') {
+          reply = `I am currently charging. Cannot respond to emergency.`;
+        } else if (robotState === 'mission' || robotState === 'emergency_response') {
+          reply = `I must complete my current task first before accepting new emergencies.`;
+        } else if (targetRoom) {
           reply = `EMERGENCY ACCEPTED. Dispatched to ${targetRoom.name} immediately.`;
-          handleEmergencyCall(targetRoom.door || targetRoom.start, targetRoom.name);
+          handleEmergencyCall(targetRoom.door || targetRoom.start);
         } else {
           reply = `I could not find a building matching "${roomName}".`;
         }
@@ -2415,50 +2184,19 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
     }
   };
 
-  const handleClearEmergencyTarget = () => {
-    setMarkedEmergencyPoint(null);
-    emergencyLocationRef.current = null;
-    addExplanation("Emergency target marker cleared by operator.");
-    if (robotState === 'emergency_response') {
-      if (originalMissionRef.current && originalMissionRef.current.path && originalMissionRef.current.path.length > 0) {
-        addExplanation("Resuming prior mission after emergency clearance.");
-        setPath(originalMissionRef.current.path);
-        setCurrentPosIndex(originalMissionRef.current.index || 0);
-        setRobotState('mission');
-        setIsPlaying(true);
-        originalMissionRef.current = null;
-      } else {
-        setRobotState('patrol');
-        setIsPlaying(true);
-      }
-    }
-  };
-
-  const handleEmergencyCall = (targetPos: GridPoint, label: string = 'CAMPUS EMERGENCY') => {
+  const handleEmergencyCall = (targetPos: GridPoint) => {
     if (!isOn) {
       addExplanation("Emergency override! Powering ON to respond to critical emergency.");
       setIsOn(true);
-      if (onPowerChange) onPowerChange(true);
       turnOffAfterEmergencyRef.current = true;
     } else {
       turnOffAfterEmergencyRef.current = false;
     }
     
     if (!mapData) return;
-    if (robotState === 'charging') {
-      addExplanation("Emergency override during charging! Aborting charge cycle to respond.");
-    }
+    if (robotState === 'emergency_response' || robotState === 'charging' || robotState === 'emergency_to_ctr' || robotState === 'ctr_to_emergency') return;
     
-    // Properly mark the emergency location point on map and vision telemetry
-    setMarkedEmergencyPoint({
-      position: targetPos,
-      label,
-      type: 'emergency'
-    });
-    emergencyLocationRef.current = targetPos;
-    activeFireTargetRef.current = null; // Decouple from fire hazards
-    
-    addExplanation(`🚨 EMERGENCY CALL: Marked emergency point at (${targetPos.x}, ${targetPos.y}) [${label}]. Diverting immediately!`);
+    addExplanation(`EMERGENCY CALL: Diverting immediately to (${targetPos.x}, ${targetPos.y})!`);
     setIsPlaying(false);
     isRecalculating.current = true;
     
@@ -2466,53 +2204,15 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
       originalMissionRef.current = { path: [...path], index: currentPosIndex };
     }
     
-    const currentLoc = robotPosRef.current
-      ? getGridPointFromVector3(robotPosRef.current, mapData.gridSize)
-      : (path[currentPosIndex] || mapData.start);
-
-    // Multi-tier pathfinding to guarantee route discovery to marked emergency point:
-    // 1. Preferred road route
-    let emergencyPath = calculatePath(currentLoc, targetPos, [...(mapData.obstacles || []), ...userBlockers], mapData, true);
-
-    // 2. Off-road / direct campus route (if target is off-road on plaza/walkway)
-    if (emergencyPath.length === 0) {
-      emergencyPath = calculatePath(currentLoc, targetPos, [...(mapData.obstacles || []), ...userBlockers], mapData, false);
-    }
-
-    // 3. Adjacent candidate offsets if target is right on an obstacle or wall
-    if (emergencyPath.length === 0) {
-      const offsets = [
-        { dx: 1, dy: 0 }, { dx: -1, dy: 0 }, { dx: 0, dy: 1 }, { dx: 0, dy: -1 },
-        { dx: 1, dy: 1 }, { dx: -1, dy: -1 }, { dx: 1, dy: -1 }, { dx: -1, dy: 1 },
-        { dx: 2, dy: 0 }, { dx: -2, dy: 0 }, { dx: 0, dy: 2 }, { dx: 0, dy: -2 },
-        { dx: 3, dy: 0 }, { dx: -3, dy: 0 }, { dx: 0, dy: 3 }, { dx: 0, dy: -3 },
-      ];
-      for (const off of offsets) {
-        const candidate: GridPoint = {
-          x: Math.max(0, Math.min(mapData.gridSize.x - 1, targetPos.x + off.dx)),
-          y: Math.max(0, Math.min(mapData.gridSize.y - 1, targetPos.y + off.dy)),
-          f: targetPos.f || 0
-        };
-        const pRoad = calculatePath(currentLoc, candidate, [...(mapData.obstacles || []), ...userBlockers], mapData, true);
-        if (pRoad.length > 0) {
-          emergencyPath = pRoad;
-          break;
-        }
-        const pOffRoad = calculatePath(currentLoc, candidate, [...(mapData.obstacles || []), ...userBlockers], mapData, false);
-        if (pOffRoad.length > 0) {
-          emergencyPath = pOffRoad;
-          break;
-        }
-      }
-    }
+    const currentLoc = path[currentPosIndex] || mapData.start;
+    const emergencyPath = calculatePath(currentLoc, targetPos, [...(mapData.obstacles || []), ...userBlockers], mapData);
     
     if (emergencyPath.length > 0) {
       setPath(emergencyPath);
-      setActivePathColor('#ec4899'); // Neon Pink / SOS Red for Emergency Route
+      setActivePathColor('#00ffff');
       setCurrentPosIndex(0);
       setRobotState('emergency_response');
       setIsPlaying(true);
-      addExplanation(`Emergency route locked: ${emergencyPath.length} waypoints to marked emergency point.`);
     } else {
       addExplanation(`Emergency route calculation failed. Unable to reach target.`);
       setIsPlaying(true);
@@ -2522,8 +2222,7 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
 
   const handleEmergencyComplete = () => {
     if (!mapData) return;
-    const dest = emergencyLocationRef.current || (markedEmergencyPoint ? markedEmergencyPoint.position : null);
-    addExplanation(`Arrived at marked emergency location (${dest?.x ?? 'Target'}, ${dest?.y ?? ''}). Providing assistance for 5 seconds...`);
+    addExplanation(`Arrived at emergency location. Providing assistance for 5 seconds...`);
     setIsPlaying(false);
     
     if (emergencyTimeoutRef.current) {
@@ -2532,9 +2231,7 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
     
     emergencyTimeoutRef.current = setTimeout(() => {
       // Dispatch local request to trigger the global confirmation modal for completion
-      window.dispatchEvent(new CustomEvent('local_emergency_request', { 
-        detail: dest || { x: 0, y: 0 } 
-      }));
+      window.dispatchEvent(new CustomEvent('local_emergency_request', { detail: {x: 0, y: 0} }));
       emergencyTimeoutRef.current = null;
     }, 5000);
   };
@@ -2659,8 +2356,6 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
   useEffect(() => {
     const handleRemoteApprove = () => {
       if (!mapData) return;
-      setMarkedEmergencyPoint(null);
-      emergencyLocationRef.current = null;
       if (turnOffAfterEmergencyRef.current) {
          addExplanation("Emergency override complete. Returning to Robot Home to power off.");
          turnOffAfterEmergencyRef.current = false;
@@ -2673,20 +2368,6 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
            setPath(homePath);
            setCurrentPosIndex(0);
            setRobotState('returning_home');
-           setIsPlaying(true);
-         }
-      } else if (originalMissionRef.current && originalMissionRef.current.path && originalMissionRef.current.path.length > 0) {
-         addExplanation("Emergency resolved! Resuming prior suspended mission.");
-         const currentLoc = path[path.length - 1] || mapData.start;
-         const targetGoal = originalMissionRef.current.path[originalMissionRef.current.path.length - 1];
-         const resumePath = calculatePath(currentLoc, targetGoal, [...(mapData.obstacles || []), ...userBlockers], mapData);
-         if (resumePath.length > 0) {
-           setPath(resumePath);
-           setCurrentPosIndex(0);
-           setRobotState('mission');
-           setIsPlaying(true);
-         } else {
-           setRobotState('patrol');
            setIsPlaying(true);
          }
       } else {
@@ -2710,23 +2391,14 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
       addExplanation("Holding position at emergency location.");
     };
 
-    const handleRemoteEmergencyTarget = (e: any) => {
-      const data = e.detail;
-      if (data && typeof data.x === 'number' && typeof data.y === 'number') {
-        handleEmergencyCall({ x: data.x, y: data.y, f: data.f || 0 }, data.label || 'MOBILE DISPATCH');
-      }
-    };
-
     window.addEventListener('remote_emergency_approve', handleRemoteApprove);
     window.addEventListener('remote_emergency_deny', handleRemoteDeny);
-    window.addEventListener('remote_emergency_target', handleRemoteEmergencyTarget);
 
     return () => {
       window.removeEventListener('remote_emergency_approve', handleRemoteApprove);
       window.removeEventListener('remote_emergency_deny', handleRemoteDeny);
-      window.removeEventListener('remote_emergency_target', handleRemoteEmergencyTarget);
     };
-  }, [mapData, isOn, robotState, path, currentPosIndex, userBlockers]);
+  }, [mapData, isOn, robotState, path, currentPosIndex]);
 
   const waitForObstacleToClear = () => {
     if (clearanceCheckRef.current) {
@@ -2920,8 +2592,8 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
     if (robotState === 'charging') {
       handleChargeComplete();
     } else if (robotState === 'emergency_response') {
-      if (activeFireTargetRef.current) {
-        const fireLoc = activeFireTargetRef.current;
+      if (activeFireTargetRef.current || fireHazards.length > 0) {
+        const fireLoc = activeFireTargetRef.current || (fireHazards[0]?.position);
         setIsPlaying(false);
         setRobotState('extinguishing');
         addExplanation(`🚒 ARRIVED AT FIRE SCENE! Calling Fire Extinguisher Unit & deploying extinguishing foam...`);
@@ -2979,12 +2651,8 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
           }, 1200);
         }, 3500);
         return;
-      } else {
-        const dest = markedEmergencyPoint?.position || emergencyLocationRef.current;
-        addExplanation(`🚨 ARRIVED AT EMERGENCY SCENE (${dest?.x ?? 'Target'}, ${dest?.y ?? ''})! Holding position with Emergency First-Response Unit.`);
-        setIsPlaying(false);
-        handleEmergencyComplete();
       }
+      handleEmergencyComplete();
     } else if (robotState === 'emergency_to_ctr') {
        if (emergencyLocationRef.current && mapData) {
           addExplanation(`Mission target reached. Waiting 2.5 seconds before returning to emergency location...`);
@@ -3211,45 +2879,20 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
 
             <div className="h-5 w-px bg-white/10 mx-0.5" />
 
-            {/* Camera Perspective Mode Segmented Selector */}
-            <div className="flex items-center bg-white/5 p-0.5 rounded-xl border border-white/10 gap-0.5">
-              <button
-                onClick={() => setCameraMode('orbit')}
-                className={`flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-bold transition-all ${
-                  cameraMode === 'orbit'
-                    ? 'bg-white/20 text-white shadow-sm'
-                    : 'text-gray-400 hover:text-white hover:bg-white/5'
-                }`}
-                title="Free Orbit Camera (Rotate & explore campus freely)"
-              >
-                <span>Orbit</span>
-              </button>
-              <button
-                onClick={() => setCameraMode('follow')}
-                className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-bold transition-all ${
-                  cameraMode === 'follow'
-                    ? 'bg-emerald-500/25 text-emerald-300 border border-emerald-500/40 shadow-[0_0_12px_rgba(16,185,129,0.3)]'
-                    : 'text-gray-400 hover:text-white hover:bg-white/5'
-                }`}
-                title="Follow Unit (3rd Person Chase Drone)"
-              >
-                <Navigation className={`w-3.5 h-3.5 ${cameraMode === 'follow' ? 'text-emerald-400 animate-pulse' : 'text-gray-400'}`} />
-                <span>Chase</span>
-              </button>
-              <button
-                onClick={() => setCameraMode('fpv')}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all border ${
-                  cameraMode === 'fpv'
-                    ? 'bg-cyan-500/30 text-cyan-200 border-cyan-400/60 shadow-[0_0_18px_rgba(6,182,212,0.4)]'
-                    : 'bg-transparent text-cyan-400 border-transparent hover:text-cyan-200 hover:bg-cyan-500/10'
-                }`}
-                title="Robot Eyes FPV (True 1st Person - What the Robot Sees at 60 FPS!)"
-              >
-                <Eye className={`w-3.5 h-3.5 ${cameraMode === 'fpv' ? 'text-cyan-300 animate-pulse' : 'text-cyan-400'}`} />
-                <span>Robot Eyes</span>
-                {cameraMode === 'fpv' && <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-ping ml-0.5" />}
-              </button>
-            </div>
+            {/* Follow Robot Mode */}
+            <button
+              onClick={() => setIsFollowing(!isFollowing)}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all border ${
+                isFollowing
+                  ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/50 shadow-[0_0_14px_rgba(16,185,129,0.3)]'
+                  : 'bg-white/5 text-gray-300 border-white/10 hover:bg-white/10 hover:text-white'
+              }`}
+              title="Lock Camera to Robot Navigation"
+            >
+              <Navigation className={`w-3.5 h-3.5 ${isFollowing ? 'text-emerald-400 animate-pulse' : 'text-gray-400'}`} />
+              <span>Follow Unit</span>
+              {isFollowing && <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping ml-0.5" />}
+            </button>
 
             {/* Recentre Camera */}
             <button
@@ -3282,7 +2925,7 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
                   ? 'bg-cyan-500/25 text-cyan-300 border-cyan-500/50 shadow-[0_0_14px_rgba(6,182,212,0.3)]'
                   : 'bg-white/5 text-gray-300 border-white/10 hover:bg-white/10 hover:text-white'
               }`}
-              title="Toggle Robot Vision Picture-in-Picture Feed"
+              title="Toggle Robot Vision Front-Facing Camera"
             >
               <Eye className={`w-3.5 h-3.5 ${showRobotVisionPIP ? 'text-cyan-400 animate-pulse' : 'text-gray-400'}`} />
               <span className="text-[11px]">Vision PIP</span>
@@ -3458,7 +3101,6 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
           {isNight && <pointLight position={[-20, 25, -15]} intensity={1.2} color="#bfdbfe" />}
           {!isNight && <pointLight position={[0, 15, 0]} intensity={0.8} color="#60a5fa" />}
           <CameraController 
-            cameraMode={cameraMode}
             isFollowing={isFollowing} 
             robotPosRef={robotPosRef} 
             robotRotRef={robotRotRef} 
@@ -3475,8 +3117,6 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
             battery={battery}
             robotState={robotState}
             fireHazards={fireHazards}
-            crowds={crowds}
-            markedEmergencyPoint={markedEmergencyPoint}
             dynamicObstaclesRef={dynamicObstaclesRef}
             userBlockers={userBlockers}
             isNight={isNight}
@@ -3485,7 +3125,7 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
           />
           <OrbitControls
             ref={controlsRef}
-            enabled={cameraMode === 'orbit'}
+            enabled={!isFollowing}
             enableDamping
             enablePan={false}
             dampingFactor={0.05}
@@ -3533,12 +3173,9 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
                 });
                 return;
               }
-              if (isEmergencyTargeting) {
-                setIsEmergencyTargeting(false);
-                document.body.style.cursor = 'auto';
-                handleEmergencyCall(gridP, `COORDINATES [${gridP.x}, ${gridP.y}]`);
-                return;
-              }
+              setIsEmergencyTargeting(false);
+              document.body.style.cursor = 'auto';
+              handleEmergencyCall(gridP);
             }} 
             onMapRightClick={(p) => {
               const gridP = getGridPointFromVector3(p, gridSize);
@@ -3578,17 +3215,7 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
               <group 
                 key={room.id} 
                 position={[x, 0, z]} 
-                onClick={(e) => { 
-                  e.stopPropagation(); 
-                  if (isEmergencyTargeting) {
-                    setIsEmergencyTargeting(false);
-                    document.body.style.cursor = 'auto';
-                    const target = room.door || room.start;
-                    handleEmergencyCall(target, room.name);
-                    return;
-                  }
-                  setSelectedRoom(room); 
-                }}
+                onClick={(e) => { e.stopPropagation(); setSelectedRoom(room); }}
               >
                 <BuildingModel room={room} width={width} height={height} depth={depth} />
                 {showBuildingLabels && (
@@ -3610,12 +3237,6 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
             isPlacingBlocker={isPlacingBlocker}
           />
           <CrowdsRender crowds={crowds} gridSize={gridSize} />
-          {/* Properly Marked 3D Emergency Location Point */}
-          <EmergencyMarkerRender 
-            markedPoint={markedEmergencyPoint} 
-            gridSize={gridSize} 
-            onClear={handleClearEmergencyTarget} 
-          />
           {/* 3D Animated Simulated Fire Hazards */}
           {fireHazards.map((hazard) => (
             <FireSimulationNode
@@ -3647,8 +3268,6 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
               robotPosRef={robotPosRef}
               allObstaclesRef={dynamicObstaclesRef}
               robotStateRef={robotStateRef}
-              mapDataRef={mapDataRef}
-              userBlockersRef={userBlockersRef}
             />
           ))}
 
@@ -3672,133 +3291,69 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
           )}
         </Canvas>
 
-        {/* Full-Screen Robot Eye FPV Cybernetic HUD (Native 60 FPS What The Robot Sees) */}
-        {cameraMode === 'fpv' && (
-          <div className="absolute inset-0 pointer-events-none z-[40] flex flex-col justify-between p-6 select-none animate-in fade-in duration-300">
-            {/* Top Tactical Bar */}
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2 pointer-events-auto">
-                <div className="px-3.5 py-1.5 rounded-xl bg-black/85 border border-cyan-500/50 backdrop-blur-md flex items-center gap-2 shadow-[0_0_20px_rgba(6,182,212,0.3)]">
-                  <span className="w-2.5 h-2.5 rounded-full bg-cyan-400 animate-ping" />
-                  <span className="font-mono font-black text-xs text-white tracking-widest">ROBOT EYES // FPV OPTICAL FEED</span>
-                  <span className="text-[10px] font-mono text-cyan-300 bg-cyan-500/20 px-2 py-0.5 rounded border border-cyan-500/40 font-bold">
-                    60 FPS DIRECT
-                  </span>
-                </div>
-
-                <button
-                  onClick={() => {
-                    window.dispatchEvent(new CustomEvent('remote_toggle_headlight'));
-                  }}
-                  className="px-3 py-1.5 rounded-xl bg-black/80 hover:bg-slate-900 border border-white/20 text-cyan-300 text-xs font-mono font-bold flex items-center gap-1.5 transition-all shadow-lg active:scale-95"
-                  title="Toggle Robot Headlights"
-                >
-                  <Sun className="w-3.5 h-3.5 text-amber-400" />
-                  <span>Headlights</span>
-                </button>
-              </div>
-
-              {/* Exit FPV / Return to Free Camera */}
-              <div className="pointer-events-auto flex items-center gap-2">
-                <button
-                  onClick={() => setCameraMode('follow')}
-                  className="px-3 py-1.5 rounded-xl bg-black/80 hover:bg-slate-900 border border-emerald-500/40 text-emerald-300 text-xs font-mono font-bold transition-all shadow-lg flex items-center gap-1.5"
-                >
-                  <Navigation className="w-3.5 h-3.5" />
-                  <span>Chase Cam</span>
-                </button>
-                <button
-                  onClick={() => setCameraMode('orbit')}
-                  className="px-3.5 py-1.5 rounded-xl bg-cyan-500 hover:bg-cyan-400 text-black text-xs font-mono font-black tracking-wider transition-all shadow-[0_0_20px_rgba(6,182,212,0.5)] active:scale-95 flex items-center gap-1.5"
-                >
-                  <span>EXIT FPV (FREE VIEW)</span>
-                </button>
-              </div>
-            </div>
-
-            {/* Center Cybernetic Optical Reticle */}
-            <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-              <div className="relative w-48 h-48 flex items-center justify-center opacity-80">
-                <Crosshair className="w-28 h-28 text-cyan-400/50 stroke-[1.2]" />
-                <div className="absolute w-20 h-[1px] bg-cyan-400/30 -top-8" />
-                <div className="absolute w-28 h-[1px] bg-cyan-400/30 -top-14" />
-                <div className="absolute w-20 h-[1px] bg-cyan-400/30 -bottom-8" />
-                <div className="absolute w-28 h-[1px] bg-cyan-400/30 -bottom-14" />
-                <div className="w-1.5 h-1.5 rounded-full bg-cyan-300 shadow-[0_0_8px_#22d3ee]" />
-                {/* Lateral brackets */}
-                <div className="absolute -left-12 top-1/2 -translate-y-1/2 text-[9px] font-mono text-cyan-400/60 font-bold">
-                  [-10°]
-                </div>
-                <div className="absolute -right-12 top-1/2 -translate-y-1/2 text-[9px] font-mono text-cyan-400/60 font-bold">
-                  [+10°]
-                </div>
-              </div>
-            </div>
-
-            {/* Bottom Perception Telemetry Bar */}
-            <div className="flex items-center justify-between">
-              <div className="bg-black/85 border border-cyan-500/40 rounded-xl px-4 py-2 backdrop-blur-md flex items-center gap-4 text-xs font-mono shadow-[0_0_25px_rgba(6,182,212,0.2)]">
-                <div className="flex items-center gap-1.5 text-cyan-300">
-                  <Compass className="w-4 h-4 text-cyan-400" />
-                  <span>
-                    HEADING: {robotRotRef.current !== undefined ? Math.round(((-robotRotRef.current * 180 / Math.PI) % 360 + 360) % 360) : 0}°
-                  </span>
-                </div>
-                <div className="w-px h-4 bg-white/10" />
-                <div className="flex items-center gap-1.5 text-yellow-300">
-                  <Gauge className="w-4 h-4 text-yellow-400" />
-                  <span>SPEED: {isPlaying ? ((speedLimit / 50) * 2.5).toFixed(1) : '0.0'} m/s</span>
-                </div>
-                <div className="w-px h-4 bg-white/10" />
-                <div className="flex items-center gap-1.5 text-emerald-400">
-                  <Activity className="w-4 h-4 text-emerald-400" />
-                  <span>BATTERY: {battery}%</span>
-                </div>
-                <div className="w-px h-4 bg-white/10" />
-                <span className="text-gray-300 uppercase font-bold text-[11px] px-2 py-0.5 rounded bg-white/10">
-                  STATE: {robotState}
-                </span>
-              </div>
-
-              <div className="bg-black/80 border border-white/10 rounded-xl px-3 py-2 backdrop-blur-md text-xs font-mono text-gray-400">
-                <span>SENSOR MAST: y=0.95m • FOV 75° • REAL-TIME ZERO-LAG OPTICS</span>
-              </div>
-            </div>
-          </div>
-        )}
-
         {/* Desktop Robot Vision Picture-in-Picture (PIP) Window */}
         {showRobotVisionPIP && (
-          <RobotVisionPIP 
-            onClose={() => setShowRobotVisionPIP(false)}
-            onSwitchToFPV={() => {
-              setCameraMode('fpv');
-              setShowRobotVisionPIP(false);
-            }}
-          />
-        )}
-
-        {/* Emergency Targeting Active Banner Overlay */}
-        {isEmergencyTargeting && (
-          <div className="absolute top-6 left-1/2 -translate-x-1/2 z-50 bg-red-950/90 border border-red-500 rounded-2xl px-6 py-2.5 shadow-[0_0_35px_rgba(239,68,68,0.7)] backdrop-blur-md flex items-center gap-3 animate-in fade-in slide-in-from-top-4 pointer-events-auto">
-            <span className="w-2.5 h-2.5 rounded-full bg-red-400 animate-ping" />
-            <div>
-              <div className="font-black text-xs font-mono uppercase tracking-widest text-red-200">
-                🎯 EMERGENCY TARGETING ARMED
+          <div className="absolute bottom-6 right-6 w-80 bg-slate-950/95 backdrop-blur-2xl border border-cyan-500/40 rounded-2xl z-[90] overflow-hidden shadow-[0_0_40px_rgba(6,182,212,0.25)] animate-in fade-in slide-in-from-bottom-4 duration-200">
+            <div className="px-3.5 py-2 border-b border-white/10 bg-slate-900/90 flex justify-between items-center select-none">
+              <div className="flex items-center gap-2">
+                <Eye className="w-4 h-4 text-cyan-400" />
+                <span className="font-mono font-bold text-xs text-white tracking-wider">
+                  ROBOT VISION FPV
+                </span>
+                <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-ping"></span>
               </div>
-              <div className="text-[10px] text-gray-300 font-mono">
-                Click any roadway, plaza, or building to mark emergency point & dispatch robot
+              <div className="flex items-center gap-1.5">
+                <span className="text-[10px] font-mono text-cyan-300 bg-cyan-500/10 px-2 py-0.5 rounded border border-cyan-500/30">
+                  {desktopVisionFrame?.heading ?? 0}°
+                </span>
+                <button 
+                  onClick={() => setShowRobotVisionPIP(false)} 
+                  className="w-5 h-5 flex items-center justify-center rounded-lg text-gray-400 hover:text-white hover:bg-white/10 transition-colors text-xs font-bold"
+                >
+                  ✕
+                </button>
               </div>
             </div>
-            <button
-              onClick={() => {
-                setIsEmergencyTargeting(false);
-                document.body.style.cursor = 'auto';
-              }}
-              className="ml-2 px-3 py-1 rounded-lg bg-white/10 hover:bg-white/20 text-gray-200 text-[10px] font-mono font-bold uppercase border border-white/20 transition-all"
-            >
-              Cancel
-            </button>
+            
+            <div className="relative aspect-[4/3] w-full bg-black flex items-center justify-center overflow-hidden">
+              {desktopVisionFrame?.image ? (
+                <img src={desktopVisionFrame.image} alt="Robot Vision Live FPV" className="w-full h-full object-cover" />
+              ) : (
+                <div className="flex flex-col items-center justify-center text-cyan-400/60 font-mono text-xs gap-1.5 p-4 text-center">
+                  <Eye className="w-6 h-6 animate-pulse" />
+                  <span>CONNECTING ROBOT CAMERA...</span>
+                </div>
+              )}
+              
+              {/* Overlay telemetry */}
+              <div className="absolute top-2 left-2 px-2 py-0.5 rounded bg-black/80 border border-white/10 text-[9px] font-mono text-cyan-300">
+                YOLOv8 FPV • 10 FPS
+              </div>
+
+              {desktopVisionFrame?.detectedObjects && desktopVisionFrame.detectedObjects.length > 0 && (
+                <div className="absolute top-2 right-2 px-2 py-0.5 rounded bg-black/80 border border-white/10 text-[9px] font-mono text-yellow-300">
+                  {desktopVisionFrame.detectedObjects.length} Targets
+                </div>
+              )}
+
+              <div className="absolute bottom-2 inset-x-2 flex items-center justify-between text-[9px] font-mono text-gray-300 bg-black/80 px-2 py-1 rounded backdrop-blur-sm">
+                <span>SPD: {desktopVisionFrame?.speed ?? 0} m/s</span>
+                <span>OBS: {desktopVisionFrame?.nearestObstacleDist ?? 12}m</span>
+                <span className="text-emerald-400">BAT: {desktopVisionFrame?.battery ?? 100}%</span>
+              </div>
+            </div>
+
+            <div className="p-2.5 bg-black/40 border-t border-white/5 flex items-center justify-between text-[11px]">
+              <span className="text-[10px] text-gray-400 font-mono">Stream synced with mobile</span>
+              <button
+                onClick={() => {
+                  window.dispatchEvent(new CustomEvent('remote_toggle_headlight'));
+                }}
+                className="px-2 py-1 rounded-lg bg-white/5 hover:bg-white/10 text-cyan-300 font-mono text-[10px] border border-white/10 transition-colors"
+              >
+                Toggle Headlight
+              </button>
+            </div>
           </div>
         )}
       </div>
@@ -4441,76 +3996,21 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
                     </button>
 
                     <button
-                      onClick={() => {
-                        const next = !isEmergencyTargeting;
-                        setIsEmergencyTargeting(next);
-                        if (next) {
-                          setIsPlacingBlocker(false);
-                          setIsPlacingCrowd(false);
-                          document.body.style.cursor = 'crosshair';
-                        } else {
-                          document.body.style.cursor = 'auto';
-                        }
-                      }}
+                      onClick={() => setIsEmergencyTargeting(!isEmergencyTargeting)}
                       className={`w-full p-3.5 border rounded-xl transition-all flex items-center gap-3.5 text-left ${
                         isEmergencyTargeting 
-                          ? 'bg-red-500/25 text-red-300 border-red-500 shadow-[0_0_25px_rgba(239,68,68,0.4)] animate-pulse' 
+                          ? 'bg-red-500/20 text-red-400 border-red-500 shadow-[0_0_20px_rgba(239,68,68,0.3)]' 
                           : 'bg-white/5 text-gray-400 border-white/10 hover:bg-white/10 hover:text-white'
                       }`}
                     >
                       <div className={`p-2 rounded-lg ${isEmergencyTargeting ? 'bg-red-500 text-white' : 'bg-white/10'}`}>
                         <ShieldAlert className="w-4 h-4" />
                       </div>
-                      <div className="flex-1">
-                        <div className="font-bold uppercase tracking-wider text-xs flex items-center justify-between">
-                          <span>{isEmergencyTargeting ? 'Click Map to Mark Point' : 'Target Emergency'}</span>
-                          {isEmergencyTargeting && (
-                            <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-red-500 text-white animate-ping">
-                              ARMED
-                            </span>
-                          )}
-                        </div>
-                        <div className="text-[10px] opacity-70 mt-0.5 font-mono">
-                          {isEmergencyTargeting 
-                            ? 'Crosshair armed • Click anywhere to mark emergency point' 
-                            : 'Mark emergency point & dispatch robot'}
-                        </div>
+                      <div>
+                        <div className="font-bold uppercase tracking-wider text-xs">Target Emergency</div>
+                        <div className="text-[10px] opacity-70 mt-0.5 font-mono">Dispatch robot to emergency location</div>
                       </div>
                     </button>
-
-                    {/* Active Marked Emergency Point Status Card */}
-                    {markedEmergencyPoint && (
-                      <div className="p-3 rounded-xl bg-pink-950/60 border border-pink-500/40 text-xs space-y-2 animate-in fade-in duration-200 shadow-[0_0_20px_rgba(236,72,153,0.2)]">
-                        <div className="flex items-center justify-between text-pink-300 font-bold">
-                          <span className="flex items-center gap-1.5 truncate">
-                            <span className="w-2 h-2 rounded-full bg-pink-400 animate-ping" />
-                            <span className="truncate">{markedEmergencyPoint.label}</span>
-                          </span>
-                          <span className="text-[9px] px-2 py-0.5 bg-pink-500/20 text-pink-300 rounded-full border border-pink-500/40 font-mono uppercase">
-                            {robotState === 'emergency_response' ? 'EN ROUTE' : 'ON SCENE'}
-                          </span>
-                        </div>
-                        <div className="text-gray-300 font-mono text-[10px] flex justify-between">
-                          <span>Target Point: <b className="text-white">({markedEmergencyPoint.position.x}, {markedEmergencyPoint.position.y})</b></span>
-                          <span>Priority: <b className="text-pink-400">CRITICAL 1</b></span>
-                        </div>
-                        <div className="flex gap-2 pt-1">
-                          <button
-                            onClick={() => handleEmergencyCall(markedEmergencyPoint.position, markedEmergencyPoint.label)}
-                            className="flex-1 py-1.5 bg-pink-600 hover:bg-pink-500 text-white font-bold rounded-lg text-[10px] uppercase tracking-wider transition-all flex items-center justify-center gap-1 shadow-md active:scale-95"
-                          >
-                            <Navigation className="w-3 h-3" />
-                            Re-route Robot
-                          </button>
-                          <button
-                            onClick={handleClearEmergencyTarget}
-                            className="px-2.5 py-1.5 bg-white/10 hover:bg-red-500/20 text-gray-300 hover:text-red-300 rounded-lg text-[10px] font-bold uppercase transition-all"
-                          >
-                            Clear
-                          </button>
-                        </div>
-                      </div>
-                    )}
                   </div>
                 </div>
               </div>
@@ -4590,7 +4090,7 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
                           <span className="text-[10px] font-bold uppercase tracking-wider text-center">Medical</span>
                         </button>
                         <button 
-                          onClick={() => handleEmergencyCall(selectedRoom.door || selectedRoom.start, selectedRoom.name)} 
+                          onClick={() => handleEmergencyCall(selectedRoom.door || selectedRoom.start)} 
                           className="flex flex-col items-center justify-center gap-1.5 p-3.5 bg-red-500/15 hover:bg-red-500/30 text-red-400 border border-red-500/40 rounded-xl transition-all shadow-sm hover:shadow-[0_0_15px_rgba(239,68,68,0.4)] group active:scale-[0.98]"
                         >
                           <ShieldAlert className="w-5 h-5 group-hover:scale-110 transition-transform" /> 
