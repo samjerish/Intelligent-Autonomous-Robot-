@@ -957,8 +957,6 @@ export const ProfessionalBuildingModel = React.memo(({
      11. DATA CENTER & CENTRAL UTILITY POWER STATION
   ───────────────────────────────────────────────────────────── */
   if (category === 'utility') {
-    const isDataCenter = nameLow.includes('data');
-
     return (
       <group position={[0, 0, 0]}>
         <Box args={[width + 0.4, podiumH, depth + 0.4]} position={[0, podiumH / 2, 0]} castShadow receiveShadow>
