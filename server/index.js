@@ -650,6 +650,8 @@ app.get('/api/state', (req, res) => {
 });
 
 let isStateInitialized = false;
+let latestVisionFrame = null;
+let latestPose = null;
 
 let telemetry = {
   battery: 100,
@@ -676,6 +678,8 @@ io.on('connection', (socket) => {
     socket.emit('init_state', appState);
   }
   socket.emit('telemetry_update', telemetry);
+  if (latestVisionFrame) socket.emit('robot_vision_frame', latestVisionFrame);
+  if (latestPose) socket.emit('robot_pose_stream', latestPose);
 
   socket.on('disconnect', () => {
     io.emit('device_count', io.engine.clientsCount);

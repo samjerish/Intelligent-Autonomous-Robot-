@@ -139,9 +139,9 @@ export const RobotVisionBroadcaster: React.FC<RobotVisionBroadcasterProps> = ({
       }));
     }
 
-    // Check if desktop PIP is open or mobile has recently requested stream
+    // Continuous real-time synchronization with mobile controller & desktop PIP
     const pipCanvas = document.getElementById('robot-pip-canvas') as HTMLCanvasElement | null;
-    const hasMobileClient = now - lastRequestTime.current < 15000;
+    const hasMobileClient = true;
 
     // Camera mounted forward OUTSIDE the robot at eye-level:
     // 0.95m forward in front of the robot chassis, 1.25m height (forward perception sensor mast)
