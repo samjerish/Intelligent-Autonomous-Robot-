@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState, useMemo, useCallback } from 'react';
 import type { MapData, GridPoint, Room, FireHazardPoint, FireIncident } from '../types';
-import { calculatePath, calculateLongPath, calculateEvadePath, calculateReversePath } from '../utils/simulationEngine';
+import { calculatePath, calculateLongPath, calculateEvadePath } from '../utils/simulationEngine';
 import { 
   Play, 
   RotateCcw, 
@@ -198,7 +198,7 @@ const MovingEntity = ({
   isMapView, 
   robotPosRef, 
   allObstaclesRef,
-  robotStateRef,
+  robotStateRef: _robotStateRef,
   mapData,
   userBlockers
 }: { 
@@ -1125,8 +1125,8 @@ export const DetailedRobot = ({
 
 const Robot = ({
   path, currentIndex, isPlaying, gridSize, isMapView, speed, dynamicObstaclesRef,
-  onReachNode, onMissionComplete, onObstacleDetected, robotPosRef, robotRotRef, isEmergency = false,
-  robotState, robotGroupRef, isFPV
+  onReachNode, onMissionComplete, onObstacleDetected: _onObstacleDetected, robotPosRef, robotRotRef, isEmergency = false,
+  robotState: _robotState, robotGroupRef, isFPV
 }: {
   path: GridPoint[];
   currentIndex: number;
@@ -1781,7 +1781,7 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
     return () => clearTimeout(timeout);
   }, [robotState, isPlaying, path, currentPosIndex, mapData, isOn, isIdleMode]);
 
-  const initializeDynamicObstacles = (robotPath?: GridPoint[], targetCount?: number) => {
+  const initializeDynamicObstacles = (_robotPath?: GridPoint[], targetCount?: number) => {
     if (!mapData || !mapData.roads || mapData.roads.length < 5) return;
     const roads = mapData.roads;
     const count = targetCount !== undefined ? targetCount : dynamicObstacleCountRef.current;
