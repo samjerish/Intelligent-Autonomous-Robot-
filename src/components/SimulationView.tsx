@@ -4342,21 +4342,76 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
                     </button>
 
                     <button
-                      onClick={() => setIsEmergencyTargeting(!isEmergencyTargeting)}
+                      onClick={() => {
+                        const next = !isEmergencyTargeting;
+                        setIsEmergencyTargeting(next);
+                        if (next) {
+                          setIsPlacingBlocker(false);
+                          setIsPlacingCrowd(false);
+                          document.body.style.cursor = 'crosshair';
+                        } else {
+                          document.body.style.cursor = 'auto';
+                        }
+                      }}
                       className={`w-full p-3.5 border rounded-xl transition-all flex items-center gap-3.5 text-left ${
                         isEmergencyTargeting 
-                          ? 'bg-red-500/20 text-red-400 border-red-500 shadow-[0_0_20px_rgba(239,68,68,0.3)]' 
+                          ? 'bg-red-500/25 text-red-300 border-red-500 shadow-[0_0_25px_rgba(239,68,68,0.4)] animate-pulse' 
                           : 'bg-white/5 text-gray-400 border-white/10 hover:bg-white/10 hover:text-white'
                       }`}
                     >
                       <div className={`p-2 rounded-lg ${isEmergencyTargeting ? 'bg-red-500 text-white' : 'bg-white/10'}`}>
                         <ShieldAlert className="w-4 h-4" />
                       </div>
-                      <div>
-                        <div className="font-bold uppercase tracking-wider text-xs">Target Emergency</div>
-                        <div className="text-[10px] opacity-70 mt-0.5 font-mono">Dispatch robot to emergency location</div>
+                      <div className="flex-1">
+                        <div className="font-bold uppercase tracking-wider text-xs flex items-center justify-between">
+                          <span>{isEmergencyTargeting ? 'Click Map to Mark Point' : 'Target Emergency'}</span>
+                          {isEmergencyTargeting && (
+                            <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-red-500 text-white animate-ping">
+                              ARMED
+                            </span>
+                          )}
+                        </div>
+                        <div className="text-[10px] opacity-70 mt-0.5 font-mono">
+                          {isEmergencyTargeting 
+                            ? 'Crosshair armed • Click anywhere to mark emergency point' 
+                            : 'Mark emergency point & dispatch robot'}
+                        </div>
                       </div>
                     </button>
+
+                    {/* Active Marked Emergency Point Status Card */}
+                    {markedEmergencyPoint && (
+                      <div className="p-3 rounded-xl bg-pink-950/60 border border-pink-500/40 text-xs space-y-2 animate-in fade-in duration-200 shadow-[0_0_20px_rgba(236,72,153,0.2)]">
+                        <div className="flex items-center justify-between text-pink-300 font-bold">
+                          <span className="flex items-center gap-1.5 truncate">
+                            <span className="w-2 h-2 rounded-full bg-pink-400 animate-ping" />
+                            <span className="truncate">{markedEmergencyPoint.label}</span>
+                          </span>
+                          <span className="text-[9px] px-2 py-0.5 bg-pink-500/20 text-pink-300 rounded-full border border-pink-500/40 font-mono uppercase">
+                            {robotState === 'emergency_response' ? 'EN ROUTE' : 'ON SCENE'}
+                          </span>
+                        </div>
+                        <div className="text-gray-300 font-mono text-[10px] flex justify-between">
+                          <span>Target Point: <b className="text-white">({markedEmergencyPoint.position.x}, {markedEmergencyPoint.position.y})</b></span>
+                          <span>Priority: <b className="text-pink-400">CRITICAL 1</b></span>
+                        </div>
+                        <div className="flex gap-2 pt-1">
+                          <button
+                            onClick={() => handleEmergencyCall(markedEmergencyPoint.position, markedEmergencyPoint.label)}
+                            className="flex-1 py-1.5 bg-pink-600 hover:bg-pink-500 text-white font-bold rounded-lg text-[10px] uppercase tracking-wider transition-all flex items-center justify-center gap-1 shadow-md active:scale-95"
+                          >
+                            <Navigation className="w-3 h-3" />
+                            Re-route Robot
+                          </button>
+                          <button
+                            onClick={handleClearEmergencyTarget}
+                            className="px-2.5 py-1.5 bg-white/10 hover:bg-red-500/20 text-gray-300 hover:text-red-300 rounded-lg text-[10px] font-bold uppercase transition-all"
+                          >
+                            Clear
+                          </button>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 </div>
               </div>
@@ -4436,7 +4491,7 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
                           <span className="text-[10px] font-bold uppercase tracking-wider text-center">Medical</span>
                         </button>
                         <button 
-                          onClick={() => handleEmergencyCall(selectedRoom.door || selectedRoom.start)} 
+                          onClick={() => handleEmergencyCall(selectedRoom.door || selectedRoom.start, selectedRoom.name)} 
                           className="flex flex-col items-center justify-center gap-1.5 p-3.5 bg-red-500/15 hover:bg-red-500/30 text-red-400 border border-red-500/40 rounded-xl transition-all shadow-sm hover:shadow-[0_0_15px_rgba(239,68,68,0.4)] group active:scale-[0.98]"
                         >
                           <ShieldAlert className="w-5 h-5 group-hover:scale-110 transition-transform" /> 
