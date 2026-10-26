@@ -217,6 +217,17 @@ const MovingEntity = ({
   const lastPosRef = useRef<THREE.Vector3>(new THREE.Vector3());
   const stuckTimerRef = useRef<number>(0);
   const lastRerouteTimeRef = useRef<number>(0);
+
+  // Deterministic sidewalk side for pedestrians (+0.95m or -0.95m)
+  const isPedestrian = obstacle.type === 'person';
+  const naturalSidewalkSide = useMemo(() => {
+    let hash = 0;
+    for (let i = 0; i < obstacle.id.length; i++) {
+      hash = ((hash << 5) - hash) + obstacle.id.charCodeAt(i);
+      hash |= 0;
+    }
+    return hash % 2 === 0 ? 1 : -1;
+  }, [obstacle.id]);
   
   useFrame((_state, delta) => {
     if (!ref.current || obstacle.path.length === 0 || !obstacle.isMoving) return;
@@ -224,33 +235,37 @@ const MovingEntity = ({
     obstacle.currentPosVector = currentPos.clone();
     obstacle.pos = getGridPointFromVector3(currentPos, gridSize);
 
-    // 1. Anti-stuck watchdog: ensure obstacles never freeze or stay in the same position
-    if (lastPosRef.current.distanceTo(currentPos) < 0.008) {
+    // 1. Anti-stuck watchdog: ensure obstacles are never idle in any state
+    if (lastPosRef.current.distanceTo(currentPos) < 0.015) {
       stuckTimerRef.current += delta;
     } else {
       stuckTimerRef.current = 0;
       lastPosRef.current.copy(currentPos);
     }
 
-    if (stuckTimerRef.current > 2.0 && mapData?.roads && mapData.roads.length > 0) {
+    if (stuckTimerRef.current > 1.2 && mapData?.roads && mapData.roads.length > 0) {
       stuckTimerRef.current = 0;
-      const curGrid = obstacle.pos;
-      let newTarget = mapData.roads[Math.floor(Math.random() * mapData.roads.length)];
-      for (let attempt = 0; attempt < 8; attempt++) {
-        if (Math.abs(newTarget.x - curGrid.x) + Math.abs(newTarget.y - curGrid.y) >= 6) break;
-        newTarget = mapData.roads[Math.floor(Math.random() * mapData.roads.length)];
-      }
-      const newPath = calculatePath(
-        curGrid,
-        newTarget,
-        [...(mapData.obstacles || []), ...(userBlockers || [])],
-        mapData,
-        true
-      );
-      if (newPath && newPath.length > 1) {
-        obstacle.path = newPath;
-        obstacle.targetPos = newTarget;
-        obstacle.currentIndex = 0;
+      if (obstacle.currentIndex < obstacle.path.length - 1) {
+        obstacle.currentIndex++;
+      } else {
+        const curGrid = obstacle.pos;
+        let newTarget = mapData.roads[Math.floor(Math.random() * mapData.roads.length)];
+        for (let attempt = 0; attempt < 8; attempt++) {
+          if (Math.abs(newTarget.x - curGrid.x) + Math.abs(newTarget.y - curGrid.y) >= 6) break;
+          newTarget = mapData.roads[Math.floor(Math.random() * mapData.roads.length)];
+        }
+        const newPath = calculatePath(
+          curGrid,
+          newTarget,
+          [...(mapData.obstacles || []), ...(userBlockers || [])],
+          mapData,
+          true
+        );
+        if (newPath && newPath.length > 1) {
+          obstacle.path = newPath;
+          obstacle.targetPos = newTarget;
+          obstacle.currentIndex = 0;
+        }
       }
     }
     
@@ -267,41 +282,46 @@ const MovingEntity = ({
       moveDir.set(0, 0, 1);
     }
 
-    // 2. Intelligent Diversion around Oncoming Robot:
-    // If coming straight towards robot, do NOT return back and do NOT freeze; take a smooth lateral diversion!
-    let isDiversionActive = false;
-    let steerSide = 1; // +1 = right lane/shoulder, -1 = left lane/shoulder
+    // Normal direction perpendicular to travel (+right, -left)
+    const normalDir = new THREE.Vector3(-moveDir.z, 0, moveDir.x);
+
+    // 2. Base Lane / Sidewalk Discipline:
+    // Pedestrians walk on sidewalks (+0.95m / -0.95m)
+    // Cars drive on the right lane (+0.55m)
+    let lateralOffset = isPedestrian ? (0.95 * naturalSidewalkSide) : 0.55;
     let speedMultiplier = 1.0;
 
+    // 3. Intelligent Diversion around Oncoming Robot:
     if (robotPosRef && robotPosRef.current) {
       const robotPos = robotPosRef.current;
       const toRobot = new THREE.Vector3().subVectors(robotPos, currentPos);
       toRobot.y = 0;
       const distToRobot = toRobot.length();
 
+      // Physical repulsion if very close (< 1.35m): push laterally away so clipping NEVER occurs
+      if (distToRobot < 1.35 && distToRobot > 0.01) {
+        const pushAway = new THREE.Vector3().subVectors(currentPos, robotPos).normalize();
+        pushAway.y = 0;
+        currentPos.add(pushAway.multiplyScalar(delta * 2.5));
+      }
+
       // Detect oncoming encounter within 6.0m
       if (distToRobot < 6.0 && distToRobot > 0.05) {
         const toRobotNorm = toRobot.clone().normalize();
         const dot = moveDir.dot(toRobotNorm);
 
-        // dot > 0.15 means moving towards robot (head-on collision course)
-        if (dot > 0.15) {
-          isDiversionActive = true;
-
-          // Determine diversion steer side via 2D cross product:
-          // (moveDir.x * toRobotNorm.z - moveDir.z * toRobotNorm.x)
-          // If > 0, robot is slightly right -> steer left (-1)
-          // Else steer right (+1) (standard right-hand diversion)
+        // dot > 0.08 means moving towards robot (head-on collision course)
+        if (dot > 0.08) {
           const crossY = (moveDir.x * toRobotNorm.z) - (moveDir.z * toRobotNorm.x);
-          steerSide = crossY > 0.05 ? -1 : 1;
+          const steerSide = crossY > 0.05 ? -1 : 1;
+          
+          // Steer wide around robot: 1.15m for cars, 1.35m for pedestrians
+          lateralOffset = (isPedestrian ? 1.35 : 1.15) * steerSide;
+          speedMultiplier = 0.85;
 
-          // Keep moving forward smoothly; slightly reduce speed for safe passing unless robot has already yielded
-          const isRobotYielding = robotStateRef?.current === 'reversing' || robotStateRef?.current === 'waiting_for_clearance';
-          speedMultiplier = isRobotYielding ? 1.0 : (distToRobot < 1.0 ? 0.75 : 0.9);
-
-          // Attempt topological road network diversion if near intersection
+          // Attempt topological road network detour if near intersection
           const now = performance.now();
-          if (now - lastRerouteTimeRef.current > 3500 && mapData?.roads && mapData.roads.length > 0) {
+          if (now - lastRerouteTimeRef.current > 3000 && mapData?.roads && mapData.roads.length > 0) {
             lastRerouteTimeRef.current = now;
             const curGrid = obstacle.pos;
             const robotGrid = getGridPointFromVector3(robotPos, gridSize);
@@ -322,46 +342,34 @@ const MovingEntity = ({
       }
     }
 
-    // 3. Headway & Mutual Passing with Other Dynamic Obstacles:
+    // 4. Multi-Obstacle Repulsion (Prevents cars & pedestrians clustering or merging):
     if (allObstaclesRef && allObstaclesRef.current) {
-      const minHeadway = obstacle.type === 'car' ? 1.8 : 1.1;
       for (const other of allObstaclesRef.current) {
         if (other.id === obstacle.id || !other.currentPosVector) continue;
         const toOther = new THREE.Vector3().subVectors(other.currentPosVector, currentPos);
         toOther.y = 0;
         const distToOther = toOther.length();
-        if (distToOther < minHeadway && distToOther > 0.05) {
-          const toOtherNorm = toOther.clone().normalize();
-          const dot = moveDir.dot(toOtherNorm);
-          if (dot > 0.25) {
-            speedMultiplier = Math.min(speedMultiplier, 0.7);
-            if (!isDiversionActive) {
-              const crossY = (moveDir.x * toOtherNorm.z) - (moveDir.z * toOtherNorm.x);
-              steerSide = crossY > 0 ? -1 : 1;
-              isDiversionActive = true;
-            }
-          }
+        if (distToOther < 1.35 && distToOther > 0.01) {
+          const pushAway = new THREE.Vector3().subVectors(currentPos, other.currentPosVector).normalize();
+          pushAway.y = 0;
+          currentPos.add(pushAway.multiplyScalar(delta * 2.2));
         }
       }
     }
 
-    // 4. Compute Lateral Diversion Offset
-    const normalDir = new THREE.Vector3(-moveDir.z, 0, moveDir.x);
-    if (isDiversionActive) {
-      const diversionMag = (obstacle.type === 'car' ? 1.15 : 0.85) * steerSide;
-      targetDiversionOffset.current.copy(normalDir).multiplyScalar(diversionMag);
-    } else {
-      targetDiversionOffset.current.set(0, 0, 0);
-    }
+    // 5. Apply Smooth Diversion Offset
+    targetDiversionOffset.current.copy(normalDir).multiplyScalar(lateralOffset);
+    diversionOffsetRef.current.lerp(targetDiversionOffset.current, delta * 4.0);
 
-    diversionOffsetRef.current.lerp(targetDiversionOffset.current, delta * 3.5);
-
-    // 5. Advance Movement Towards Waypoint + Diversion Offset
     const effectiveTarget = targetVector.clone().add(diversionOffsetRef.current);
-    const distToWaypoint = currentPos.distanceTo(targetVector);
+    const toTarget = new THREE.Vector3().subVectors(targetVector, currentPos);
+    toTarget.y = 0;
+    const alongTrack = toTarget.dot(moveDir);
+    const distToTarget = currentPos.distanceTo(targetVector);
     const distToEffective = currentPos.distanceTo(effectiveTarget);
 
-    if (distToWaypoint < 0.25 || distToEffective < 0.15) {
+    // 6. Robust Along-Track Waypoint Advancement:
+    if (distToTarget < 0.35 || alongTrack <= 0.3 || distToEffective < 0.35) {
       if (obstacle.currentIndex < obstacle.path.length - 1) {
         obstacle.currentIndex++;
       } else {
@@ -385,7 +393,6 @@ const MovingEntity = ({
             obstacle.targetPos = newTarget;
             obstacle.currentIndex = 0;
           } else {
-            // Fallback adjacent road neighbor to ensure movement never stops
             const neighbors = mapData.roads.filter(r => 
               Math.abs(r.x - curGrid.x) + Math.abs(r.y - curGrid.y) === 1
             );
