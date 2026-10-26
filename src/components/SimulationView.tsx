@@ -1502,6 +1502,7 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
   const controlsRef = useRef<any>(null);
   const turnOffAfterEmergencyRef = useRef(false);
   const currentTaskIndexRef = useRef(0);
+  const emergencyTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const clearanceCheckRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const mapDataRef = useRef<MapData | null>(mapData);
   useEffect(() => { mapDataRef.current = mapData; }, [mapData]);
@@ -1824,18 +1825,25 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
 
     const obs: DynamicObstacle[] = [];
     const carCount = count < 3 ? (count > 0 ? 1 : 0) : Math.min(8, Math.max(1, Math.round(count * 0.3)));
+    const blockers = [...(mapData.obstacles || []), ...userBlockers];
     
     for (let i = 0; i < count; i++) {
       const isCar = i < carCount;
       // Pick start and end nodes with reasonable separation to prevent bunching
       let start = roads[Math.floor(Math.random() * roads.length)];
       let end = roads[Math.floor(Math.random() * roads.length)];
-      for (let attempt = 0; attempt < 6; attempt++) {
-        if (Math.abs(start.x - end.x) + Math.abs(start.y - end.y) >= 6) break;
+      for (let attempt = 0; attempt < 10; attempt++) {
+        if (Math.abs(start.x - end.x) + Math.abs(start.y - end.y) >= 8) break;
         end = roads[Math.floor(Math.random() * roads.length)];
       }
 
-      const path = calculatePath(start, end, [...(mapData.obstacles || []), ...userBlockers], mapData, true);
+      let path = calculatePath(start, end, blockers, mapData, true);
+      for (let retry = 0; retry < 8 && path.length < 3; retry++) {
+        start = roads[Math.floor(Math.random() * roads.length)];
+        end = roads[Math.floor(Math.random() * roads.length)];
+        path = calculatePath(start, end, blockers, mapData, true);
+      }
+
       if (path.length > 1) {
         obs.push({
           id: `obs_${i}_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
@@ -1844,7 +1852,7 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
           targetPos: end,
           path,
           currentIndex: 0,
-          speed: isCar ? 5.5 : (1.8 + Math.random() * 0.8),
+          speed: isCar ? (4.2 + Math.random() * 1.8) : (1.7 + Math.random() * 0.8),
           isMoving: true
         });
       }
@@ -3639,6 +3647,8 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
               robotPosRef={robotPosRef}
               allObstaclesRef={dynamicObstaclesRef}
               robotStateRef={robotStateRef}
+              mapDataRef={mapDataRef}
+              userBlockersRef={userBlockersRef}
             />
           ))}
 
