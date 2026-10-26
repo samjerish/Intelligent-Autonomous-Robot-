@@ -3678,6 +3678,30 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
             }}
           />
         )}
+
+        {/* Emergency Targeting Active Banner Overlay */}
+        {isEmergencyTargeting && (
+          <div className="absolute top-6 left-1/2 -translate-x-1/2 z-50 bg-red-950/90 border border-red-500 rounded-2xl px-6 py-2.5 shadow-[0_0_35px_rgba(239,68,68,0.7)] backdrop-blur-md flex items-center gap-3 animate-in fade-in slide-in-from-top-4 pointer-events-auto">
+            <span className="w-2.5 h-2.5 rounded-full bg-red-400 animate-ping" />
+            <div>
+              <div className="font-black text-xs font-mono uppercase tracking-widest text-red-200">
+                🎯 EMERGENCY TARGETING ARMED
+              </div>
+              <div className="text-[10px] text-gray-300 font-mono">
+                Click any roadway, plaza, or building to mark emergency point & dispatch robot
+              </div>
+            </div>
+            <button
+              onClick={() => {
+                setIsEmergencyTargeting(false);
+                document.body.style.cursor = 'auto';
+              }}
+              className="ml-2 px-3 py-1 rounded-lg bg-white/10 hover:bg-white/20 text-gray-200 text-[10px] font-mono font-bold uppercase border border-white/20 transition-all"
+            >
+              Cancel
+            </button>
+          </div>
+        )}
       </div>
 
       {/* Ground Control Station (GCS) / CTR Terminal Overlay */}
