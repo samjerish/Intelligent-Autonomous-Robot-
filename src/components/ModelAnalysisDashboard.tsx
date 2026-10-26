@@ -1,16 +1,16 @@
 import React, { useState } from 'react';
-import {
-  Activity,
-  CheckCircle2,
-  ChevronRight,
-  Download,
-  Eye,
-  Flame,
-  ShieldCheck,
-  Timer,
-  TrendingUp,
-  Users,
-  Zap,
+import { 
+  Activity, 
+  CheckCircle2, 
+  ChevronRight, 
+  Download, 
+  Eye, 
+  Flame, 
+  ShieldCheck, 
+  Timer, 
+  TrendingUp, 
+  Users, 
+  Zap, 
   Info,
   Check
 } from 'lucide-react';
@@ -32,7 +32,7 @@ const LOSS_DATA: DataPoint[] = Array.from({ length: 25 }, (_, i) => {
   // Good fitting: smooth decay to plateau
   const goodLoss = Math.max(0.08, 0.95 * Math.exp(-epoch / 18) + 0.07);
   // Overfitting: reaches min around epoch 32, then climbs
-  const overfitLoss = epoch <= 32
+  const overfitLoss = epoch <= 32 
     ? Math.max(0.12, 0.95 * Math.exp(-epoch / 12) + 0.05)
     : 0.12 + Math.pow((epoch - 32) / 68, 1.8) * 0.55;
 
@@ -48,7 +48,7 @@ const MAP_ACCURACY_DATA: DataPoint[] = Array.from({ length: 25 }, (_, i) => {
   const epoch = (i + 1) * 4;
   const underfitMap = Math.min(54.5, 20 + (1 - Math.exp(-epoch / 15)) * 34.5);
   const goodMap = Math.min(94.2, 25 + (1 - Math.exp(-epoch / 20)) * 69.2);
-  const overfitMap = epoch <= 32
+  const overfitMap = epoch <= 32 
     ? 25 + (1 - Math.exp(-epoch / 12)) * 64
     : 88.5 - Math.pow((epoch - 32) / 68, 1.5) * 22;
 
@@ -96,7 +96,7 @@ const CleanLineChart: React.FC<CleanChartProps> = ({
     if (currentRegime === 'underfitting') return [d.underfitting];
     return [d.good, d.overfitting, d.underfitting];
   });
-
+  
   const minVal = Math.min(...allValues);
   const maxVal = Math.max(...allValues);
   const yBuffer = (maxVal - minVal) * 0.1 || 1;
@@ -136,8 +136,8 @@ const CleanLineChart: React.FC<CleanChartProps> = ({
 
       {/* SVG Line Graph */}
       <div className="relative w-full overflow-hidden select-none">
-        <svg
-          viewBox={`0 0 ${width} ${height}`}
+        <svg 
+          viewBox={`0 0 ${width} ${height}`} 
           className="w-full h-auto cursor-crosshair overflow-visible"
           onMouseLeave={() => setHoveredIdx(null)}
           onMouseMove={(e) => {
@@ -155,20 +155,20 @@ const CleanLineChart: React.FC<CleanChartProps> = ({
             const val = yMax - pct * (yMax - yMin);
             return (
               <g key={i}>
-                <line
-                  x1={padding.left}
-                  y1={y}
-                  x2={width - padding.right}
-                  y2={y}
-                  stroke="rgba(255, 255, 255, 0.08)"
+                <line 
+                  x1={padding.left} 
+                  y1={y} 
+                  x2={width - padding.right} 
+                  y2={y} 
+                  stroke="rgba(255, 255, 255, 0.08)" 
                   strokeDasharray="4 4"
                 />
-                <text
-                  x={padding.left - 8}
-                  y={y + 3.5}
-                  textAnchor="end"
-                  fontSize="10"
-                  fill="#71717a"
+                <text 
+                  x={padding.left - 8} 
+                  y={y + 3.5} 
+                  textAnchor="end" 
+                  fontSize="10" 
+                  fill="#71717a" 
                   fontFamily="monospace"
                 >
                   {val.toFixed(1)}{unit}
@@ -183,19 +183,19 @@ const CleanLineChart: React.FC<CleanChartProps> = ({
             const x = getX(val);
             return (
               <g key={i}>
-                <line
-                  x1={x}
-                  y1={height - padding.bottom}
-                  x2={x}
-                  y2={height - padding.bottom + 5}
-                  stroke="rgba(255, 255, 255, 0.2)"
+                <line 
+                  x1={x} 
+                  y1={height - padding.bottom} 
+                  x2={x} 
+                  y2={height - padding.bottom + 5} 
+                  stroke="rgba(255, 255, 255, 0.2)" 
                 />
-                <text
-                  x={x}
-                  y={height - padding.bottom + 18}
-                  textAnchor="middle"
-                  fontSize="10"
-                  fill="#71717a"
+                <text 
+                  x={x} 
+                  y={height - padding.bottom + 18} 
+                  textAnchor="middle" 
+                  fontSize="10" 
+                  fill="#71717a" 
                   fontFamily="monospace"
                 >
                   {Math.round(val)}
@@ -205,23 +205,23 @@ const CleanLineChart: React.FC<CleanChartProps> = ({
           })}
 
           {/* Axis Labels */}
-          <text
-            x={width / 2}
-            y={height - 5}
-            textAnchor="middle"
-            fontSize="10"
-            fill="#a1a1aa"
+          <text 
+            x={width / 2} 
+            y={height - 5} 
+            textAnchor="middle" 
+            fontSize="10" 
+            fill="#a1a1aa" 
             fontFamily="monospace"
           >
             {xAxisLabel}
           </text>
-          <text
-            x={14}
-            y={height / 2}
-            textAnchor="middle"
-            transform={`rotate(-90 14 ${height / 2})`}
-            fontSize="10"
-            fill="#a1a1aa"
+          <text 
+            x={14} 
+            y={height / 2} 
+            textAnchor="middle" 
+            transform={`rotate(-90 14 ${height / 2})`} 
+            fontSize="10" 
+            fill="#a1a1aa" 
             fontFamily="monospace"
           >
             {yAxisLabel}
@@ -229,11 +229,11 @@ const CleanLineChart: React.FC<CleanChartProps> = ({
 
           {/* Underfitting Line (Amber) */}
           {(currentRegime === 'all' || currentRegime === 'underfitting') && (
-            <path
-              d={generatePath('underfitting')}
-              fill="none"
-              stroke="#f59e0b"
-              strokeWidth={currentRegime === 'underfitting' ? 3.5 : 2}
+            <path 
+              d={generatePath('underfitting')} 
+              fill="none" 
+              stroke="#f59e0b" 
+              strokeWidth={currentRegime === 'underfitting' ? 3.5 : 2} 
               strokeDasharray={currentRegime === 'underfitting' ? undefined : "4 3"}
               className="transition-all duration-300"
             />
@@ -241,22 +241,22 @@ const CleanLineChart: React.FC<CleanChartProps> = ({
 
           {/* Overfitting Line (Rose) */}
           {(currentRegime === 'all' || currentRegime === 'overfitting') && (
-            <path
-              d={generatePath('overfitting')}
-              fill="none"
-              stroke="#f43f5e"
-              strokeWidth={currentRegime === 'overfitting' ? 3.5 : 2}
+            <path 
+              d={generatePath('overfitting')} 
+              fill="none" 
+              stroke="#f43f5e" 
+              strokeWidth={currentRegime === 'overfitting' ? 3.5 : 2} 
               className="transition-all duration-300"
             />
           )}
 
           {/* Good Fitting Line (Emerald) */}
           {(currentRegime === 'all' || currentRegime === 'good') && (
-            <path
-              d={generatePath('good')}
-              fill="none"
-              stroke="#10b981"
-              strokeWidth={currentRegime === 'good' ? 3.8 : 2.8}
+            <path 
+              d={generatePath('good')} 
+              fill="none" 
+              stroke="#10b981" 
+              strokeWidth={currentRegime === 'good' ? 3.8 : 2.8} 
               className="transition-all duration-300 drop-shadow-[0_0_8px_rgba(16,185,129,0.6)]"
             />
           )}
@@ -264,41 +264,41 @@ const CleanLineChart: React.FC<CleanChartProps> = ({
           {/* Active Hover Guide and Points */}
           {activePoint && (
             <g>
-              <line
-                x1={getX(activePoint.x)}
-                y1={padding.top}
-                x2={getX(activePoint.x)}
-                y2={height - padding.bottom}
-                stroke="rgba(255, 255, 255, 0.3)"
+              <line 
+                x1={getX(activePoint.x)} 
+                y1={padding.top} 
+                x2={getX(activePoint.x)} 
+                y2={height - padding.bottom} 
+                stroke="rgba(255, 255, 255, 0.3)" 
                 strokeDasharray="2 2"
               />
               {(currentRegime === 'all' || currentRegime === 'good') && (
-                <circle
-                  cx={getX(activePoint.x)}
-                  cy={getY(activePoint.good)}
-                  r="4.5"
-                  fill="#10b981"
-                  stroke="#ffffff"
+                <circle 
+                  cx={getX(activePoint.x)} 
+                  cy={getY(activePoint.good)} 
+                  r="4.5" 
+                  fill="#10b981" 
+                  stroke="#ffffff" 
                   strokeWidth="1.5"
                 />
               )}
               {(currentRegime === 'all' || currentRegime === 'overfitting') && (
-                <circle
-                  cx={getX(activePoint.x)}
-                  cy={getY(activePoint.overfitting)}
-                  r="4.5"
-                  fill="#f43f5e"
-                  stroke="#ffffff"
+                <circle 
+                  cx={getX(activePoint.x)} 
+                  cy={getY(activePoint.overfitting)} 
+                  r="4.5" 
+                  fill="#f43f5e" 
+                  stroke="#ffffff" 
                   strokeWidth="1.5"
                 />
               )}
               {(currentRegime === 'all' || currentRegime === 'underfitting') && (
-                <circle
-                  cx={getX(activePoint.x)}
-                  cy={getY(activePoint.underfitting)}
-                  r="4.5"
-                  fill="#f59e0b"
-                  stroke="#ffffff"
+                <circle 
+                  cx={getX(activePoint.x)} 
+                  cy={getY(activePoint.underfitting)} 
+                  r="4.5" 
+                  fill="#f59e0b" 
+                  stroke="#ffffff" 
                   strokeWidth="1.5"
                 />
               )}
@@ -415,39 +415,43 @@ export const ModelAnalysisDashboard: React.FC<{ onBackToSimulation?: () => void 
             <span className="px-2 text-gray-400 font-mono text-[11px] uppercase tracking-wider">Regime:</span>
             <button
               onClick={() => setSelectedRegime('all')}
-              className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer ${selectedRegime === 'all'
+              className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer ${
+                selectedRegime === 'all'
                   ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 shadow-sm'
                   : 'text-gray-400 hover:text-white'
-                }`}
+              }`}
             >
               All Regimes Overlay
             </button>
             <button
               onClick={() => setSelectedRegime('good')}
-              className={`px-3 py-1.5 rounded-lg transition-all flex items-center gap-1.5 cursor-pointer ${selectedRegime === 'good'
+              className={`px-3 py-1.5 rounded-lg transition-all flex items-center gap-1.5 cursor-pointer ${
+                selectedRegime === 'good'
                   ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 shadow-sm'
                   : 'text-gray-400 hover:text-white'
-                }`}
+              }`}
             >
               <span className="w-2 h-2 rounded-full bg-emerald-400"></span>
               Good Fitting (Optimal)
             </button>
             <button
               onClick={() => setSelectedRegime('overfitting')}
-              className={`px-3 py-1.5 rounded-lg transition-all flex items-center gap-1.5 cursor-pointer ${selectedRegime === 'overfitting'
+              className={`px-3 py-1.5 rounded-lg transition-all flex items-center gap-1.5 cursor-pointer ${
+                selectedRegime === 'overfitting'
                   ? 'bg-rose-500/20 text-rose-300 border border-rose-500/40 shadow-sm'
                   : 'text-gray-400 hover:text-white'
-                }`}
+              }`}
             >
               <span className="w-2 h-2 rounded-full bg-rose-400"></span>
               Overfitting (High Variance)
             </button>
             <button
               onClick={() => setSelectedRegime('underfitting')}
-              className={`px-3 py-1.5 rounded-lg transition-all flex items-center gap-1.5 cursor-pointer ${selectedRegime === 'underfitting'
+              className={`px-3 py-1.5 rounded-lg transition-all flex items-center gap-1.5 cursor-pointer ${
+                selectedRegime === 'underfitting'
                   ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40 shadow-sm'
                   : 'text-gray-400 hover:text-white'
-                }`}
+              }`}
             >
               <span className="w-2 h-2 rounded-full bg-amber-400"></span>
               Underfitting (High Bias)
@@ -581,10 +585,11 @@ export const ModelAnalysisDashboard: React.FC<{ onBackToSimulation?: () => void 
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs">
             {/* Good Fitting Card */}
-            <div className={`p-4 rounded-xl border transition-all ${selectedRegime === 'good' || selectedRegime === 'all'
+            <div className={`p-4 rounded-xl border transition-all ${
+              selectedRegime === 'good' || selectedRegime === 'all'
                 ? 'bg-emerald-950/25 border-emerald-500/40 text-emerald-100 ring-1 ring-emerald-500/20'
                 : 'bg-white/[0.01] border-white/5 text-gray-500 opacity-50'
-              }`}>
+            }`}>
               <div className="flex items-center justify-between font-bold">
                 <span className="flex items-center gap-1.5 text-emerald-400">
                   <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.8)]"></span>
@@ -603,10 +608,11 @@ export const ModelAnalysisDashboard: React.FC<{ onBackToSimulation?: () => void 
             </div>
 
             {/* Overfitting Card */}
-            <div className={`p-4 rounded-xl border transition-all ${selectedRegime === 'overfitting' || selectedRegime === 'all'
+            <div className={`p-4 rounded-xl border transition-all ${
+              selectedRegime === 'overfitting' || selectedRegime === 'all'
                 ? 'bg-rose-950/25 border-rose-500/40 text-rose-100'
                 : 'bg-white/[0.01] border-white/5 text-gray-500 opacity-50'
-              }`}>
+            }`}>
               <div className="flex items-center justify-between font-bold">
                 <span className="flex items-center gap-1.5 text-rose-400">
                   <span className="w-2.5 h-2.5 rounded-full bg-rose-400"></span>
@@ -625,10 +631,11 @@ export const ModelAnalysisDashboard: React.FC<{ onBackToSimulation?: () => void 
             </div>
 
             {/* Underfitting Card */}
-            <div className={`p-4 rounded-xl border transition-all ${selectedRegime === 'underfitting' || selectedRegime === 'all'
+            <div className={`p-4 rounded-xl border transition-all ${
+              selectedRegime === 'underfitting' || selectedRegime === 'all'
                 ? 'bg-amber-950/25 border-amber-500/40 text-amber-100'
                 : 'bg-white/[0.01] border-white/5 text-gray-500 opacity-50'
-              }`}>
+            }`}>
               <div className="flex items-center justify-between font-bold">
                 <span className="flex items-center gap-1.5 text-amber-400">
                   <span className="w-2.5 h-2.5 rounded-full bg-amber-400"></span>
