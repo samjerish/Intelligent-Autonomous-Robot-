@@ -1088,7 +1088,7 @@ export const DetailedRobot = ({
 };
 
 const Robot = ({
-  path, currentIndex, isPlaying, gridSize, isMapView, speed, dynamicObstaclesRef,
+  path, currentIndex, isPlaying, gridSize, isMapView, speed, dynamicObstaclesRef, userBlockers,
   onReachNode, onMissionComplete, onObstacleDetected, robotPosRef, robotRotRef, isEmergency = false,
   robotState
 }: {
@@ -1099,6 +1099,7 @@ const Robot = ({
   isMapView: boolean;
   speed: number;
   dynamicObstaclesRef: React.MutableRefObject<DynamicObstacle[]>;
+  userBlockers?: GridPoint[];
   onReachNode: (idx: number) => void;
   onMissionComplete: () => void;
   onObstacleDetected: (obsPos: GridPoint) => void;
@@ -1145,34 +1146,49 @@ const Robot = ({
     if (pauseTimeRef.current > 0) return; // Wait if still paused
 
     if (isPlaying) {
-      // --- Sensor Logic: Check for dynamic obstacles ahead with cooldown ---
-      if (robotState !== 'reversing' && robotState !== 'waiting_for_clearance' && dynamicObstaclesRef && dynamicObstaclesRef.current.length > 0) {
+      // --- Sensor Logic: Check for dynamic obstacles & road blockers ahead ---
+      if (robotState !== 'reversing' && robotState !== 'waiting_for_clearance') {
         const now = Date.now();
-        if (now - lastObstacleDetectionTimeRef.current > 1800) {
-          const upcomingPath = path.slice(currentIndex, currentIndex + 3);
-          for (const obs of dynamicObstaclesRef.current) {
-            const obsTarget = obs.path[Math.min(obs.currentIndex, obs.path.length - 1)];
-            let detected = false;
-            for (const p of upcomingPath) {
-              if ((p.x === obs.pos.x && p.y === obs.pos.y) || (p.x === obsTarget.x && p.y === obsTarget.y)) {
-                detected = true;
-                break;
+        if (now - lastObstacleDetectionTimeRef.current > 600) {
+          const upcomingPath = path.slice(currentIndex, currentIndex + 4);
+
+          // 1. Check upcoming road blockers placed on path
+          if (userBlockers && userBlockers.length > 0) {
+            for (const b of userBlockers) {
+              if (upcomingPath.some(p => p.x === b.x && p.y === b.y && p.f === b.f)) {
+                lastObstacleDetectionTimeRef.current = now;
+                onObstacleDetected(b);
+                return;
               }
             }
-            if (!detected && obs.currentPosVector) {
-              const d = currentPos.distanceTo(obs.currentPosVector);
-              if (d < 1.15) {
-                const forwardDir = new THREE.Vector3().subVectors(targetVector, currentPos).normalize();
-                const toObs = new THREE.Vector3().subVectors(obs.currentPosVector, currentPos).normalize();
-                if (forwardDir.dot(toObs) > 0.55) {
+          }
+
+          // 2. Check dynamic pedestrians and vehicles
+          if (dynamicObstaclesRef && dynamicObstaclesRef.current.length > 0) {
+            for (const obs of dynamicObstaclesRef.current) {
+              const obsTarget = obs.path[Math.min(obs.currentIndex, obs.path.length - 1)];
+              let detected = false;
+              for (const p of upcomingPath) {
+                if ((p.x === obs.pos.x && p.y === obs.pos.y) || (p.x === obsTarget.x && p.y === obsTarget.y)) {
                   detected = true;
+                  break;
                 }
               }
-            }
-            if (detected) {
-              lastObstacleDetectionTimeRef.current = now;
-              onObstacleDetected(obs.pos);
-              return; // Pause movement this frame to allow bypass initialization
+              if (!detected && obs.currentPosVector) {
+                const d = currentPos.distanceTo(obs.currentPosVector);
+                if (d < 1.35) {
+                  const forwardDir = new THREE.Vector3().subVectors(targetVector, currentPos).normalize();
+                  const toObs = new THREE.Vector3().subVectors(obs.currentPosVector, currentPos).normalize();
+                  if (forwardDir.dot(toObs) > 0.45) {
+                    detected = true;
+                  }
+                }
+              }
+              if (detected) {
+                lastObstacleDetectionTimeRef.current = now;
+                onObstacleDetected(obs.pos);
+                return; // Trigger immediate diversion route
+              }
             }
           }
         }
@@ -3915,6 +3931,7 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
               isMapView={isMapView} 
               speed={(robotState === 'emergency_response' ? 25 : (robotState === 'reversing' ? 6 : 10)) * (speedLimit / 50)} 
               dynamicObstaclesRef={dynamicObstaclesRef}
+              userBlockers={userBlockers}
               onReachNode={handleReachNode}
               onMissionComplete={handleMissionComplete}
               onObstacleDetected={handleObstacleDetected}
