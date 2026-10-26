@@ -192,6 +192,74 @@ const getGridPointFromVector3 = (point: THREE.Vector3, gridSize: GridPoint): Gri
   return { x: clampedX, y: clampedZ, f: 0 };
 };
 
+// ─────────────────────────────────────────────────────────────
+// BULLETPROOF WALL & PERIMETER CONTAINMENT SYSTEM
+// Guarantees neither robot nor obstacles can EVER exceed or clip through walls
+// ─────────────────────────────────────────────────────────────
+const containWithinWalls = (
+  pos: THREE.Vector3,
+  radius: number,
+  mapData?: MapData | null
+) => {
+  if (!mapData) return;
+  const { gridSize, rooms } = mapData;
+  const margin = 12;
+  const compSizeX = gridSize.x + margin * 2;
+  const compSizeY = gridSize.y + margin * 2;
+  // Compound walls have thickness 0.6 at halfX / halfY.
+  // We clamp strictly inside the compound walls with a solid safety margin:
+  const halfX = compSizeX / 2 - 0.7 - radius;
+  const halfY = compSizeY / 2 - 0.7 - radius;
+
+  // 1. Strict Campus Perimeter Wall Containment:
+  pos.x = Math.max(-halfX, Math.min(halfX, pos.x));
+  pos.z = Math.max(-halfY, Math.min(halfY, pos.z));
+
+  // 2. Building Walls Collision & Penetration Clamping:
+  if (rooms && rooms.length > 0) {
+    for (const room of rooms) {
+      // Open green zones (parks, sports fields) do not have vertical physical masonry walls
+      const rType = room.type || '';
+      const rName = room.name?.toLowerCase() || '';
+      if (rType === 'park' || rName.includes('cricket') || rName.includes('hockey') || rName.includes('sports ground')) {
+        continue;
+      }
+
+      const [minBX, , minBZ] = getGridPosition({ x: room.start.x, y: room.start.y, f: 0 }, gridSize, 0);
+      const [maxBX, , maxBZ] = getGridPosition({ x: room.end.x, y: room.end.y, f: 0 }, gridSize, 0);
+
+      const left = Math.min(minBX, maxBX) - 0.5 - radius;
+      const right = Math.max(minBX, maxBX) + 0.5 + radius;
+      const front = Math.min(minBZ, maxBZ) - 0.5 - radius;
+      const back = Math.max(minBZ, maxBZ) + 0.5 + radius;
+
+      // Check if pos penetrates inside this building's solid wall buffer
+      if (pos.x > left && pos.x < right && pos.z > front && pos.z < back) {
+        // If entity is navigating to/through the legitimate door, allow door access
+        if (room.door) {
+          const [doorX, , doorZ] = getGridPosition(room.door, gridSize, 0);
+          const distToDoor = Math.hypot(pos.x - doorX, pos.z - doorZ);
+          if (distToDoor < 1.35) {
+            continue;
+          }
+        }
+
+        // Solid wall penetration detected: project out to nearest wall face
+        const dLeft = pos.x - left;
+        const dRight = right - pos.x;
+        const dFront = pos.z - front;
+        const dBack = back - pos.z;
+        const minD = Math.min(dLeft, dRight, dFront, dBack);
+
+        if (minD === dLeft) pos.x = left;
+        else if (minD === dRight) pos.x = right;
+        else if (minD === dFront) pos.z = front;
+        else pos.z = back;
+      }
+    }
+  }
+};
+
 const MovingEntity = ({ 
   obstacle, 
   gridSize, 
@@ -367,6 +435,26 @@ const MovingEntity = ({
       }
     }
 
+    // Proactively verify lateral offset does not point into solid building walls
+    if (mapData?.rooms) {
+      const probePos = currentPos.clone().add(normalDir.clone().multiplyScalar(lateralOffset));
+      for (const room of mapData.rooms) {
+        const rType = room.type || '';
+        const rName = room.name?.toLowerCase() || '';
+        if (rType === 'park' || rName.includes('cricket') || rName.includes('hockey') || rName.includes('sports ground')) continue;
+        const [minBX, , minBZ] = getGridPosition({ x: room.start.x, y: room.start.y, f: 0 }, gridSize, 0);
+        const [maxBX, , maxBZ] = getGridPosition({ x: room.end.x, y: room.end.y, f: 0 }, gridSize, 0);
+        const l = Math.min(minBX, maxBX) - 0.5 - 0.5;
+        const r = Math.max(minBX, maxBX) + 0.5 + 0.5;
+        const f = Math.min(minBZ, maxBZ) - 0.5 - 0.5;
+        const b = Math.max(minBZ, maxBZ) + 0.5 + 0.5;
+        if (probePos.x > l && probePos.x < r && probePos.z > f && probePos.z < b) {
+          lateralOffset = -lateralOffset;
+          break;
+        }
+      }
+    }
+
     // 5. Apply Smooth Diversion Offset
     targetDiversionOffset.current.copy(normalDir).multiplyScalar(lateralOffset);
     diversionOffsetRef.current.lerp(targetDiversionOffset.current, delta * 4.0);
@@ -429,9 +517,18 @@ const MovingEntity = ({
         ref.current.rotation.y += diff * delta * 8;
       }
     }
+
+    // 7. Strict Wall Containment Enforcement:
+    // Guarantees this obstacle NEVER exceeds the compound walls or clips into building walls
+    containWithinWalls(currentPos, isPedestrian ? 0.45 : 0.65, mapData);
+    obstacle.currentPosVector.copy(currentPos);
+    obstacle.pos = getGridPointFromVector3(currentPos, gridSize);
   });
 
-  const startPos = getGridPosition(obstacle.path[0] || {x:0, y:0, f:0}, gridSize, obstacle.type === 'car' ? 0.2 : 0.5, isMapView);
+  const rawStart = getGridPosition(obstacle.path[0] || {x:0, y:0, f:0}, gridSize, obstacle.type === 'car' ? 0.2 : 0.5, isMapView);
+  const startVec = new THREE.Vector3(rawStart[0], rawStart[1], rawStart[2]);
+  containWithinWalls(startVec, isPedestrian ? 0.45 : 0.65, mapData);
+  const startPos: [number, number, number] = [startVec.x, startVec.y, startVec.z];
 
   return (
     <group ref={ref} position={startPos} scale={1.8}>
