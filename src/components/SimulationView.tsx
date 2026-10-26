@@ -114,10 +114,10 @@ const CameraController = ({ isFollowing, isFPV, robotPosRef, robotRotRef, contro
     const forwardZ = Math.cos(theta);
 
     if (isFPV) {
-      // 1st Person True Robot Eyes (FPV) View - mounted at eye/visor height
-      const eyeX = pos.x + forwardX * 0.45;
-      const eyeY = pos.y + 1.65;
-      const eyeZ = pos.z + forwardZ * 0.45;
+      // 1st Person True Robot Eyes (FPV) View - mounted outside front of robot at eye-level
+      const eyeX = pos.x + forwardX * 0.95;
+      const eyeY = pos.y + 1.25;
+      const eyeZ = pos.z + forwardZ * 0.95;
       const desiredPos = new THREE.Vector3(eyeX, eyeY, eyeZ);
 
       const lerpAlpha = 1 - Math.pow(0.0001, delta);
@@ -131,7 +131,7 @@ const CameraController = ({ isFollowing, isFPV, robotPosRef, robotRotRef, contro
 
       const targetLook = new THREE.Vector3(
         eyeX + forwardX * 18,
-        eyeY - 0.22, // look ahead onto the road and forward pathway
+        eyeY - 0.28, // look ahead onto the road and pathway
         eyeZ + forwardZ * 18
       );
       smoothTarget.current.lerp(targetLook, lerpAlpha);
@@ -990,7 +990,7 @@ export const DetailedRobot = ({
 const Robot = ({
   path, currentIndex, isPlaying, gridSize, isMapView, speed, dynamicObstaclesRef,
   onReachNode, onMissionComplete, onObstacleDetected, robotPosRef, robotRotRef, isEmergency = false,
-  robotState
+  robotState, robotGroupRef, isFPV
 }: {
   path: GridPoint[];
   currentIndex: number;
@@ -1004,6 +1004,8 @@ const Robot = ({
   onObstacleDetected: (obsPos: GridPoint) => void;
   robotPosRef: React.MutableRefObject<THREE.Vector3 | null>;
   robotRotRef: React.MutableRefObject<number>;
+  robotGroupRef?: React.MutableRefObject<THREE.Group | null>;
+  isFPV?: boolean;
   isEmergency?: boolean;
   robotState?: RobotState;
 }) => {
@@ -1011,6 +1013,12 @@ const Robot = ({
   const isMovingRef = useRef(false);
   const [isMoving, setIsMoving] = useState(false);
   const hasCompletedRef = useRef(false);
+
+  useEffect(() => {
+    if (robotGroupRef) {
+      robotGroupRef.current = ref.current;
+    }
+  }, [robotGroupRef]);
 
   useEffect(() => {
     hasCompletedRef.current = false;
@@ -1115,7 +1123,7 @@ const Robot = ({
 
   const startPos = getGridPosition(path[0] || { x: 0, y: 0, f: 0 }, gridSize, 0.22, isMapView);
   return (
-    <group ref={ref} position={startPos}>
+    <group ref={ref} position={startPos} visible={!isFPV}>
       <DetailedRobot 
         isMoving={isMoving} 
         isEmergency={isEmergency} 
@@ -1303,6 +1311,7 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
   const emergencyLocationRef = useRef<GridPoint | null>(null);
   const robotPosRef = useRef<THREE.Vector3 | null>(null);
   const robotRotRef = useRef<number>(0);
+  const robotGroupRef = useRef<THREE.Group | null>(null);
   const controlsRef = useRef<any>(null);
   const turnOffAfterEmergencyRef = useRef(false);
   const currentTaskIndexRef = useRef(0);
@@ -3163,6 +3172,7 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
           <RobotVisionBroadcaster
             robotPosRef={robotPosRef}
             robotRotRef={robotRotRef}
+            robotGroupRef={robotGroupRef}
             speed={isPlaying ? (speedLimit / 50) * 2.5 : 0}
             battery={battery}
             robotState={robotState}
@@ -3335,6 +3345,8 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
               onObstacleDetected={handleObstacleDetected}
               robotPosRef={robotPosRef}
               robotRotRef={robotRotRef}
+              robotGroupRef={robotGroupRef}
+              isFPV={isFPV}
               isEmergency={robotState === 'emergency_response' || robotState === 'emergency_to_ctr' || robotState === 'ctr_to_emergency' || Boolean(activeFireIncident && activeFireIncident.status === 'ACTIVE_EMERGENCY')}
               robotState={robotState}
             />
