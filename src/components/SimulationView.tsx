@@ -1234,7 +1234,7 @@ export const DetailedRobot = ({
 const Robot = ({
   path, currentIndex, isPlaying, gridSize, isMapView, speed, dynamicObstaclesRef, userBlockers,
   onReachNode, onMissionComplete, onObstacleDetected: _onObstacleDetected, robotPosRef, robotRotRef, isEmergency = false,
-  robotState, robotGroupRef, isFPV
+  robotState, robotGroupRef, isFPV, mapData
 }: {
   path: GridPoint[];
   currentIndex: number;
@@ -1253,6 +1253,7 @@ const Robot = ({
   isFPV?: boolean;
   isEmergency?: boolean;
   robotState?: RobotState;
+  mapData?: MapData | null;
 }) => {
   const ref = useRef<THREE.Group>(null);
   const isMovingRef = useRef(false);
@@ -1365,6 +1366,25 @@ const Robot = ({
       }
 
       if (isDynamicEncounter) {
+        // Proactively verify robot bypass steer side does not veer towards building walls
+        if (mapData?.rooms) {
+          const probePos = currentPos.clone().add(normalDir.clone().multiplyScalar(1.55 * robotSteerSide));
+          for (const room of mapData.rooms) {
+            const rType = room.type || '';
+            const rName = room.name?.toLowerCase() || '';
+            if (rType === 'park' || rName.includes('cricket') || rName.includes('hockey') || rName.includes('sports ground')) continue;
+            const [minBX, , minBZ] = getGridPosition({ x: room.start.x, y: room.start.y, f: 0 }, gridSize, 0);
+            const [maxBX, , maxBZ] = getGridPosition({ x: room.end.x, y: room.end.y, f: 0 }, gridSize, 0);
+            const l = Math.min(minBX, maxBX) - 0.5 - 0.5;
+            const r = Math.max(minBX, maxBX) + 0.5 + 0.5;
+            const f = Math.min(minBZ, maxBZ) - 0.5 - 0.5;
+            const b = Math.max(minBZ, maxBZ) + 0.5 + 0.5;
+            if (probePos.x > l && probePos.x < r && probePos.z > f && probePos.z < b) {
+              robotSteerSide = -robotSteerSide;
+              break;
+            }
+          }
+        }
         targetRobotDiversion.current.copy(normalDir).multiplyScalar(1.55 * robotSteerSide);
       } else {
         targetRobotDiversion.current.set(0, 0, 0);
@@ -1415,9 +1435,17 @@ const Robot = ({
       if (isMovingRef.current) { isMovingRef.current = false; setIsMoving(false); }
       currentPos.lerp(targetVector, 0.2);
     }
+
+    // Strict Wall Containment Enforcement:
+    // Guarantees the robot NEVER exceeds the compound walls or clips into building walls
+    containWithinWalls(currentPos, 0.55, mapData);
+    if (robotPosRef) robotPosRef.current = currentPos.clone();
   });
 
-  const startPos = getGridPosition(path[0] || { x: 0, y: 0, f: 0 }, gridSize, 0.22, isMapView);
+  const rawStart = getGridPosition(path[0] || { x: 0, y: 0, f: 0 }, gridSize, 0.22, isMapView);
+  const startVec = new THREE.Vector3(rawStart[0], rawStart[1], rawStart[2]);
+  containWithinWalls(startVec, 0.55, mapData);
+  const startPos: [number, number, number] = [startVec.x, startVec.y, startVec.z];
   return (
     <group ref={ref} position={startPos} visible={!isFPV}>
       <DetailedRobot 
