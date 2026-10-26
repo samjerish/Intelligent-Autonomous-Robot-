@@ -3559,6 +3559,7 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
               isMapView={isMapView} 
               speed={(robotState === 'emergency_response' ? 25 : (robotState === 'reversing' ? 6 : 10)) * (speedLimit / 50)} 
               dynamicObstaclesRef={dynamicObstaclesRef}
+              userBlockers={userBlockers}
               onReachNode={handleReachNode}
               onMissionComplete={handleMissionComplete}
               onObstacleDetected={handleObstacleDetected}
@@ -3951,73 +3952,22 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
                     </span>
                   </div>
 
-                  {/* Primary Action Buttons: Simulate Fire & Map Pin Fire */}
-                  <div className="grid grid-cols-2 gap-2 relative z-10">
-                    <button
-                      onClick={() => {
-                        if (mapData && mapData.rooms && mapData.rooms.length > 0) {
-                          const chosen = mapData.rooms[Math.floor(Math.random() * mapData.rooms.length)];
-                          const coords = chosen.door || chosen.start;
-                          if (onSimulateAtBuilding) {
-                            onSimulateAtBuilding(chosen.name, coords);
-                          } else {
-                            handleDeployFireAt(coords);
-                          }
-                          dispatchRobotToExtinguish(coords);
-                        } else {
-                          const fallback: GridPoint = { x: 22, y: 18, f: 0 };
-                          handleDeployFireAt(fallback);
-                          dispatchRobotToExtinguish(fallback);
-                        }
-                      }}
-                      className="w-full py-2.5 px-3 bg-gradient-to-r from-red-600/30 to-orange-600/20 hover:from-red-600/50 hover:to-orange-600/40 border border-red-500/40 hover:border-red-400 rounded-xl text-white font-bold text-xs uppercase tracking-wider transition-all flex items-center justify-center gap-1.5 shadow-[0_0_15px_rgba(239,68,68,0.25)] active:scale-[0.98]"
-                    >
-                      <Flame className="w-3.5 h-3.5 text-orange-400 animate-pulse" />
-                      <span>Simulate Fire</span>
-                    </button>
-
+                  {/* Primary Action Button: Map Pin Fire */}
+                  <div className="relative z-10">
                     <button
                       onClick={() => {
                         if (onTogglePlaceFire) onTogglePlaceFire();
                         else setInternalIsPlacingFire(!internalIsPlacingFire);
                       }}
-                      className={`py-2.5 px-3 border rounded-xl font-bold text-xs uppercase tracking-wider transition-all flex items-center justify-center gap-1.5 active:scale-[0.98] ${
+                      className={`w-full py-2.5 px-3 border rounded-xl font-bold text-xs uppercase tracking-wider transition-all flex items-center justify-center gap-2 active:scale-[0.98] ${
                         isPlacingFire
                           ? 'bg-orange-500/25 border-orange-500 text-orange-300 shadow-[0_0_20px_rgba(249,115,22,0.4)] animate-pulse'
                           : 'bg-white/5 border-white/10 hover:border-cyan-500/50 text-gray-300 hover:text-white'
                       }`}
                     >
-                      <Crosshair className="w-3.5 h-3.5 text-cyan-400" />
-                      <span>Map Pin Fire</span>
+                      <Crosshair className="w-4 h-4 text-cyan-400" />
+                      <span>{isPlacingFire ? 'Click 3D Map to Deploy Fire...' : 'Map Pin Fire'}</span>
                     </button>
-                  </div>
-
-                  {/* Campus Building Selector for Targeted Fire Simulation */}
-                  <div className="relative z-10 flex items-center justify-between gap-1 text-[10px] font-mono text-gray-400 bg-black/40 border border-white/5 rounded-lg px-2.5 py-1.5">
-                    <span className="text-gray-500">Target Building:</span>
-                    <select
-                      onChange={(e) => {
-                        const val = e.target.value;
-                        if (!val || !mapData?.rooms) return;
-                        const bldg = mapData.rooms.find(r => r.name === val);
-                        if (bldg) {
-                          const coords = bldg.door || bldg.start;
-                          if (onSimulateAtBuilding) onSimulateAtBuilding(bldg.name, coords);
-                          else handleDeployFireAt(coords);
-                          dispatchRobotToExtinguish(coords);
-                        }
-                        e.target.value = '';
-                      }}
-                      defaultValue=""
-                      className="bg-transparent text-cyan-300 font-bold focus:outline-none cursor-pointer max-w-[200px] truncate text-right"
-                    >
-                      <option value="" disabled className="bg-slate-900 text-gray-400">Choose Building...</option>
-                      {(mapData?.rooms || []).map(r => (
-                        <option key={r.id || r.name} value={r.name} className="bg-slate-900 text-white">
-                          {r.name}
-                        </option>
-                      ))}
-                    </select>
                   </div>
 
                   {/* Active Emergency Incident Banner */}

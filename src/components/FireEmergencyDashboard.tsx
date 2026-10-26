@@ -8,7 +8,6 @@ import {
   MapPin, 
   Clock, 
   Camera, 
-  X, 
   RotateCcw,
   History,
   Bot
