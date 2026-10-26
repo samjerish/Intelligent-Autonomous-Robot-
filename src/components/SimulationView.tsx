@@ -1880,13 +1880,7 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
           ? orig.path[orig.path.length - 1]
           : (path.length > 0 ? path[path.length - 1] : mapData.start));
 
-        // Disperse any dynamic obstacles in vicinity to break deadlock
-        dynamicObstaclesRef.current.forEach(obs => {
-          if (obs.currentPosVector && obs.currentPosVector.distanceTo(currentPos) < 2.0) {
-            obs.path.reverse();
-            obs.currentIndex = 0;
-          }
-        });
+        // Obstacles maintain their independent motion path. Compute active robot bypass around them:
 
         // Calculate an active unstuck recovery route directly to the destination (prefer roads, allow shoulder bypass)
         let recoveryPath = calculatePath(currentLoc, targetLoc, [...(mapData.obstacles || []), ...userBlockers], mapData, true);
@@ -1932,10 +1926,18 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
     
     for (let i = 0; i < count; i++) {
       const isCar = i < carCount;
-      // Pick start and end nodes with reasonable separation to prevent bunching
+      // Pick start and end nodes with strict minimum separation space from other obstacles to prevent merging on spawn
       let start = roads[Math.floor(Math.random() * roads.length)];
+      for (let sAttempt = 0; sAttempt < 10; sAttempt++) {
+        const tooCloseToOther = obs.some(existing => 
+          Math.abs(existing.pos.x - start.x) + Math.abs(existing.pos.y - start.y) < 3
+        );
+        if (!tooCloseToOther) break;
+        start = roads[Math.floor(Math.random() * roads.length)];
+      }
+
       let end = roads[Math.floor(Math.random() * roads.length)];
-      for (let attempt = 0; attempt < 6; attempt++) {
+      for (let attempt = 0; attempt < 8; attempt++) {
         if (Math.abs(start.x - end.x) + Math.abs(start.y - end.y) >= 6) break;
         end = roads[Math.floor(Math.random() * roads.length)];
       }
@@ -3136,15 +3138,8 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
     const allObstacles = [...(mapData.obstacles || []), ...userBlockers, obsPos, ...dynamicPositions];
 
     // Proactive Obstacle Diversion (Detour & Rerouting directly to destination):
-    // The robot NEVER freezes in place or neglects the mission!
-
-    // Disperse/nudge opposing dynamic obstacles slightly so they don't lock horns
-    dynamicObstaclesRef.current.forEach(obs => {
-      if (obs.currentPosVector && robotPosRef.current && obs.currentPosVector.distanceTo(robotPosRef.current) < 2.0) {
-        obs.path.reverse();
-        obs.currentIndex = 0;
-      }
-    });
+    // The robot navigates around obstacles without mutating or clearing the obstacles,
+    // ensuring obstacles follow their realistic movement and never disappear.
 
     // 1. Attempt road diversion: alternate street corridor to mission destination
     let diversionPath = calculatePath(currentLoc, targetLoc, allObstacles, mapData, true);
