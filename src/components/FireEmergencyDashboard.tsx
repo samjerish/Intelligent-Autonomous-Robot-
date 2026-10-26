@@ -35,23 +35,12 @@ export const FireEmergencyDashboard: React.FC<FireEmergencyDashboardProps> = ({
   onTogglePlaceFire,
   onAcknowledge,
   onResolve,
-  onSimulateAtBuilding
+  onSimulateAtBuilding: _onSimulateAtBuilding
 }) => {
   const [showHistory, setShowHistory] = useState(false);
   const [selectedHistoricalIncident, setSelectedHistoricalIncident] = useState<FireIncident | null>(null);
-  const [showSimModal, setShowSimModal] = useState(false);
 
   const displayIncident = selectedHistoricalIncident || activeIncident;
-
-  const quickSimulationTargets = [
-    { name: "Computer Science Building", coords: { x: 50, y: 6, f: 0 } },
-    { name: "Campus Data Center", coords: { x: 12, y: 72, f: 0 } },
-    { name: "Innovation & Robotics Lab", coords: { x: 12, y: 60, f: 0 } },
-    { name: "Central Library", coords: { x: 12, y: 32, f: 0 } },
-    { name: "Main University Auditorium", coords: { x: 76, y: 38, f: 0 } },
-    { name: "Generator & Power Room", coords: { x: 70, y: 5, f: 0 } },
-    { name: "Outdoor Arterial Roadway", coords: { x: 26, y: 22, f: 0 } }
-  ];
 
   return (
     <div className="flex flex-col gap-3 font-sans">
