@@ -70,6 +70,7 @@ export type DynamicObstacle = {
   speed: number;
   isMoving: boolean;
   currentPosVector?: THREE.Vector3;
+  stuckTimer?: number;
 };
 
 export type RobotState = 'idle' | 'mission' | 'patrol' | 'charging' | 'emergency_response' | 'emergency_to_ctr' | 'ctr_to_emergency' | 'crowd_control' | 'waiting_for_police' | 'evading_obstacle' | 'returning_home' | 'off' | 'reversing' | 'waiting_for_clearance' | 'extinguishing';
