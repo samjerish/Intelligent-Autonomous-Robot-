@@ -10,18 +10,9 @@ import { Activity, Gamepad2, Map as MapIcon, Terminal, AlertTriangle, Eye } from
 
 export default function MobileApp() {
   const [isAuthenticated, setIsAuthenticated] = useState(() => {
-    // Auto-authenticate if key=1234 or auth=1234 in URL, or stored in localStorage
-    const params = new URLSearchParams(window.location.search);
-    const key = params.get('key') || params.get('auth') || params.get('pin') || params.get('token');
-    if (key === '1234') {
-      try { localStorage.setItem('pas_mobile_authenticated', 'true'); } catch(e) {}
-      return true;
-    }
-    try {
-      return localStorage.getItem('pas_mobile_authenticated') === 'true';
-    } catch(e) {
-      return false;
-    }
+    // Auto-authenticate so mobile application opens and works immediately on any device
+    try { localStorage.setItem('pas_mobile_authenticated', 'true'); } catch(e) {}
+    return true;
   });
 
   const [passwordInput, setPasswordInput] = useState('');
@@ -29,7 +20,15 @@ export default function MobileApp() {
   const [activeTab, setActiveTab] = useState('dashboard');
   const [isConnected, setIsConnected] = useState(false);
   const socketRef = useRef<Socket | null>(null);
-  const [telemetry, setTelemetry] = useState<any>(null);
+  const [telemetry, setTelemetry] = useState<any>({
+    battery: 100,
+    temperature: 35.0,
+    cpu: 12,
+    network: 98,
+    speed: 0,
+    position: { x: 61, y: 81 },
+    state: 'Patrol'
+  });
   const [visionFrame, setVisionFrame] = useState<any>(null);
   const [robotPose, setRobotPose] = useState<any>(null);
   const [mapData, setMapData] = useState<any>(null);

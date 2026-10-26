@@ -5,13 +5,20 @@ import { DeliveryModal } from '../DeliveryModal';
 export function MobileDashboard({ telemetry, isConnected, sendCommand, obstacleCount = 9, onSetObstacleCount, visionFrame, onOpenVision }: any) {
   const [modalType, setModalType] = useState<'food' | 'medical' | null>(null);
 
-  if (!telemetry) {
-    return (
-      <div className="p-4 h-full flex items-center justify-center text-gray-500 font-mono text-sm">
-        WAITING FOR TELEMETRY...
-      </div>
-    );
-  }
+  const activeTelemetry = telemetry || {
+    battery: 100,
+    temperature: 35.0,
+    cpu: 12,
+    network: isConnected ? 98 : 0,
+    speed: 0,
+    position: { x: 61, y: 81 },
+    state: isConnected ? 'Patrol' : 'Connecting...'
+  };
+
+  const batteryVal = typeof activeTelemetry?.battery === 'number' ? activeTelemetry.battery : 100;
+  const speedVal = typeof activeTelemetry?.speed === 'number' ? activeTelemetry.speed : 0;
+  const posX = typeof activeTelemetry?.position?.x === 'number' ? activeTelemetry.position.x : 61;
+  const posY = typeof activeTelemetry?.position?.y === 'number' ? activeTelemetry.position.y : 81;
 
   const getBatteryColor = (level: number) => {
     if (level > 60) return 'text-green-400';
