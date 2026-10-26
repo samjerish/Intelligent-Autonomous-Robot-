@@ -1336,7 +1336,7 @@ interface SimulationViewProps {
 export const SimulationView: React.FC<SimulationViewProps> = ({ 
   mapData, 
   onDispatchMission, 
-  selectedStrategyId,
+  selectedStrategyId: _selectedStrategyId,
   isOn: isOnProp,
   onPowerChange,
   fireHazards: fireHazardsProp,
