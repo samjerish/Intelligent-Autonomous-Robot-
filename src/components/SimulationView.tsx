@@ -2704,10 +2704,24 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
       return;
     }
     
-    // 2. Obstacle not leaving the way: back up to yield space for obstacle to pass
+    // 2. If it is an active dynamic obstacle, it is executing a diversion around the robot:
+    // Hold position safely in lane to let the obstacle complete its diversion maneuver and pass by smoothly
+    const isDynamic = dynamicObstaclesRef.current.some(o => 
+      Math.abs(o.pos.x - obsPos.x) <= 1 && Math.abs(o.pos.y - obsPos.y) <= 1
+    );
+    if (isDynamic) {
+      addExplanation(`Oncoming obstacle taking diversion. Holding position safely to allow clean bypass...`);
+      setIsPlaying(false);
+      setRobotState('waiting_for_clearance');
+      isRecalculating.current = false;
+      waitForObstacleToClear();
+      return;
+    }
+
+    // 3. Static obstacle blocking single lane: back up to yield space for detour
     const reversePath = calculateReversePath(currentLoc, obsPos, path, currentPosIndex, allObstacles, mapData, 2);
     if (reversePath.length > 1) {
-      addExplanation(`Obstacle blocking single lane. Backing up to create space for obstacle to pass...`);
+      addExplanation(`Static blockage on route. Backing up to create space for detour...`);
       setPath(reversePath);
       setCurrentPosIndex(0);
       setRobotState('reversing');
@@ -2716,7 +2730,7 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
       return;
     }
     
-    // 3. If cannot reverse back, hold position safely and wait for obstacle to clear
+    // 4. If cannot reverse back, hold position safely and wait for obstacle to clear
     addExplanation(`Corridor blocked ahead. Holding position safely and waiting for obstacle to move...`);
     setIsPlaying(false);
     setRobotState('waiting_for_clearance');
@@ -3456,6 +3470,8 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
               robotPosRef={robotPosRef}
               allObstaclesRef={dynamicObstaclesRef}
               robotStateRef={robotStateRef}
+              mapData={mapData}
+              userBlockers={userBlockers}
             />
           ))}
 
