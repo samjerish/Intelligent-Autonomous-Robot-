@@ -2205,60 +2205,51 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
     
     if (!isEmergencySideTask) {
        originalMissionRef.current = null;
+       currentTaskIndexRef.current = 0;
+       setActivePathColor('#3b82f6'); // blue for patrol
+
+       // Start in patrol mode only (not mission mode)
+       if (mapData && mapData.rooms && mapData.rooms.length > 0) {
+         const randomRoom = mapData.rooms[Math.floor(Math.random() * mapData.rooms.length)];
+         const patrolPath = calculatePath(currentLoc, randomRoom.door || randomRoom.start, [...(mapData.obstacles || []), ...userBlockers], mapData);
+         if (patrolPath.length > 0) {
+           setPath(patrolPath);
+           setCurrentPosIndex(0);
+           setRobotState('patrol');
+           setIsPlaying(true);
+           addExplanation(`Autonomous patrol initialized. Patrolling towards ${randomRoom.name}.`);
+           initializeDynamicObstacles(patrolPath);
+           return;
+         }
+       }
+       setPath([]);
+       setRobotState('patrol');
+       setIsPlaying(true);
+       initializeDynamicObstacles();
+       return;
     }
     
     currentTaskIndexRef.current = 0;
-    
     const target = mapData.tasks?.[0]?.location || mapData.end;
     let initialPath: GridPoint[] = [];
     
-    if (isEmergencySideTask) {
-      const emergencyLoc = path.length > 0 ? path[path.length - 1] : mapData.start;
-      emergencyLocationRef.current = emergencyLoc;
-      const fPath = calculatePath(currentLoc, target, [...(mapData.obstacles || []), ...userBlockers], mapData);
-      initialPath = fPath;
-      setActivePathColor('#00ffff');
-    } else {
-      const fPath = calculatePath(currentLoc, target, [...(mapData.obstacles || []), ...userBlockers], mapData);
-      let sPath = calculateLongPath(currentLoc, target, [...(mapData.obstacles || []), ...userBlockers], mapData);
-      if (sPath.length === 0) sPath = calculatePath(currentLoc, target, [...(mapData.obstacles || []), ...userBlockers], mapData);
-      
-      if (selectedStrategyId === 'fastest') {
-        initialPath = fPath;
-        setActivePathColor('#ef4444');
-      } else if (selectedStrategyId === 'standard') {
-        initialPath = sPath;
-        setActivePathColor('#3b82f6');
-      } else {
-        initialPath = fPath;
-        setActivePathColor('#00ffff');
-      }
-    }
+    const emergencyLoc = path.length > 0 ? path[path.length - 1] : mapData.start;
+    emergencyLocationRef.current = emergencyLoc;
+    const fPath = calculatePath(currentLoc, target, [...(mapData.obstacles || []), ...userBlockers], mapData);
+    initialPath = fPath;
+    setActivePathColor('#00ffff');
     
-    if (initialPath.length > 0 && mapData.tasks && mapData.tasks.length > 0) {
+    if (initialPath.length > 0) {
       setPath(initialPath);
-      addExplanation(`Planned route to destination. Estimated distance: ${initialPath.length}m.`);
-      
-      // dynamic obstacles no longer factored in as they get out of the way
-      const isBlocked = false;
-      if (isBlocked && dynamicObstaclesRef.current.length > 0) {
-         addExplanation("WARNING: Detected dynamic obstacles intersecting optimal path. Using AI dynamic rerouting.");
+      setRobotState('emergency_to_ctr');
+      if (emergencyTimeoutRef.current) {
+        clearTimeout(emergencyTimeoutRef.current);
+        emergencyTimeoutRef.current = null;
       }
-      
-      if (isEmergencySideTask) {
-         setRobotState('emergency_to_ctr');
-         if (emergencyTimeoutRef.current) {
-           clearTimeout(emergencyTimeoutRef.current);
-           emergencyTimeoutRef.current = null;
-         }
-         setIsPlaying(true);
-      } else {
-         setRobotState('mission');
-         setIsPlaying(true);
-      }
+      setIsPlaying(true);
     } else {
       setPath([]);
-      setRobotState(prev => prev === 'emergency_response' ? prev : 'idle');
+      setRobotState('patrol');
     }
     initializeDynamicObstacles(initialPath);
   };
