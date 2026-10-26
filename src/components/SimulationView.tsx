@@ -1213,10 +1213,11 @@ const Robot = ({
               }
               if (!detected && obs.currentPosVector) {
                 const d = currentPos.distanceTo(obs.currentPosVector);
-                if (d < 1.35) {
+                const detectDist = obs.type === 'car' ? 2.6 : 1.8;
+                if (d < detectDist) {
                   const forwardDir = new THREE.Vector3().subVectors(targetVector, currentPos).normalize();
                   const toObs = new THREE.Vector3().subVectors(obs.currentPosVector, currentPos).normalize();
-                  if (forwardDir.dot(toObs) > 0.45) {
+                  if (forwardDir.dot(toObs) > 0.35) {
                     detected = true;
                   }
                 }
