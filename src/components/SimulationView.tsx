@@ -4,17 +4,12 @@ import { calculatePath, calculateLongPath, calculateEvadePath, calculateReverseP
 import { 
   Play, RotateCcw, Activity, ShieldAlert, Crosshair, Maximize, Minimize, Bot, 
   Power, Send, Construction, Pause, Users, Utensils, Cross, Sliders, Car, 
-  Trash2, Plus, Flame, AlertTriangle, Layers, Sun, Moon, Eye, EyeOff, 
-  Terminal, Zap, Search, Navigation2, CheckCircle2, ChevronRight, Building2, MapPin
+  Trash2, Plus, Flame, AlertTriangle
 } from 'lucide-react';
 import { DeliveryModal } from './DeliveryModal';
 import { FireSimulationNode } from './FireSimulationNode';
 import { 
-  ProfessionalBuildingModel, 
-  Building3DLabel, 
-  getBuildingHeight, 
-  ArchitecturalStreetlight,
-  getBuildingCategory 
+  ProfessionalBuildingModel
 } from './CampusArchitecture';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import {
