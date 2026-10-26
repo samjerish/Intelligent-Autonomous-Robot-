@@ -11,8 +11,7 @@ import {
   Check, 
   X, 
   Gauge, 
-  Battery, 
-  MapPin 
+  Battery 
 } from 'lucide-react';
 
 interface DetectedBox {
@@ -39,7 +38,7 @@ export const RobotVisionPIP: React.FC<RobotVisionPIPProps> = ({
   isNight = false
 }) => {
   const [telemetry, setTelemetry] = useState<any>(null);
-  const [visionMode, setVisionMode] = useState<'yolo' | 'rgb' | 'night' | 'flir'>('yolo');
+  const [visionMode, setVisionMode] = useState<'yolo' | 'rgb' | 'night' | 'flir'>(() => isNight ? 'night' : 'yolo');
   const [headlights, setHeadlights] = useState(false);
   const [snapshotSaved, setSnapshotSaved] = useState(false);
 

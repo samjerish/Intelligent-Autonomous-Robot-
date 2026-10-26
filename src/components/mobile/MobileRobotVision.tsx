@@ -51,6 +51,8 @@ interface MobileRobotVisionProps {
   sendCommand: (action: string, payload?: any) => void;
   telemetry: any;
   isConnected: boolean;
+  robotPose?: any;
+  mapData?: any;
 }
 
 export function MobileRobotVision({ visionFrame, sendCommand, telemetry, isConnected }: MobileRobotVisionProps) {
