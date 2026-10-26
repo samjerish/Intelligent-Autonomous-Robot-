@@ -2318,19 +2318,50 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
     }
   };
 
-  const handleEmergencyCall = (targetPos: GridPoint) => {
+  const handleClearEmergencyTarget = () => {
+    setMarkedEmergencyPoint(null);
+    emergencyLocationRef.current = null;
+    addExplanation("Emergency target marker cleared by operator.");
+    if (robotState === 'emergency_response') {
+      if (originalMissionRef.current && originalMissionRef.current.path && originalMissionRef.current.path.length > 0) {
+        addExplanation("Resuming prior mission after emergency clearance.");
+        setPath(originalMissionRef.current.path);
+        setCurrentPosIndex(originalMissionRef.current.index || 0);
+        setRobotState('mission');
+        setIsPlaying(true);
+        originalMissionRef.current = null;
+      } else {
+        setRobotState('patrol');
+        setIsPlaying(true);
+      }
+    }
+  };
+
+  const handleEmergencyCall = (targetPos: GridPoint, label: string = 'CAMPUS EMERGENCY') => {
     if (!isOn) {
       addExplanation("Emergency override! Powering ON to respond to critical emergency.");
       setIsOn(true);
+      if (onPowerChange) onPowerChange(true);
       turnOffAfterEmergencyRef.current = true;
     } else {
       turnOffAfterEmergencyRef.current = false;
     }
     
     if (!mapData) return;
-    if (robotState === 'emergency_response' || robotState === 'charging' || robotState === 'emergency_to_ctr' || robotState === 'ctr_to_emergency') return;
+    if (robotState === 'charging') {
+      addExplanation("Emergency override during charging! Aborting charge cycle to respond.");
+    }
     
-    addExplanation(`EMERGENCY CALL: Diverting immediately to (${targetPos.x}, ${targetPos.y})!`);
+    // Properly mark the emergency location point on map and vision telemetry
+    setMarkedEmergencyPoint({
+      position: targetPos,
+      label,
+      type: 'emergency'
+    });
+    emergencyLocationRef.current = targetPos;
+    activeFireTargetRef.current = null; // Decouple from fire hazards
+    
+    addExplanation(`🚨 EMERGENCY CALL: Marked emergency point at (${targetPos.x}, ${targetPos.y}) [${label}]. Diverting immediately!`);
     setIsPlaying(false);
     isRecalculating.current = true;
     
@@ -2338,15 +2369,53 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
       originalMissionRef.current = { path: [...path], index: currentPosIndex };
     }
     
-    const currentLoc = path[currentPosIndex] || mapData.start;
-    const emergencyPath = calculatePath(currentLoc, targetPos, [...(mapData.obstacles || []), ...userBlockers], mapData);
+    const currentLoc = robotPosRef.current
+      ? getGridPointFromVector3(robotPosRef.current, mapData.gridSize)
+      : (path[currentPosIndex] || mapData.start);
+
+    // Multi-tier pathfinding to guarantee route discovery to marked emergency point:
+    // 1. Preferred road route
+    let emergencyPath = calculatePath(currentLoc, targetPos, [...(mapData.obstacles || []), ...userBlockers], mapData, true);
+
+    // 2. Off-road / direct campus route (if target is off-road on plaza/walkway)
+    if (emergencyPath.length === 0) {
+      emergencyPath = calculatePath(currentLoc, targetPos, [...(mapData.obstacles || []), ...userBlockers], mapData, false);
+    }
+
+    // 3. Adjacent candidate offsets if target is right on an obstacle or wall
+    if (emergencyPath.length === 0) {
+      const offsets = [
+        { dx: 1, dy: 0 }, { dx: -1, dy: 0 }, { dx: 0, dy: 1 }, { dx: 0, dy: -1 },
+        { dx: 1, dy: 1 }, { dx: -1, dy: -1 }, { dx: 1, dy: -1 }, { dx: -1, dy: 1 },
+        { dx: 2, dy: 0 }, { dx: -2, dy: 0 }, { dx: 0, dy: 2 }, { dx: 0, dy: -2 },
+        { dx: 3, dy: 0 }, { dx: -3, dy: 0 }, { dx: 0, dy: 3 }, { dx: 0, dy: -3 },
+      ];
+      for (const off of offsets) {
+        const candidate: GridPoint = {
+          x: Math.max(0, Math.min(mapData.gridSize.x - 1, targetPos.x + off.dx)),
+          y: Math.max(0, Math.min(mapData.gridSize.y - 1, targetPos.y + off.dy)),
+          f: targetPos.f || 0
+        };
+        const pRoad = calculatePath(currentLoc, candidate, [...(mapData.obstacles || []), ...userBlockers], mapData, true);
+        if (pRoad.length > 0) {
+          emergencyPath = pRoad;
+          break;
+        }
+        const pOffRoad = calculatePath(currentLoc, candidate, [...(mapData.obstacles || []), ...userBlockers], mapData, false);
+        if (pOffRoad.length > 0) {
+          emergencyPath = pOffRoad;
+          break;
+        }
+      }
+    }
     
     if (emergencyPath.length > 0) {
       setPath(emergencyPath);
-      setActivePathColor('#00ffff');
+      setActivePathColor('#ec4899'); // Neon Pink / SOS Red for Emergency Route
       setCurrentPosIndex(0);
       setRobotState('emergency_response');
       setIsPlaying(true);
+      addExplanation(`Emergency route locked: ${emergencyPath.length} waypoints to marked emergency point.`);
     } else {
       addExplanation(`Emergency route calculation failed. Unable to reach target.`);
       setIsPlaying(true);
@@ -2356,7 +2425,8 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
 
   const handleEmergencyComplete = () => {
     if (!mapData) return;
-    addExplanation(`Arrived at emergency location. Providing assistance for 5 seconds...`);
+    const dest = emergencyLocationRef.current || (markedEmergencyPoint ? markedEmergencyPoint.position : null);
+    addExplanation(`Arrived at marked emergency location (${dest?.x ?? 'Target'}, ${dest?.y ?? ''}). Providing assistance for 5 seconds...`);
     setIsPlaying(false);
     
     if (emergencyTimeoutRef.current) {
@@ -2365,7 +2435,9 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
     
     emergencyTimeoutRef.current = setTimeout(() => {
       // Dispatch local request to trigger the global confirmation modal for completion
-      window.dispatchEvent(new CustomEvent('local_emergency_request', { detail: {x: 0, y: 0} }));
+      window.dispatchEvent(new CustomEvent('local_emergency_request', { 
+        detail: dest || { x: 0, y: 0 } 
+      }));
       emergencyTimeoutRef.current = null;
     }, 5000);
   };
