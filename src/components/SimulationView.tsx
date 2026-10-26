@@ -1847,17 +1847,19 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
         }
 
         if (recoveryPath.length > 0) {
-          addExplanation('Autonomous Unstuck Watchdog: Recovered from stall. Resuming smooth navigation to destination.');
+          addExplanation('Autonomous Unstuck Watchdog: Taking diversion route to destination.');
           setPath(recoveryPath);
           setCurrentPosIndex(0);
           setIsPlaying(true);
         } else {
-          // Corridor temporarily blocked by obstacles: wait safely for obstacles to clear, NEVER divert to another place!
-          setIsPlaying(false);
-          setRobotState('waiting_for_clearance');
-          addExplanation('Corridor temporarily congested. Holding position safely and waiting for obstacles to clear...');
-          if (waitForObstacleToClearRef.current) {
-            waitForObstacleToClearRef.current();
+          const evade = calculateEvadePath(currentLoc, [...(mapData.obstacles || []), ...userBlockers], mapData);
+          if (evade.length > 1) {
+            const resumeSub = calculatePath(evade[evade.length - 1], targetLoc, [...(mapData.obstacles || []), ...userBlockers], mapData, false);
+            const combined = resumeSub.length > 0 ? [...evade, ...resumeSub.slice(1)] : evade;
+            setPath(combined);
+            setCurrentPosIndex(0);
+            setIsPlaying(true);
+            addExplanation('Autonomous Unstuck Watchdog: Taking diversion around stall point to destination.');
           }
         }
       }
@@ -3048,42 +3050,85 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
     const dynamicPositions = dynamicObstaclesRef.current.map(o => o.pos);
     const allObstacles = [...(mapData.obstacles || []), ...userBlockers, obsPos, ...dynamicPositions];
 
-    // Check if an obstacle is immediately ahead in close proximity (<1.0m)
-    let isCloseProximity = false;
-    if (robotPosRef.current) {
-      for (const obs of dynamicObstaclesRef.current) {
-        if (obs.currentPosVector && robotPosRef.current.distanceTo(obs.currentPosVector) < 1.05) {
-          isCloseProximity = true;
-          break;
+    // Proactive Obstacle Diversion (Detour & Rerouting directly to destination):
+    // The robot NEVER freezes in place or neglects the mission!
+
+    // Disperse/nudge opposing dynamic obstacles slightly so they don't lock horns
+    dynamicObstaclesRef.current.forEach(obs => {
+      if (obs.currentPosVector && robotPosRef.current && obs.currentPosVector.distanceTo(robotPosRef.current) < 2.0) {
+        obs.path.reverse();
+        obs.currentIndex = 0;
+      }
+    });
+
+    // 1. Attempt road diversion: alternate street corridor to mission destination
+    let diversionPath = calculatePath(currentLoc, targetLoc, allObstacles, mapData, true);
+
+    // 2. Attempt shoulder/sidewalk bypass: immediately skirt around obstacle and rejoin road
+    if (diversionPath.length === 0) {
+      diversionPath = calculatePath(currentLoc, targetLoc, allObstacles, mapData, false);
+    }
+
+    // 3. Attempt immediate lateral unblocked step around obstacle
+    if (diversionPath.length === 0) {
+      const lateralCandidates = [
+        { dx: 0, dy: 1 }, { dx: 0, dy: -1 }, { dx: 1, dy: 0 }, { dx: -1, dy: 0 },
+        { dx: 1, dy: 1 }, { dx: -1, dy: -1 }, { dx: 1, dy: -1 }, { dx: -1, dy: 1 }
+      ];
+      const obstacleKeySet = new Set(allObstacles.map(o => `${o.x},${o.y},${o.f}`));
+      
+      for (const off of lateralCandidates) {
+        const stepPt: GridPoint = { x: currentLoc.x + off.dx, y: currentLoc.y + off.dy, f: currentLoc.f };
+        if (
+          stepPt.x >= 0 && stepPt.x < mapData.gridSize.x &&
+          stepPt.y >= 0 && stepPt.y < mapData.gridSize.y &&
+          !obstacleKeySet.has(`${stepPt.x},${stepPt.y},${stepPt.f}`)
+        ) {
+          const sub = calculatePath(stepPt, targetLoc, allObstacles, mapData, false);
+          if (sub.length > 0) {
+            diversionPath = [currentLoc, ...sub];
+            break;
+          }
         }
       }
     }
-    
-    // If in close proximity on single lane, back up 1-2 steps to yield space for the moving obstacle to pass
-    if (isCloseProximity) {
-      const reversePath = calculateReversePath(currentLoc, obsPos, path, currentPosIndex, allObstacles, mapData, 2);
-      if (reversePath.length > 1) {
-        addExplanation(`Obstacle in close proximity. Backing up to yield space and waiting for obstacle to pass...`);
-        setPath(reversePath);
-        setCurrentPosIndex(0);
-        setRobotState('reversing');
-        setIsPlaying(true);
-        setTimeout(() => {
-          isRecalculating.current = false;
-        }, 800);
-        return;
+
+    // 4. Fallback: Evade step to break congestion while routing towards destination
+    if (diversionPath.length === 0) {
+      const evade = calculateEvadePath(currentLoc, allObstacles, mapData);
+      if (evade.length > 1) {
+        const resumeSub = calculatePath(evade[evade.length - 1], targetLoc, allObstacles, mapData, false);
+        if (resumeSub.length > 0) {
+          diversionPath = [...evade, ...resumeSub.slice(1)];
+        } else {
+          diversionPath = evade;
+        }
       }
     }
-    
-    // Default safe behavior: Hold position, wait for moving obstacle to pass, then continue to destination!
-    // NEVER divert to a different room or base!
-    addExplanation(`Obstacles detected ahead on route. Holding position safely and waiting for obstacles to clear...`);
-    setIsPlaying(false);
-    setRobotState('waiting_for_clearance');
+
+    if (diversionPath.length > 0) {
+      setPath(diversionPath);
+      setCurrentPosIndex(0);
+      setIsPlaying(true);
+      if (robotState !== 'emergency_response' && robotState !== 'crowd_control' && robotState !== 'returning_home') {
+        setRobotState(orig?.previousState === 'mission' || currentTaskIndexRef.current < (mapData.tasks?.length || 0) ? 'mission' : 'patrol');
+      }
+      setActivePathColor('#06b6d4'); // Dynamic diversion cyan
+      addExplanation(`⚠️ Obstacle detected at (${obsPos.x}, ${obsPos.y}). Taking immediate diversion around obstacle to continue mission (${diversionPath.length}m route).`);
+    } else {
+      // In the rare event of all sides physically walled off, nudge obstacle and recalculate direct path
+      addExplanation(`⚠️ Congested corridor. Rerouting directly to destination...`);
+      const directFallback = calculatePath(currentLoc, targetLoc, [...(mapData.obstacles || []), ...userBlockers], mapData, false);
+      if (directFallback.length > 0) {
+        setPath(directFallback);
+        setCurrentPosIndex(0);
+        setIsPlaying(true);
+      }
+    }
+
     setTimeout(() => {
       isRecalculating.current = false;
-    }, 800);
-    waitForObstacleToClear();
+    }, 600);
   };
 
 
