@@ -388,7 +388,86 @@ app.post('/api/plan', (req, res) => {
   let tasks = [];
   const start = startPoint || universityMap.start;
 
-  if (matchedRooms.length === 0) {
+  const isMedicalMission = cleanMission.includes('medic') || 
+                           cleanMission.includes('first aid') || 
+                           cleanMission.includes('doctor') || 
+                           cleanMission.includes('hospital') || 
+                           cleanMission.includes('health') || 
+                           cleanMission.includes('pharmacy') ||
+                           cleanMission.includes('ambulance');
+
+  const isFoodMission = !isMedicalMission && (
+                        cleanMission.includes('food') || 
+                        cleanMission.includes('meal') || 
+                        cleanMission.includes('lunch') || 
+                        cleanMission.includes('dinner') || 
+                        cleanMission.includes('breakfast') || 
+                        cleanMission.includes('snack') || 
+                        cleanMission.includes('coffee') || 
+                        cleanMission.includes('pizza') || 
+                        cleanMission.includes('burger') || 
+                        cleanMission.includes('canteen') || 
+                        cleanMission.includes('cafeteria'));
+
+  if (isMedicalMission) {
+    const medicalCenter = universityMap.rooms.find(r => r.name === 'Medical Center') || universityMap.rooms[0];
+    const destinationRooms = matchedRooms.filter(r => r.name !== 'Medical Center');
+
+    if (destinationRooms.length > 0) {
+      tasks = [
+        {
+          id: `task_${Date.now()}_med_dispatch`,
+          type: 'pickup',
+          location: { x: medicalCenter.door.x, y: medicalCenter.door.y, f: medicalCenter.start.f },
+          locationName: 'Medical Center (Operational Dispatch)'
+        },
+        {
+          id: `task_${Date.now()}_med_delivery`,
+          type: 'delivery',
+          location: { x: destinationRooms[0].door.x, y: destinationRooms[0].door.y, f: destinationRooms[0].start.f },
+          locationName: destinationRooms[0].name
+        }
+      ];
+    } else {
+      tasks = [
+        {
+          id: `task_${Date.now()}_med_dispatch`,
+          type: 'operational_dispatch',
+          location: { x: medicalCenter.door.x, y: medicalCenter.door.y, f: medicalCenter.start.f },
+          locationName: 'Medical Center (Operational Dispatch)'
+        }
+      ];
+    }
+  } else if (isFoodMission) {
+    const foodCourt = universityMap.rooms.find(r => r.name === 'Food Court') || universityMap.rooms[0];
+    const destinationRooms = matchedRooms.filter(r => r.name !== 'Food Court');
+
+    if (destinationRooms.length > 0) {
+      tasks = [
+        {
+          id: `task_${Date.now()}_food_dispatch`,
+          type: 'pickup',
+          location: { x: foodCourt.door.x, y: foodCourt.door.y, f: foodCourt.start.f },
+          locationName: 'Food Court (Operational Dispatch)'
+        },
+        {
+          id: `task_${Date.now()}_food_delivery`,
+          type: 'delivery',
+          location: { x: destinationRooms[0].door.x, y: destinationRooms[0].door.y, f: destinationRooms[0].start.f },
+          locationName: destinationRooms[0].name
+        }
+      ];
+    } else {
+      tasks = [
+        {
+          id: `task_${Date.now()}_food_dispatch`,
+          type: 'operational_dispatch',
+          location: { x: foodCourt.door.x, y: foodCourt.door.y, f: foodCourt.start.f },
+          locationName: 'Food Court (Operational Dispatch)'
+        }
+      ];
+    }
+  } else if (matchedRooms.length === 0) {
     const reception = universityMap.rooms.find(r => r.name === 'Administrative Building');
     if (reception) {
       tasks.push({
