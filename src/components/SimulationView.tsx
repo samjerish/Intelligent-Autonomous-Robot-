@@ -56,6 +56,7 @@ import {
 } from '@react-three/drei';
 import * as THREE from 'three';
 import { RobotVisionBroadcaster } from './RobotVisionBroadcaster';
+import { RobotVisionPIP } from './RobotVisionPIP';
 
 const CELL_SIZE = 1;
 
@@ -82,10 +83,12 @@ export type PoliceState = {
 };
 
 
-const CameraController = ({ isFollowing, robotPosRef, robotRotRef, controlsRef, triggerReset, onResetDone, gridSize, isMapView }: any) => {
+const CameraController = ({ isFollowing, isFPV, robotPosRef, robotRotRef, controlsRef, triggerReset, onResetDone, gridSize, isMapView }: any) => {
   const { camera } = useThree();
-  // Smoothed look-target to prevent jitter when following
+  // Smoothed look-target to prevent jitter when following or FPV
   const smoothTarget = useRef(new THREE.Vector3(0, 0.5, 0));
+  const smoothPos = useRef(new THREE.Vector3());
+  const isCamInit = useRef(false);
 
   useFrame((_state, delta) => {
     if (triggerReset) {
@@ -104,25 +107,58 @@ const CameraController = ({ isFollowing, robotPosRef, robotRotRef, controlsRef, 
       if (onResetDone) onResetDone();
     }
 
-    if (isFollowing && robotPosRef.current && robotRotRef?.current !== undefined) {
+    if (!robotPosRef.current || robotRotRef?.current === undefined) return;
+    const pos = robotPosRef.current;
+    const theta = robotRotRef.current;
+    const forwardX = Math.sin(theta);
+    const forwardZ = Math.cos(theta);
+
+    if (isFPV) {
+      // 1st Person True Robot Eyes (FPV) View - mounted at eye/visor height
+      const eyeX = pos.x + forwardX * 0.45;
+      const eyeY = pos.y + 1.65;
+      const eyeZ = pos.z + forwardZ * 0.45;
+      const desiredPos = new THREE.Vector3(eyeX, eyeY, eyeZ);
+
+      const lerpAlpha = 1 - Math.pow(0.0001, delta);
+      if (!isCamInit.current) {
+        smoothPos.current.copy(desiredPos);
+        isCamInit.current = true;
+      } else {
+        smoothPos.current.lerp(desiredPos, lerpAlpha);
+      }
+      camera.position.copy(smoothPos.current);
+
+      const targetLook = new THREE.Vector3(
+        eyeX + forwardX * 18,
+        eyeY - 0.22, // look ahead onto the road and forward pathway
+        eyeZ + forwardZ * 18
+      );
+      smoothTarget.current.lerp(targetLook, lerpAlpha);
+      camera.lookAt(smoothTarget.current);
+
+      if (controlsRef.current) {
+        controlsRef.current.target.copy(smoothTarget.current);
+        controlsRef.current.update();
+      }
+    } else if (isFollowing) {
       // 3rd Person Follow Camera
-      const theta = robotRotRef.current;
       const behindDist = 4.5;
       const upDist = 2.5;
       
       const offset = new THREE.Vector3(
-        -Math.sin(theta) * behindDist,
+        -forwardX * behindDist,
         upDist,
-        -Math.cos(theta) * behindDist
+        -forwardZ * behindDist
       );
-      const desiredPos = new THREE.Vector3().copy(robotPosRef.current).add(offset);
+      const desiredPos = new THREE.Vector3().copy(pos).add(offset);
 
       // Very smooth, cinematic position lerp
       const lerpAlpha = 1 - Math.pow(0.001, delta);
       camera.position.lerp(desiredPos, lerpAlpha);
 
       // Smooth the look-at target to look slightly ahead/above the robot
-      const targetLook = new THREE.Vector3().copy(robotPosRef.current).add(new THREE.Vector3(0, 0.5, 0));
+      const targetLook = new THREE.Vector3().copy(pos).add(new THREE.Vector3(0, 0.5, 0));
       smoothTarget.current.lerp(targetLook, lerpAlpha);
       camera.lookAt(smoothTarget.current);
 
@@ -1167,6 +1203,7 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
   const [isMapView, setIsMapView] = useState(false);
 
   const [isFollowing, setIsFollowing] = useState(false);
+  const [isFPV, setIsFPV] = useState(false);
   const [triggerReset, setTriggerReset] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [showReasoningLog, setShowReasoningLog] = useState(false);
@@ -1255,15 +1292,6 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
   const [activeCCTab, setActiveCCTab] = useState<'dashboard' | 'tools' | 'locations'>('dashboard');
   const [modalType, setModalType] = useState<'food' | 'medical' | null>(null);
   const [showRobotVisionPIP, setShowRobotVisionPIP] = useState(false);
-  const [desktopVisionFrame, setDesktopVisionFrame] = useState<any>(null);
-
-  useEffect(() => {
-    const handleVisionFrame = (e: any) => {
-      setDesktopVisionFrame(e.detail);
-    };
-    window.addEventListener('local_robot_vision_frame', handleVisionFrame);
-    return () => window.removeEventListener('local_robot_vision_frame', handleVisionFrame);
-  }, []);
 
   const handleDeliverySubmit = (missionText: string) => {
     if (onDispatchMission) onDispatchMission(missionText);
@@ -2881,17 +2909,38 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
 
             {/* Follow Robot Mode */}
             <button
-              onClick={() => setIsFollowing(!isFollowing)}
+              onClick={() => {
+                setIsFollowing(!isFollowing);
+                if (!isFollowing) setIsFPV(false);
+              }}
               className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all border ${
                 isFollowing
                   ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/50 shadow-[0_0_14px_rgba(16,185,129,0.3)]'
                   : 'bg-white/5 text-gray-300 border-white/10 hover:bg-white/10 hover:text-white'
               }`}
-              title="Lock Camera to Robot Navigation"
+              title="Lock 3rd-Person Follow Camera to Robot Navigation"
             >
               <Navigation className={`w-3.5 h-3.5 ${isFollowing ? 'text-emerald-400 animate-pulse' : 'text-gray-400'}`} />
               <span>Follow Unit</span>
               {isFollowing && <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping ml-0.5" />}
+            </button>
+
+            {/* Robot Eyes (1st Person FPV) Mode */}
+            <button
+              onClick={() => {
+                setIsFPV(!isFPV);
+                if (!isFPV) setIsFollowing(false);
+              }}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all border ${
+                isFPV
+                  ? 'bg-cyan-500/25 text-cyan-300 border-cyan-500/50 shadow-[0_0_14px_rgba(6,182,212,0.4)]'
+                  : 'bg-white/5 text-gray-300 border-white/10 hover:bg-white/10 hover:text-white'
+              }`}
+              title="Switch Main View to 1st Person Robot Eyes (FPV)"
+            >
+              <Eye className={`w-3.5 h-3.5 ${isFPV ? 'text-cyan-400 animate-pulse' : 'text-gray-400'}`} />
+              <span>Robot Eyes</span>
+              {isFPV && <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-ping ml-0.5" />}
             </button>
 
             {/* Recentre Camera */}
@@ -3102,6 +3151,7 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
           {!isNight && <pointLight position={[0, 15, 0]} intensity={0.8} color="#60a5fa" />}
           <CameraController 
             isFollowing={isFollowing} 
+            isFPV={isFPV}
             robotPosRef={robotPosRef} 
             robotRotRef={robotRotRef} 
             controlsRef={controlsRef} 
@@ -3125,7 +3175,7 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
           />
           <OrbitControls
             ref={controlsRef}
-            enabled={!isFollowing}
+            enabled={!isFollowing && !isFPV}
             enableDamping
             enablePan={false}
             dampingFactor={0.05}
@@ -3293,68 +3343,15 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
 
         {/* Desktop Robot Vision Picture-in-Picture (PIP) Window */}
         {showRobotVisionPIP && (
-          <div className="absolute bottom-6 right-6 w-80 bg-slate-950/95 backdrop-blur-2xl border border-cyan-500/40 rounded-2xl z-[90] overflow-hidden shadow-[0_0_40px_rgba(6,182,212,0.25)] animate-in fade-in slide-in-from-bottom-4 duration-200">
-            <div className="px-3.5 py-2 border-b border-white/10 bg-slate-900/90 flex justify-between items-center select-none">
-              <div className="flex items-center gap-2">
-                <Eye className="w-4 h-4 text-cyan-400" />
-                <span className="font-mono font-bold text-xs text-white tracking-wider">
-                  ROBOT VISION FPV
-                </span>
-                <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-ping"></span>
-              </div>
-              <div className="flex items-center gap-1.5">
-                <span className="text-[10px] font-mono text-cyan-300 bg-cyan-500/10 px-2 py-0.5 rounded border border-cyan-500/30">
-                  {desktopVisionFrame?.heading ?? 0}°
-                </span>
-                <button 
-                  onClick={() => setShowRobotVisionPIP(false)} 
-                  className="w-5 h-5 flex items-center justify-center rounded-lg text-gray-400 hover:text-white hover:bg-white/10 transition-colors text-xs font-bold"
-                >
-                  ✕
-                </button>
-              </div>
-            </div>
-            
-            <div className="relative aspect-[4/3] w-full bg-black flex items-center justify-center overflow-hidden">
-              {desktopVisionFrame?.image ? (
-                <img src={desktopVisionFrame.image} alt="Robot Vision Live FPV" className="w-full h-full object-cover" />
-              ) : (
-                <div className="flex flex-col items-center justify-center text-cyan-400/60 font-mono text-xs gap-1.5 p-4 text-center">
-                  <Eye className="w-6 h-6 animate-pulse" />
-                  <span>CONNECTING ROBOT CAMERA...</span>
-                </div>
-              )}
-              
-              {/* Overlay telemetry */}
-              <div className="absolute top-2 left-2 px-2 py-0.5 rounded bg-black/80 border border-white/10 text-[9px] font-mono text-cyan-300">
-                YOLOv8 FPV • 10 FPS
-              </div>
-
-              {desktopVisionFrame?.detectedObjects && desktopVisionFrame.detectedObjects.length > 0 && (
-                <div className="absolute top-2 right-2 px-2 py-0.5 rounded bg-black/80 border border-white/10 text-[9px] font-mono text-yellow-300">
-                  {desktopVisionFrame.detectedObjects.length} Targets
-                </div>
-              )}
-
-              <div className="absolute bottom-2 inset-x-2 flex items-center justify-between text-[9px] font-mono text-gray-300 bg-black/80 px-2 py-1 rounded backdrop-blur-sm">
-                <span>SPD: {desktopVisionFrame?.speed ?? 0} m/s</span>
-                <span>OBS: {desktopVisionFrame?.nearestObstacleDist ?? 12}m</span>
-                <span className="text-emerald-400">BAT: {desktopVisionFrame?.battery ?? 100}%</span>
-              </div>
-            </div>
-
-            <div className="p-2.5 bg-black/40 border-t border-white/5 flex items-center justify-between text-[11px]">
-              <span className="text-[10px] text-gray-400 font-mono">Stream synced with mobile</span>
-              <button
-                onClick={() => {
-                  window.dispatchEvent(new CustomEvent('remote_toggle_headlight'));
-                }}
-                className="px-2 py-1 rounded-lg bg-white/5 hover:bg-white/10 text-cyan-300 font-mono text-[10px] border border-white/10 transition-colors"
-              >
-                Toggle Headlight
-              </button>
-            </div>
-          </div>
+          <RobotVisionPIP
+            onClose={() => setShowRobotVisionPIP(false)}
+            isFPV={isFPV}
+            onToggleFPV={() => {
+              setIsFPV(!isFPV);
+              if (!isFPV) setIsFollowing(false);
+            }}
+            isNight={isNight}
+          />
         )}
       </div>
 
