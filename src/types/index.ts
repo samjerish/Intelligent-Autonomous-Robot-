@@ -134,3 +134,21 @@ export interface FireHazardPoint {
   active: boolean;
 }
 
+export interface CrowdIncident {
+  id: string;
+  position: GridPoint;
+  label: string;
+  density: number;
+  timestamp: number;
+  status: 'DETECTED' | 'DISPERSING' | 'ESCORTING' | 'RESOLVED';
+}
+
+export interface InterruptedMission {
+  missionText?: string;
+  destination: GridPoint;
+  destinationName?: string;
+  remainingTasks?: MissionTask[];
+  taskIndex: number;
+  previousState: 'mission' | 'patrol' | 'returning_home' | 'idle';
+  strategyId?: string;
+}

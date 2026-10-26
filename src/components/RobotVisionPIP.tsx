@@ -12,7 +12,7 @@ import {
 
 interface DetectedBox {
   id: string;
-  type: 'fire' | 'smoke' | 'pedestrian' | 'car' | 'obstacle' | 'barricade' | 'building';
+  type: 'fire' | 'smoke' | 'pedestrian' | 'car' | 'obstacle' | 'barricade' | 'building' | 'crowd' | 'emergency';
   label: string;
   confidence: number;
   distance: number;
@@ -30,6 +30,7 @@ export const RobotVisionPIP: React.FC<RobotVisionPIPProps> = ({ onClose, onSwitc
   const [frameData, setFrameData] = useState<any>(null);
   const [headlightOn, setHeadlightOn] = useState(false);
   const [visionMode, setVisionMode] = useState<'normal' | 'night' | 'flir'>('normal');
+  const [detectionChannel, setDetectionChannel] = useState<'all' | 'fire' | 'emergency'>('all');
   const [fps, setFps] = useState(30);
   const frameCountRef = useRef(0);
   const lastFpsCalcRef = useRef(performance.now());
@@ -82,12 +83,20 @@ export const RobotVisionPIP: React.FC<RobotVisionPIPProps> = ({ onClose, onSwitc
     }
   };
 
-  const detectedObjects: DetectedBox[] = frameData?.detectedObjects || [];
+  const allDetectedObjects: DetectedBox[] = frameData?.detectedObjects || [];
+  const fireDetectedObjects: DetectedBox[] = allDetectedObjects.filter(o => o.type === 'fire' || o.type === 'smoke');
+  const emergencyDetectedObjects: DetectedBox[] = allDetectedObjects.filter(o => o.type === 'crowd' || o.type === 'emergency' || o.type === 'barricade');
+
+  const visibleObjects = detectionChannel === 'fire' 
+    ? fireDetectedObjects 
+    : (detectionChannel === 'emergency' ? emergencyDetectedObjects : allDetectedObjects);
+
   const heading = frameData?.heading ?? 0;
   const speed = frameData?.speed ?? 0;
   const nearestObstacle = frameData?.nearestObstacleDist ?? 12.0;
   const battery = frameData?.battery ?? 100;
-  const hazardAlert = frameData?.hazardAlert;
+  const fireAlert = frameData?.fireAlert || fireDetectedObjects.length > 0;
+  const emergencyAlert = frameData?.emergencyAlert || emergencyDetectedObjects.length > 0;
 
   return (
     <div className="absolute bottom-6 right-6 w-88 md:w-96 bg-slate-950/95 backdrop-blur-2xl border-2 border-cyan-500/50 rounded-2xl z-[95] overflow-hidden shadow-[0_0_45px_rgba(6,182,212,0.35)] animate-in fade-in slide-in-from-bottom-4 duration-200 select-none">
@@ -128,6 +137,53 @@ export const RobotVisionPIP: React.FC<RobotVisionPIPProps> = ({ onClose, onSwitc
           </button>
         </div>
       </div>
+
+      {/* Dedicated Separate Channels Sub-Bar */}
+      <div className="px-2.5 py-1.5 bg-black/70 border-b border-white/10 flex items-center justify-between gap-1 text-[9px] font-mono">
+        <span className="text-gray-400 text-[8px] uppercase tracking-wider">Detection Channel:</span>
+        <div className="flex items-center gap-1">
+          <button
+            onClick={() => setDetectionChannel('all')}
+            className={`px-2 py-0.5 rounded transition-all font-bold ${
+              detectionChannel === 'all'
+                ? 'bg-cyan-500/30 text-cyan-300 border border-cyan-500/50'
+                : 'text-gray-400 hover:text-white bg-white/5'
+            }`}
+          >
+            ALL ({allDetectedObjects.length})
+          </button>
+          <button
+            onClick={() => setDetectionChannel('emergency')}
+            className={`px-2 py-0.5 rounded transition-all font-bold flex items-center gap-1 ${
+              detectionChannel === 'emergency'
+                ? 'bg-purple-500/30 text-purple-300 border border-purple-500/50 shadow-[0_0_10px_rgba(168,85,247,0.3)]'
+                : 'text-gray-400 hover:text-purple-300 bg-white/5'
+            }`}
+          >
+            <span>👥 EMERGENCY</span>
+            {emergencyDetectedObjects.length > 0 && (
+              <span className="px-1 py-0.2 rounded bg-purple-500 text-white text-[8px]">
+                {emergencyDetectedObjects.length}
+              </span>
+            )}
+          </button>
+          <button
+            onClick={() => setDetectionChannel('fire')}
+            className={`px-2 py-0.5 rounded transition-all font-bold flex items-center gap-1 ${
+              detectionChannel === 'fire'
+                ? 'bg-red-500/30 text-red-300 border border-red-500/50 shadow-[0_0_10px_rgba(239,68,68,0.3)]'
+                : 'text-gray-400 hover:text-red-300 bg-white/5'
+            }`}
+          >
+            <span>🔥 FIRE</span>
+            {fireDetectedObjects.length > 0 && (
+              <span className="px-1 py-0.2 rounded bg-red-500 text-white text-[8px]">
+                {fireDetectedObjects.length}
+              </span>
+            )}
+          </button>
+        </div>
+      </div>
       
       {/* Viewport with Canvas & Cybernetic HUD */}
       <div className="relative aspect-[4/3] w-full bg-black flex items-center justify-center overflow-hidden">
@@ -156,9 +212,9 @@ export const RobotVisionPIP: React.FC<RobotVisionPIPProps> = ({ onClose, onSwitc
         </div>
 
         {/* YOLOv8 Detection Bounding Boxes Overlay */}
-        {detectedObjects.length > 0 && (
+        {visibleObjects.length > 0 && (
           <svg className="absolute inset-0 w-full h-full pointer-events-none z-10" viewBox="0 0 100 100" preserveAspectRatio="none">
-            {detectedObjects.map((obj) => (
+            {visibleObjects.map((obj) => (
               <g key={obj.id}>
                 <rect
                   x={obj.boxPercent.x}
@@ -168,12 +224,12 @@ export const RobotVisionPIP: React.FC<RobotVisionPIPProps> = ({ onClose, onSwitc
                   fill="none"
                   stroke={obj.color}
                   strokeWidth="0.9"
-                  strokeDasharray={obj.type === 'fire' ? '2 1' : 'none'}
+                  strokeDasharray={obj.type === 'fire' || obj.type === 'smoke' ? '2 1' : (obj.type === 'crowd' ? '3 1' : 'none')}
                 />
                 <rect
                   x={obj.boxPercent.x}
                   y={Math.max(1, obj.boxPercent.y - 5)}
-                  width={Math.min(45, obj.boxPercent.w * 1.6 + 12)}
+                  width={Math.min(50, obj.boxPercent.w * 1.6 + 14)}
                   height="4.6"
                   fill={obj.color}
                   rx="0.8"
@@ -181,7 +237,7 @@ export const RobotVisionPIP: React.FC<RobotVisionPIPProps> = ({ onClose, onSwitc
                 <text
                   x={obj.boxPercent.x + 1}
                   y={Math.max(4, obj.boxPercent.y - 1.4)}
-                  fill="#000000"
+                  fill="#ffffff"
                   fontSize="2.7"
                   fontWeight="bold"
                   fontFamily="monospace"
@@ -194,15 +250,21 @@ export const RobotVisionPIP: React.FC<RobotVisionPIPProps> = ({ onClose, onSwitc
         )}
 
         {/* Top Overlay Badges */}
-        <div className="absolute top-2 left-2 flex items-center gap-1.5 z-20">
+        <div className="absolute top-2 left-2 flex flex-wrap items-center gap-1.5 z-20">
           <div className="px-2 py-0.5 rounded bg-black/85 border border-cyan-500/30 text-[9px] font-mono text-cyan-300 backdrop-blur-sm flex items-center gap-1">
             <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping" />
-            <span>REAL-TIME STREAM</span>
+            <span>OPTICAL LINK</span>
           </div>
-          {hazardAlert && (
-            <div className="px-2 py-0.5 rounded bg-red-600/90 border border-red-400 text-[9px] font-mono font-bold text-white flex items-center gap-1 animate-pulse">
+          {fireAlert && (
+            <div className="px-2 py-0.5 rounded bg-red-600/90 border border-red-400 text-[9px] font-mono font-bold text-white flex items-center gap-1 animate-pulse shadow-[0_0_10px_rgba(239,68,68,0.5)]">
               <Flame className="w-3 h-3 text-yellow-300" />
-              <span>HAZARD IN SIGHT</span>
+              <span>FLAME/SMOKE HAZARD</span>
+            </div>
+          )}
+          {emergencyAlert && (
+            <div className="px-2 py-0.5 rounded bg-purple-600/90 border border-purple-400 text-[9px] font-mono font-bold text-white flex items-center gap-1 animate-pulse shadow-[0_0_10px_rgba(168,85,247,0.5)]">
+              <span className="text-[10px]">👥</span>
+              <span>CROWD/SOS EMERGENCY</span>
             </div>
           )}
         </div>

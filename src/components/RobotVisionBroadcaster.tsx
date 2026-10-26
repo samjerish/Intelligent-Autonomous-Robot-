@@ -3,9 +3,10 @@ import { useThree, useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import type { GridPoint, FireHazardPoint } from '../types';
 
-interface DetectedBox {
+export interface DetectedBox {
   id: string;
-  type: 'fire' | 'smoke' | 'pedestrian' | 'car' | 'obstacle' | 'barricade' | 'building';
+  type: 'fire' | 'smoke' | 'crowd' | 'emergency' | 'pedestrian' | 'car' | 'obstacle' | 'barricade' | 'building';
+  category: 'fire_detection' | 'emergency_detection' | 'navigation';
   label: string;
   confidence: number;
   distance: number;
@@ -20,6 +21,12 @@ interface RobotVisionBroadcasterProps {
   battery?: number;
   robotState?: string;
   fireHazards?: FireHazardPoint[];
+  crowds?: GridPoint[];
+  markedEmergencyPoint?: {
+    position: GridPoint;
+    label: string;
+    type: string;
+  } | null;
   dynamicObstaclesRef?: React.MutableRefObject<any[]>;
   userBlockers?: GridPoint[];
   isNight?: boolean;
@@ -34,6 +41,8 @@ export const RobotVisionBroadcaster: React.FC<RobotVisionBroadcasterProps> = ({
   battery = 100,
   robotState = 'IDLE',
   fireHazards = [],
+  crowds = [],
+  markedEmergencyPoint = null,
   dynamicObstaclesRef,
   userBlockers = [],
   isNight = false,
@@ -182,10 +191,11 @@ export const RobotVisionBroadcaster: React.FC<RobotVisionBroadcasterProps> = ({
 
       // Analyze camera frustum detections (YOLOv8 vision simulation)
       const detectedBoxes: DetectedBox[] = [];
-      let hazardAlert = false;
+      let fireAlert = false;
+      let emergencyAlert = false;
       let nearestObstacle = 999;
 
-      // 1. Fire hazards in field of view
+      // 1. FIRE DETECTION CHANNEL: Active flames & smoke hazards
       if (fireHazards && fireHazards.length > 0) {
         for (const f of fireHazards) {
           const [fx, fy, fz] = getGridPositionFn(f.position, gridSize, 0.5, false);
@@ -193,18 +203,19 @@ export const RobotVisionBroadcaster: React.FC<RobotVisionBroadcasterProps> = ({
           const dist = pos.distanceTo(fVec);
           if (dist < nearestObstacle) nearestObstacle = dist;
 
-          if (dist <= 25) {
+          if (dist <= 26) {
             // Project into camera screen coordinates
             const proj = fVec.clone().project(fpvCamera);
             if (proj.z > 0 && proj.z < 1 && Math.abs(proj.x) < 1.05 && Math.abs(proj.y) < 1.05) {
-              hazardAlert = true;
+              fireAlert = true;
               const px = ((proj.x + 1) / 2) * 100;
               const py = ((1 - proj.y) / 2) * 100;
               const sizeFactor = Math.max(10, Math.min(38, (1 / (dist + 0.5)) * 140));
               detectedBoxes.push({
                 id: `fire_${f.id}`,
                 type: 'fire',
-                label: `ACTIVE FIRE HAZARD`,
+                category: 'fire_detection',
+                label: `ACTIVE FLAME & SMOKE HAZARD`,
                 confidence: Math.round(92 + Math.random() * 7),
                 distance: parseFloat(dist.toFixed(1)),
                 boxPercent: {
@@ -220,7 +231,74 @@ export const RobotVisionBroadcaster: React.FC<RobotVisionBroadcasterProps> = ({
         }
       }
 
-      // 2. Dynamic obstacles (vehicles & pedestrians) in field of view
+      // 2. EMERGENCY & CROWD DETECTION CHANNEL: Dense human gatherings
+      if (crowds && crowds.length > 0) {
+        for (let i = 0; i < crowds.length; i++) {
+          const c = crowds[i];
+          const [cx, cy, cz] = getGridPositionFn(c, gridSize, 0.4, false);
+          const cVec = new THREE.Vector3(cx, cy + 0.5, cz);
+          const dist = pos.distanceTo(cVec);
+          if (dist < nearestObstacle) nearestObstacle = dist;
+
+          if (dist <= 30) {
+            const proj = cVec.clone().project(fpvCamera);
+            if (proj.z > 0 && proj.z < 1 && Math.abs(proj.x) < 1.05 && Math.abs(proj.y) < 1.05) {
+              emergencyAlert = true;
+              const px = ((proj.x + 1) / 2) * 100;
+              const py = ((1 - proj.y) / 2) * 100;
+              const sizeFactor = Math.max(14, Math.min(45, (1 / (dist + 0.5)) * 160));
+              detectedBoxes.push({
+                id: `crowd_${i}`,
+                type: 'crowd',
+                category: 'emergency_detection',
+                label: `HIGH-DENSITY CROWD (CLUSTER ${i + 1})`,
+                confidence: Math.round(91 + Math.random() * 8),
+                distance: parseFloat(dist.toFixed(1)),
+                boxPercent: {
+                  x: Math.max(2, px - sizeFactor / 2),
+                  y: Math.max(5, py - sizeFactor / 1.5),
+                  w: sizeFactor,
+                  h: sizeFactor * 1.1
+                },
+                color: '#a855f7' // Purple for crowd
+              });
+            }
+          }
+        }
+      }
+
+      // 3. EMERGENCY & CROWD DETECTION CHANNEL: Marked SOS / Medical / Incident Target
+      if (markedEmergencyPoint && markedEmergencyPoint.position) {
+        const [mx, my, mz] = getGridPositionFn(markedEmergencyPoint.position, gridSize, 0.4, false);
+        const mVec = new THREE.Vector3(mx, my + 0.5, mz);
+        const dist = pos.distanceTo(mVec);
+        if (dist <= 35) {
+          const proj = mVec.clone().project(fpvCamera);
+          if (proj.z > 0 && proj.z < 1 && Math.abs(proj.x) < 1.05 && Math.abs(proj.y) < 1.05) {
+            emergencyAlert = true;
+            const px = ((proj.x + 1) / 2) * 100;
+            const py = ((1 - proj.y) / 2) * 100;
+            const sizeFactor = Math.max(12, Math.min(36, (1 / (dist + 0.5)) * 130));
+            detectedBoxes.push({
+              id: `marked_sos_${markedEmergencyPoint.position.x}_${markedEmergencyPoint.position.y}`,
+              type: 'emergency',
+              category: 'emergency_detection',
+              label: `🚨 SOS TARGET: ${markedEmergencyPoint.label || 'EMERGENCY SCENE'}`,
+              confidence: 99,
+              distance: parseFloat(dist.toFixed(1)),
+              boxPercent: {
+                x: Math.max(2, px - sizeFactor / 2),
+                y: Math.max(5, py - sizeFactor / 1.5),
+                w: sizeFactor,
+                h: sizeFactor
+              },
+              color: '#ec4899' // Pink/Magenta for SOS Emergency
+            });
+          }
+        }
+      }
+
+      // 4. NAVIGATION & OBSTACLE CHANNEL: Vehicles & pedestrians
       if (dynamicObstaclesRef && dynamicObstaclesRef.current) {
         for (const obs of dynamicObstaclesRef.current) {
           let obsPosVec: THREE.Vector3 | null = null;
@@ -245,6 +323,7 @@ export const RobotVisionBroadcaster: React.FC<RobotVisionBroadcasterProps> = ({
               detectedBoxes.push({
                 id: `obs_${obs.id}`,
                 type: isCar ? 'car' : 'pedestrian',
+                category: 'navigation',
                 label: isCar ? `CAMPUS VEHICLE` : `PEDESTRIAN`,
                 confidence: Math.round(88 + Math.random() * 11),
                 distance: parseFloat(dist.toFixed(1)),
@@ -261,7 +340,7 @@ export const RobotVisionBroadcaster: React.FC<RobotVisionBroadcasterProps> = ({
         }
       }
 
-      // 3. Road barricades in field of view
+      // 5. NAVIGATION & OBSTACLE CHANNEL: Road barricades
       if (userBlockers && userBlockers.length > 0) {
         for (const b of userBlockers) {
           const [bx, by, bz] = getGridPositionFn(b, gridSize, 0.4, false);
@@ -278,6 +357,7 @@ export const RobotVisionBroadcaster: React.FC<RobotVisionBroadcasterProps> = ({
               detectedBoxes.push({
                 id: `barricade_${b.x}_${b.y}`,
                 type: 'barricade',
+                category: 'navigation',
                 label: `ROAD BARRICADE`,
                 confidence: 99,
                 distance: parseFloat(dist.toFixed(1)),
@@ -287,7 +367,7 @@ export const RobotVisionBroadcaster: React.FC<RobotVisionBroadcasterProps> = ({
                   w: sizeFactor,
                   h: sizeFactor
                 },
-                color: '#a855f7'
+                color: '#6366f1'
               });
             }
           }
@@ -299,6 +379,10 @@ export const RobotVisionBroadcaster: React.FC<RobotVisionBroadcasterProps> = ({
 
       // Generate compact base64 JPEG for socket transmission (0.48 provides sharp vision at low payload)
       const imageBase64 = canvas.toDataURL('image/jpeg', 0.48);
+
+      // Separate detections for distinct telemetry
+      const fireBoxes = detectedBoxes.filter(b => b.category === 'fire_detection');
+      const emergencyBoxes = detectedBoxes.filter(b => b.category === 'emergency_detection');
 
       // Dispatch local event with direct canvas reference for zero-lag local rendering
       window.dispatchEvent(new CustomEvent('local_robot_vision_frame', {
@@ -315,10 +399,17 @@ export const RobotVisionBroadcaster: React.FC<RobotVisionBroadcasterProps> = ({
           headlights,
           nearestObstacleDist: nearestObstacle === 999 ? 12.0 : parseFloat(nearestObstacle.toFixed(1)),
           detectedObjects: detectedBoxes,
-          hazardAlert,
-          hazardType: hazardAlert ? 'FIRE HAZARD DETECTED' : undefined
+          fireDetections: fireBoxes,
+          emergencyDetections: emergencyBoxes,
+          fireAlert,
+          emergencyAlert,
+          hazardAlert: fireAlert || emergencyAlert,
+          hazardType: fireAlert 
+            ? 'FIRE HAZARD DETECTED' 
+            : (emergencyAlert ? 'EMERGENCY / CROWD DETECTED' : undefined)
         }
       }));
+
     }
   });
 
