@@ -2258,14 +2258,14 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
         reply = `Robot simulation reset to default standby coordinates.`;
         addExplanation(`Remote command: Simulation reset executed.`);
       }
-      // Delivery Missions (from Mobile Dashboard or console)
-      else if (lowerMsg.startsWith('deliver ') || lowerMsg.includes('delivery') || lowerMsg.includes('food') || lowerMsg.includes('medicine') || lowerMsg.includes('medical')) {
+      // Delivery & Operational Dispatch Missions (from Mobile Dashboard, voice, or console)
+      else if (lowerMsg.startsWith('deliver ') || lowerMsg.includes('delivery') || lowerMsg.includes('food') || lowerMsg.includes('medicine') || lowerMsg.includes('medical') || lowerMsg.includes('dispatch') || lowerMsg.includes('first aid') || lowerMsg.includes('lunch') || lowerMsg.includes('snack')) {
         if (onDispatchMission) {
           onDispatchMission(userMsg);
-          reply = `Dispatching mission: "${userMsg}". AI path computation in progress.`;
+          reply = `Dispatching operational mission: "${userMsg}". AI path computation in progress.`;
           addExplanation(`Mission dispatched: "${userMsg}"`);
         } else {
-          reply = `Acknowledged delivery mission: "${userMsg}".`;
+          reply = `Acknowledged operational mission: "${userMsg}".`;
         }
       } else if (lowerMsg.startsWith('go to ') || lowerMsg.startsWith('come to ')) {
         if (robotState === 'emergency_response') {
@@ -2369,9 +2369,26 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
     if (!isEmergencySideTask) {
        originalMissionRef.current = null;
        currentTaskIndexRef.current = 0;
+
+       // If mission tasks are present (e.g. from Operational Dispatch / Food / Medical):
+       if (mapData.tasks && mapData.tasks.length > 0) {
+         const firstTask = mapData.tasks[0];
+         const missionPath = calculatePath(currentLoc, firstTask.location, [...(mapData.obstacles || []), ...userBlockers], mapData);
+         if (missionPath.length > 0) {
+           setPath(missionPath);
+           setCurrentPosIndex(0);
+           setRobotState('mission');
+           setActivePathColor('#00ffff');
+           setIsPlaying(true);
+           addExplanation(`Operational mission dispatched: En route to ${firstTask.locationName}.`);
+           initializeDynamicObstacles(missionPath);
+           return;
+         }
+       }
+
        setActivePathColor('#3b82f6'); // blue for patrol
 
-       // Start in patrol mode only (not mission mode)
+       // Start in patrol mode only (not mission mode) when there are no active mission tasks
        if (mapData && mapData.rooms && mapData.rooms.length > 0) {
          const randomRoom = mapData.rooms[Math.floor(Math.random() * mapData.rooms.length)];
          const patrolPath = calculatePath(currentLoc, randomRoom.door || randomRoom.start, [...(mapData.obstacles || []), ...userBlockers], mapData);
@@ -3650,7 +3667,7 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
               onRemove={() => handleRemoveFireHazard(hazard.id)}
             />
           ))}
-          <PoliceVehicle policeState={policeState} policeStateRef={policeStateRef} gridSize={gridSize} isMapView={isMapView} onReachDestination={handlePoliceReachDestination} />
+          <PoliceVehicle policeState={policeState} policeStateRef={policeStateRef} gridSize={gridSize} isMapView={isMapView} onReachDestination={handlePoliceReachDestination} mapData={mapData} />
 
           {/* Starting Gate */}
           {mapData.start && (
@@ -3695,6 +3712,7 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
               isFPV={isFPV}
               isEmergency={robotState === 'emergency_response' || robotState === 'emergency_to_ctr' || robotState === 'ctr_to_emergency' || Boolean(activeFireIncident && activeFireIncident.status === 'ACTIVE_EMERGENCY')}
               robotState={robotState}
+              mapData={mapData}
             />
           )}
         </Canvas>
