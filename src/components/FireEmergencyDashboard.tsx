@@ -110,24 +110,16 @@ export const FireEmergencyDashboard: React.FC<FireEmergencyDashboardProps> = ({
 
           <div className="flex items-center gap-1.5">
             <button
-              onClick={() => setShowSimModal(!showSimModal)}
-              className="px-2.5 py-1 rounded-lg bg-orange-500/10 hover:bg-orange-500/20 text-orange-400 border border-orange-500/30 text-xs font-bold transition-all cursor-pointer flex items-center gap-1"
-              title="Test fire detection at campus buildings"
-            >
-              <Flame className="w-3.5 h-3.5" />
-              <span>Simulate Fire</span>
-            </button>
-            <button
               onClick={onTogglePlaceFire}
-              className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-1 border ${
+              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 border ${
                 isPlacingFire 
-                  ? 'bg-red-500 text-white border-red-400 shadow-[0_0_15px_rgba(239,68,68,0.5)]' 
-                  : 'bg-white/5 hover:bg-white/10 text-gray-300 border-white/10'
+                  ? 'bg-red-500 text-white border-red-400 shadow-[0_0_15px_rgba(239,68,68,0.5)] animate-pulse' 
+                  : 'bg-white/5 hover:bg-white/10 text-orange-300 hover:text-white border-orange-500/30 hover:border-orange-500/60'
               }`}
               title="Click on the 3D map to deploy simulated fire"
             >
-              <MapPin className="w-3.5 h-3.5" />
-              <span>{isPlacingFire ? 'Click 3D Map...' : 'Map Pin Fire'}</span>
+              <MapPin className="w-3.5 h-3.5 text-orange-400" />
+              <span>{isPlacingFire ? 'Click 3D Map to Deploy Fire...' : 'Map Pin Fire'}</span>
             </button>
             <button
               onClick={() => setShowHistory(!showHistory)}
@@ -138,34 +130,6 @@ export const FireEmergencyDashboard: React.FC<FireEmergencyDashboardProps> = ({
             </button>
           </div>
         </div>
-
-        {/* Quick Simulation Dropdown Modal */}
-        {showSimModal && (
-          <div className="mb-3 p-3 bg-black/60 border border-orange-500/30 rounded-xl animate-in fade-in duration-200">
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-xs font-bold text-orange-400 uppercase tracking-wider flex items-center gap-1.5">
-                <Flame className="w-3.5 h-3.5" /> Deploy Test Fire to Campus Landmark:
-              </span>
-              <button onClick={() => setShowSimModal(false)} className="text-gray-400 hover:text-white">
-                <X className="w-3.5 h-3.5" />
-              </button>
-            </div>
-            <div className="grid grid-cols-2 sm:grid-cols-3 gap-1.5">
-              {quickSimulationTargets.map((tgt) => (
-                <button
-                  key={tgt.name}
-                  onClick={() => {
-                    onSimulateAtBuilding(tgt.name, tgt.coords);
-                    setShowSimModal(false);
-                  }}
-                  className="px-2 py-1.5 rounded-lg bg-white/5 hover:bg-orange-500/20 text-gray-300 hover:text-orange-200 border border-white/10 hover:border-orange-500/40 text-[11px] font-medium text-left truncate transition-all cursor-pointer"
-                >
-                  {tgt.name}
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
 
         {/* Active Incident Details or Normal Patrol Monitor */}
         {displayIncident ? (
