@@ -1449,7 +1449,7 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
   const isRecalculating = useRef(false);
 
   const [battery, setBattery] = useState(100);
-  const [robotState, setRobotState] = useState<RobotState>('idle');
+  const [robotState, setRobotState] = useState<RobotState>('patrol');
   const [isOn, setIsOn] = useState(isOnProp !== undefined ? isOnProp : true);
 
   useEffect(() => {
@@ -1466,7 +1466,7 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
     setModalType(null);
   };
   const batteryRef = useRef(100);
-  const robotStateRef = useRef<RobotState>('idle');
+  const robotStateRef = useRef<RobotState>('patrol');
   const originalMissionRef = useRef<{path: GridPoint[], index: number} | null>(null);
   const emergencyLocationRef = useRef<GridPoint | null>(null);
   const robotPosRef = useRef<THREE.Vector3 | null>(null);
