@@ -1150,6 +1150,9 @@ const Robot = ({
   const [isMoving, setIsMoving] = useState(false);
   const hasCompletedRef = useRef(false);
 
+  const robotDiversionRef = useRef<THREE.Vector3>(new THREE.Vector3());
+  const targetRobotDiversion = useRef<THREE.Vector3>(new THREE.Vector3());
+
   useEffect(() => {
     if (robotGroupRef) {
       robotGroupRef.current = ref.current;
@@ -1178,68 +1181,75 @@ const Robot = ({
     if (pauseTimeRef.current > 0) {
       pauseTimeRef.current -= delta;
       if (isMovingRef.current) { isMovingRef.current = false; setIsMoving(false); }
-      // Don't return early here, we still want to check for obstacles behind us
     }
     
-    const dist = currentPos.distanceTo(targetVector);
-
-    if (pauseTimeRef.current > 0) return; // Wait if still paused
+    if (pauseTimeRef.current > 0) return;
 
     if (isPlaying) {
-      // --- Sensor Logic: Check for dynamic obstacles ahead ---
-      // When reversing or waiting for clearance, do not trigger obstacle alarms on obstacles we are clearing from
-      if (robotState !== 'reversing' && robotState !== 'waiting_for_clearance' && dynamicObstaclesRef && dynamicObstaclesRef.current.length > 0) {
-        const upcomingPath = path.slice(currentIndex, currentIndex + 4);
-        const forwardDir = new THREE.Vector3().subVectors(targetVector, currentPos);
-        forwardDir.y = 0;
-        if (forwardDir.lengthSq() > 0.0001) forwardDir.normalize();
+      const forwardDir = new THREE.Vector3().subVectors(targetVector, currentPos);
+      forwardDir.y = 0;
+      if (forwardDir.lengthSq() > 0.0001) forwardDir.normalize();
+      else forwardDir.set(0, 0, 1);
+      const normalDir = new THREE.Vector3(-forwardDir.z, 0, forwardDir.x);
 
+      let isDynamicEncounter = false;
+      let robotSteerSide = 1; // +1 right lane, -1 left lane
+      let speedFactor = 1.0;
+
+      // 1. Dynamic Traffic Awareness & Active Lateral Bypass:
+      // The robot NEVER freezes or reverses when meeting dynamic traffic!
+      // It steers smoothly into the clear lane/shoulder and passes without stopping.
+      if (dynamicObstaclesRef && dynamicObstaclesRef.current.length > 0) {
         for (const obs of dynamicObstaclesRef.current) {
-          const obsTarget = obs.path[Math.min(obs.currentIndex, obs.path.length - 1)];
-          let detected = false;
+          if (!obs.currentPosVector) continue;
+          const toObs = new THREE.Vector3().subVectors(obs.currentPosVector, currentPos);
+          toObs.y = 0;
+          const distToObs = toObs.length();
 
-          // Check if obstacle is already executing a lateral diversion (>0.72m off centerline)
-          let isSafelyDiverted = false;
-          if (obs.currentPosVector) {
-            const lateralOffset = Math.abs((forwardDir.x * (obs.currentPosVector.z - currentPos.z)) - (forwardDir.z * (obs.currentPosVector.x - currentPos.x)));
-            if (lateralOffset > 0.72) {
-              isSafelyDiverted = true;
-            }
+          // Physical lateral repulsion if very close (< 1.35m): prevent clipping/touching
+          if (distToObs < 1.35 && distToObs > 0.01) {
+            const repulse = toObs.clone().normalize().negate();
+            currentPos.add(repulse.multiplyScalar(delta * 2.5));
           }
 
-          if (!isSafelyDiverted) {
-            for (const p of upcomingPath) {
-              if ((p.x === obs.pos.x && p.y === obs.pos.y) || (p.x === obsTarget.x && p.y === obsTarget.y)) {
-                detected = true;
-                break;
-              }
-            }
-            if (!detected && obs.currentPosVector) {
-              const d = currentPos.distanceTo(obs.currentPosVector);
-              if (d < 1.6) {
-                const toObs = new THREE.Vector3().subVectors(obs.currentPosVector, currentPos).normalize();
-                if (forwardDir.dot(toObs) > 0.2) {
-                  detected = true;
-                }
-              }
-            }
-          }
+          // Oncoming obstacle detection within 5.5m
+          if (distToObs < 5.5 && distToObs > 0.05) {
+            const toObsNorm = toObs.clone().normalize();
+            const dot = forwardDir.dot(toObsNorm);
+            if (dot > 0.08) {
+              isDynamicEncounter = true;
+              speedFactor = Math.min(speedFactor, distToObs < 1.3 ? 0.72 : 0.88);
 
-          if (detected) {
-            onObstacleDetected(obs.pos);
-            return; // Pause movement this frame
+              // Steer away from obstacle side
+              const crossY = (forwardDir.x * toObsNorm.z) - (forwardDir.z * toObsNorm.x);
+              robotSteerSide = crossY > 0.05 ? -1 : 1;
+            }
           }
         }
       }
 
+      if (isDynamicEncounter) {
+        targetRobotDiversion.current.copy(normalDir).multiplyScalar(0.75 * robotSteerSide);
+      } else {
+        targetRobotDiversion.current.set(0, 0, 0);
+      }
+      robotDiversionRef.current.lerp(targetRobotDiversion.current, delta * 3.5);
 
-      if (dist < 0.05) {
+      const effectiveTarget = targetVector.clone().add(robotDiversionRef.current);
+      const toTarget = new THREE.Vector3().subVectors(targetVector, currentPos);
+      toTarget.y = 0;
+      const alongTrack = toTarget.dot(forwardDir);
+      const distToTarget = currentPos.distanceTo(targetVector);
+      const distToEffective = currentPos.distanceTo(effectiveTarget);
+
+      // Robust along-track waypoint advancement
+      if (distToTarget < 0.35 || alongTrack <= 0.3 || distToEffective < 0.35) {
         if (isMovingRef.current) { isMovingRef.current = false; setIsMoving(false); }
         if (currentIndex < path.length - 1) {
           const curr = path[currentIndex];
           const next = path[currentIndex + 1];
           if (curr.x === next.x && curr.y === next.y) {
-             pauseTimeRef.current = 2.5; // Pause for 2.5 seconds
+             pauseTimeRef.current = 2.5; // Pause for deliberate waypoint stop
           }
           onReachNode(currentIndex + 1);
         }
@@ -1251,14 +1261,12 @@ const Robot = ({
         }
       } else {
         if (!isMovingRef.current) { isMovingRef.current = true; setIsMoving(true); }
-        const moveDist = speed * delta;
-        if (moveDist >= dist) {
-          currentPos.copy(targetVector);
-        } else {
-          const direction = new THREE.Vector3().subVectors(targetVector, currentPos).normalize();
-          currentPos.add(direction.multiplyScalar(moveDist));
-        }
-        const rotDirection = new THREE.Vector3().subVectors(targetVector, currentPos);
+        const moveDist = speed * speedFactor * delta;
+        const direction = new THREE.Vector3().subVectors(effectiveTarget, currentPos).normalize();
+        currentPos.add(direction.multiplyScalar(moveDist));
+
+        const rotDirection = new THREE.Vector3().subVectors(effectiveTarget, currentPos);
+        rotDirection.y = 0;
         if (rotDirection.lengthSq() > 0.01) {
           const targetRotation = Math.atan2(rotDirection.x, rotDirection.z);
           let diff = targetRotation - ref.current.rotation.y;
@@ -2728,38 +2736,32 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
       return;
     }
     
-    // 2. If it is an active dynamic obstacle, it is executing a diversion around the robot:
-    // Hold position safely in lane to let the obstacle complete its diversion maneuver and pass by smoothly
+    // 2. Dynamic obstacle encounter:
+    // The robot engages its active lateral lane bypass and continues moving forward without stopping or reversing
     const isDynamic = dynamicObstaclesRef.current.some(o => 
-      Math.abs(o.pos.x - obsPos.x) <= 1 && Math.abs(o.pos.y - obsPos.y) <= 1
+      Math.abs(o.pos.x - obsPos.x) <= 2 && Math.abs(o.pos.y - obsPos.y) <= 2
     );
     if (isDynamic) {
-      addExplanation(`Oncoming obstacle taking diversion. Holding position safely to allow clean bypass...`);
-      setIsPlaying(false);
-      setRobotState('waiting_for_clearance');
+      addExplanation(`Dynamic traffic approaching. Continuing forward with active lateral evasion bypass.`);
+      setIsPlaying(true);
       isRecalculating.current = false;
-      waitForObstacleToClear();
       return;
     }
 
-    // 3. Static obstacle blocking single lane: back up to yield space for detour
-    const reversePath = calculateReversePath(currentLoc, obsPos, path, currentPosIndex, allObstacles, mapData, 2);
-    if (reversePath.length > 1) {
-      addExplanation(`Static blockage on route. Backing up to create space for detour...`);
-      setPath(reversePath);
+    // 3. Static roadblock: Re-route forward around the blockage (never reverse or return back)
+    const forwardDetour = calculateLongPath(currentLoc, targetLoc, allObstacles, mapData);
+    if (forwardDetour.length > 0) {
+      addExplanation(`Static blockage on route. Forward detour calculated. Navigating forward around obstacle...`);
+      setPath(forwardDetour);
       setCurrentPosIndex(0);
-      setRobotState('reversing');
       setIsPlaying(true);
       isRecalculating.current = false;
       return;
     }
     
-    // 4. If cannot reverse back, hold position safely and wait for obstacle to clear
-    addExplanation(`Corridor blocked ahead. Holding position safely and waiting for obstacle to move...`);
-    setIsPlaying(false);
-    setRobotState('waiting_for_clearance');
+    // 4. Fallback forward route
+    setIsPlaying(true);
     isRecalculating.current = false;
-    waitForObstacleToClear();
   };
 
 
