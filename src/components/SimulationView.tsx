@@ -1371,20 +1371,16 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
           userBlockers.some(b => b.x === p.x && b.y === p.y && b.f === p.f)
        );
        if (isBlocked) {
-         const newPath = calculatePath(currentLoc, targetLoc, allObstacles, mapData);
+         let newPath = calculatePath(currentLoc, targetLoc, allObstacles, mapData, true);
+         if (newPath.length === 0) {
+           newPath = calculatePath(currentLoc, targetLoc, allObstacles, mapData, false);
+         }
          if (newPath.length > 0) {
            setPath(newPath);
            setCurrentPosIndex(0);
-           addExplanation("Obstacle on path! Recalculating direct route to destination...");
-         } else {
-           // Do NOT return to base or divert to a different room!
-           // Hold position safely, wait for obstacles to clear, and then proceed directly to destination!
-           setIsPlaying(false);
-           setRobotState('waiting_for_clearance');
-           addExplanation("Road temporarily blocked by obstacles. Holding position safely and waiting for clearance to destination...");
-           if (waitForObstacleToClearRef.current) {
-             waitForObstacleToClearRef.current();
-           }
+           setIsPlaying(true);
+           setActivePathColor('#06b6d4');
+           addExplanation("⚠️ Blockage on path! Taking immediate diversion route around obstruction to destination...");
          }
        }
     }
