@@ -796,7 +796,7 @@ const CrowdsRender = React.memo(({ crowds, gridSize }: { crowds: GridPoint[], gr
 
 
 
-const PoliceVehicle = ({ policeState, policeStateRef, gridSize, isMapView, onReachDestination }: any) => {
+const PoliceVehicle = ({ policeState, policeStateRef, gridSize, isMapView, onReachDestination, mapData }: any) => {
   const ref = useRef<THREE.Group>(null);
   const internalIndex = useRef(0);
 
@@ -832,6 +832,7 @@ const PoliceVehicle = ({ policeState, policeStateRef, gridSize, isMapView, onRea
         ref.current.rotation.y += (targetRot - ref.current.rotation.y) * 0.1;
       }
     }
+    containWithinWalls(currentPos, 0.65, mapData);
   });
 
   if (!policeState.active) return null;
