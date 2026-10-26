@@ -262,7 +262,9 @@ function App() {
          window.dispatchEvent(new CustomEvent('remote_console_command', { detail: data.command }));
       }
       if (data.action === 'emergency_target') {
-         window.dispatchEvent(new CustomEvent('local_emergency_request', { detail: data }));
+         window.dispatchEvent(new CustomEvent('remote_emergency_target', { 
+           detail: { x: data.x, y: data.y, label: data.label || 'MOBILE DISPATCH' } 
+         }));
       }
       if (data.action === 'emergency_action') {
          if (data.type === 'ESTOP') {
