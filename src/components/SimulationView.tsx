@@ -259,28 +259,44 @@ const MovingEntity = ({
       }
     }
     
-    // 2. Headway & Deadlock Prevention with Other Dynamic Obstacles:
-    // Prevents two oncoming obstacles from freezing in place indefinitely!
+    // 2. Strict Anti-Merging & Headway Spacing with Other Dynamic Obstacles:
+    // Ensures obstacles never merge into each other and maintain safe spacing buffer at all times
     if (allObstaclesRef && allObstaclesRef.current) {
-      const minHeadway = obstacle.type === 'car' ? 1.6 : 0.95;
+      const isCar = obstacle.type === 'car';
+      const requiredSpacing = isCar ? 1.8 : 1.2; // Safe buffer distance between entities
       let isBlockedByOther = false;
+      let tooClose = false;
+
       for (const other of allObstaclesRef.current) {
         if (other.id === obstacle.id || !other.currentPosVector) continue;
         const distToOther = currentPos.distanceTo(other.currentPosVector);
-        if (distToOther < minHeadway) {
+        
+        // Critical Anti-Merging: If already closer than safe buffer, push slightly apart and hold
+        if (distToOther < requiredSpacing) {
+          tooClose = true;
+          // Apply gentle lateral separation push to ensure physical space between models
+          const awayFromOther = new THREE.Vector3().subVectors(currentPos, other.currentPosVector);
+          if (awayFromOther.lengthSq() > 0.0001) {
+            awayFromOther.y = 0;
+            awayFromOther.normalize();
+            currentPos.add(awayFromOther.multiplyScalar(0.015));
+          }
+        }
+
+        // Headway check in direction of motion
+        if (distToOther < (requiredSpacing + 0.5)) {
           const toOther = new THREE.Vector3().subVectors(other.currentPosVector, currentPos).normalize();
-          if (moveDir.dot(toOther) > 0.3) {
+          if (moveDir.dot(toOther) > 0.25) {
             isBlockedByOther = true;
-            break;
           }
         }
       }
 
-      if (isBlockedByOther) {
+      if (tooClose || isBlockedByOther) {
         headwayWaitTimeRef.current += delta;
-        // If blocked by another obstacle for more than 0.7s, break deadlock so neither obstacle freezes in place!
-        if (headwayWaitTimeRef.current > 0.7) {
-          if (Date.now() - lastReverseTimeRef.current > 1800) {
+        // If blocked by another obstacle for more than 0.8s, repath around it so neither obstacle disappears or gets stuck
+        if (headwayWaitTimeRef.current > 0.8) {
+          if (Date.now() - lastReverseTimeRef.current > 2000) {
             lastReverseTimeRef.current = Date.now();
             headwayWaitTimeRef.current = 0;
             if (mapData && mapData.roads && mapData.roads.length > 5) {
@@ -299,9 +315,8 @@ const MovingEntity = ({
               obstacle.currentIndex = 0;
             }
           }
-        } else {
-          return; // Brief headway pause to allow leading vehicle/person to advance
         }
+        return; // Yield position and hold safe separation space without merging
       } else {
         headwayWaitTimeRef.current = 0;
       }
@@ -342,7 +357,24 @@ const MovingEntity = ({
         obstacle.pos = targetNode;
       } else {
         const direction = new THREE.Vector3().subVectors(targetVector, currentPos).normalize();
-        currentPos.add(direction.multiplyScalar(moveDist));
+        const nextPos = currentPos.clone().add(direction.clone().multiplyScalar(moveDist));
+        
+        // Final sanity check before step: verify nextPos doesn't step into another obstacle's bounding zone
+        let stepBlocked = false;
+        if (allObstaclesRef && allObstaclesRef.current) {
+          const reqSpace = obstacle.type === 'car' ? 1.5 : 1.0;
+          for (const other of allObstaclesRef.current) {
+            if (other.id === obstacle.id || !other.currentPosVector) continue;
+            if (nextPos.distanceTo(other.currentPosVector) < reqSpace) {
+              stepBlocked = true;
+              break;
+            }
+          }
+        }
+
+        if (!stepBlocked) {
+          currentPos.copy(nextPos);
+        }
       }
       const rotDirection = new THREE.Vector3().subVectors(targetVector, currentPos);
       if (rotDirection.lengthSq() > 0.01) {
@@ -1410,7 +1442,7 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
   const isRecalculating = useRef(false);
 
   const [battery, setBattery] = useState(100);
-  const [robotState, setRobotState] = useState<RobotState>('idle');
+  const [robotState, setRobotState] = useState<RobotState>('patrol');
   const [isOn, setIsOn] = useState(isOnProp !== undefined ? isOnProp : true);
 
   useEffect(() => {
@@ -1423,7 +1455,7 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
   const [showRobotVisionPIP, setShowRobotVisionPIP] = useState(false);
 
   const batteryRef = useRef(100);
-  const robotStateRef = useRef<RobotState>('idle');
+  const robotStateRef = useRef<RobotState>('patrol');
   const originalMissionRef = useRef<{
     path?: GridPoint[];
     index?: number;
@@ -2369,7 +2401,8 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
       setActivePathColor('#00ffff');
     }
     
-    if (initialPath.length > 0 && mapData.tasks && mapData.tasks.length > 0) {
+    // Only activate mission mode if a specific mission strategy is explicitly selected or active
+    if (selectedStrategyId && initialPath.length > 0 && mapData.tasks && mapData.tasks.length > 0) {
       destinationTargetRef.current = target;
       const targetRoom = mapData.rooms?.find(r => Math.abs(r.door.x - target.x) <= 2 && Math.abs(r.door.y - target.y) <= 2);
       originalMissionRef.current = { 
@@ -2383,14 +2416,50 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
         strategyId: selectedStrategyId
       };
       setPath(initialPath);
-      addExplanation(`Planned route to destination. Estimated distance: ${initialPath.length}m.`);
+      addExplanation(`Planned mission route to destination (${targetRoom?.name || 'Target'}). Estimated distance: ${initialPath.length}m.`);
       setRobotState('mission');
       setIsPlaying(true);
     } else {
-      setPath([]);
-      setRobotState('idle');
+      // Default behavior: Campus Patrol Mode (mission mode does not activate simply on boot/reset)
+      originalMissionRef.current = null;
+      let patrolPath: GridPoint[] = [];
+      if (mapData.rooms && mapData.rooms.length > 0) {
+        const shuffledRooms = [...mapData.rooms].sort(() => Math.random() - 0.5);
+        for (const room of shuffledRooms) {
+          const p = calculatePath(currentLoc, room.door || room.start, [...(mapData.obstacles || []), ...userBlockers], mapData, true);
+          if (p.length > 1) {
+            patrolPath = p;
+            break;
+          }
+        }
+        if (patrolPath.length === 0) {
+          for (const room of shuffledRooms) {
+            const p = calculatePath(currentLoc, room.door || room.start, [...(mapData.obstacles || []), ...userBlockers], mapData, false);
+            if (p.length > 1) {
+              patrolPath = p;
+              break;
+            }
+          }
+        }
+      }
+      if (patrolPath.length === 0 && mapData.roads && mapData.roads.length > 0) {
+        const randRoad = mapData.roads[Math.floor(Math.random() * mapData.roads.length)];
+        patrolPath = calculatePath(currentLoc, randRoad, [...(mapData.obstacles || []), ...userBlockers], mapData, true);
+      }
+
+      if (patrolPath.length > 0) {
+        setPath(patrolPath);
+        setActivePathColor('#3b82f6'); // Blue for autonomous patrol
+        setRobotState('patrol');
+        setIsPlaying(true);
+        addExplanation(`Autonomous patrol mode engaged. Patrolling campus perimeter and corridors (${patrolPath.length}m patrol).`);
+      } else {
+        setPath([]);
+        setRobotState('patrol');
+        setIsPlaying(false);
+      }
     }
-    initializeDynamicObstacles(initialPath);
+    initializeDynamicObstacles(initialPath.length > 0 ? initialPath : undefined);
   };
 
   const handleLowBattery = () => {
