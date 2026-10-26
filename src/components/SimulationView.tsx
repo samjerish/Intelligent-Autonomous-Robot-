@@ -1,9 +1,21 @@
 import React, { useEffect, useRef, useState, useMemo, useCallback } from 'react';
 import type { MapData, GridPoint, Room, FireHazardPoint, FireIncident } from '../types';
 import { calculatePath, calculateLongPath, calculateEvadePath, calculateReversePath } from '../utils/simulationEngine';
-import { Play, RotateCcw, Activity, ShieldAlert, Crosshair, Maximize, Minimize, Bot, Power, Send, Construction, Pause, Users, Utensils, Cross, Sliders, Car, Trash2, Plus, Flame, AlertTriangle } from 'lucide-react';
+import { 
+  Play, RotateCcw, Activity, ShieldAlert, Crosshair, Maximize, Minimize, Bot, 
+  Power, Send, Construction, Pause, Users, Utensils, Cross, Sliders, Car, 
+  Trash2, Plus, Flame, AlertTriangle, Layers, Sun, Moon, Eye, EyeOff, 
+  Terminal, Zap, Search, Navigation2, CheckCircle2, ChevronRight, Building2, MapPin
+} from 'lucide-react';
 import { DeliveryModal } from './DeliveryModal';
 import { FireSimulationNode } from './FireSimulationNode';
+import { 
+  ProfessionalBuildingModel, 
+  Building3DLabel, 
+  getBuildingHeight, 
+  ArchitecturalStreetlight,
+  getBuildingCategory 
+} from './CampusArchitecture';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import {
   OrbitControls,
@@ -250,10 +262,10 @@ const RoadsRender = ({ roads, gridSize }: { roads: GridPoint[], gridSize: GridPo
   if (!roads || roads.length === 0) return null;
   return (
     <Instances limit={roads.length} receiveShadow>
-      <boxGeometry args={[CELL_SIZE, 0.05, CELL_SIZE]} />
-      <meshStandardMaterial color="#64748b" opacity={0.9} transparent />
+      <boxGeometry args={[CELL_SIZE, 0.06, CELL_SIZE]} />
+      <meshStandardMaterial color="#1e2533" roughness={0.85} metalness={0.15} />
       {roads.map((road, i) => {
-        const [x, y, z] = getGridPosition(road, gridSize, 0.025);
+        const [x, y, z] = getGridPosition(road, gridSize, 0.03);
         return <Instance key={i} position={[x, y, z]} />;
       })}
     </Instances>
@@ -616,315 +628,7 @@ const ParkTrees = ({ width, height, depth, count }: { width: number; height: num
   );
 };
 
-const BuildingModel = React.memo(({ room, width, height, depth }: { room: Room, width: number, height: number, depth: number }) => {
-  const type = room.type || "unknown";
-  const nameLow = room.name.toLowerCase();
-  const baseColor = room.color || "#e2e8f0";
-  
-  if (type === 'medical') {
-    return (
-      <group>
-        <Box args={[width, height, depth]} castShadow receiveShadow>
-          <meshStandardMaterial color="#f8fafc" />
-        </Box>
-        <Box args={[width + 0.2, 0.2, depth + 0.2]} position={[0, height / 2 + 0.1, 0]} castShadow>
-          <meshStandardMaterial color="#cbd5e1" />
-        </Box>
-        <Cylinder args={[Math.min(width, depth) * 0.3, Math.min(width, depth) * 0.3, 0.1, 32]} position={[0, height / 2 + 0.25, 0]}>
-          <meshStandardMaterial color="#334155" />
-        </Cylinder>
-        <group position={[0, height / 2 + 0.8, 0]}>
-          <Box args={[1.2, 0.3, 0.1]}>
-            <meshStandardMaterial color="#ef4444" emissive="#ef4444" emissiveIntensity={0.5} />
-          </Box>
-          <Box args={[0.3, 1.2, 0.1]}>
-            <meshStandardMaterial color="#ef4444" emissive="#ef4444" emissiveIntensity={0.5} />
-          </Box>
-        </group>
-      </group>
-    );
-  } else if (type === 'security') {
-    return (
-      <group>
-        {/* Main Body (Gray/White Prefab Walls) */}
-        <Box args={[width, height, depth]} position={[0, 0, 0]} castShadow receiveShadow>
-          <meshStandardMaterial color="#e2e8f0" roughness={0.9} />
-        </Box>
-        
-        {/* Blue Overhanging Roof */}
-        <Box args={[width * 1.2, height * 0.1, depth * 1.2]} position={[0, height * 0.55, 0]} castShadow receiveShadow>
-          <meshStandardMaterial color="#3b82f6" roughness={0.8} />
-        </Box>
-
-        {/* Front Door - Frame */}
-        <Box args={[width * 0.3, height * 0.7, depth * 1.02]} position={[width * 0.2, -height * 0.15, 0]}>
-          <meshStandardMaterial color="#2563eb" />
-        </Box>
-        {/* Front Door - Glass/Inner */}
-        <Box args={[width * 0.25, height * 0.65, depth * 1.03]} position={[width * 0.2, -height * 0.15, 0]}>
-          <meshStandardMaterial color={baseColor} roughness={0.8} />
-        </Box>
-
-        {/* Front Window - Frame */}
-        <Box args={[width * 0.4, height * 0.4, depth * 1.02]} position={[-width * 0.2, 0, 0]}>
-          <meshStandardMaterial color="#2563eb" />
-        </Box>
-        {/* Front Window - Glass */}
-        <Box args={[width * 0.35, height * 0.35, depth * 1.03]} position={[-width * 0.2, 0, 0]}>
-          <meshStandardMaterial color="#38bdf8" transparent opacity={0.6} metalness={0.9} roughness={0.1} />
-        </Box>
-
-        {/* Side Window (Right) - Frame */}
-        <Box args={[width * 1.02, height * 0.4, depth * 0.6]} position={[0, 0, depth * 0.2]}>
-          <meshStandardMaterial color="#2563eb" />
-        </Box>
-        {/* Side Window (Right) - Glass */}
-        <Box args={[width * 1.03, height * 0.35, depth * 0.55]} position={[0, 0, depth * 0.2]}>
-          <meshStandardMaterial color="#38bdf8" transparent opacity={0.6} metalness={0.9} roughness={0.1} />
-        </Box>
-
-        {/* Boom barrier base */}
-        <Cylinder args={[0.05, 0.05, 0.5]} position={[width * 0.6, -height * 0.25, depth * 0.6]} castShadow>
-          <meshStandardMaterial color="#ef4444" />
-        </Cylinder>
-        {/* Boom barrier arm */}
-        <Box args={[width * 1.5, 0.05, 0.05]} position={[width * 1.35, -height * 0.05, depth * 0.6]} castShadow>
-          <meshStandardMaterial color="#facc15" />
-        </Box>
-      </group>
-    );
-  } else if (type === 'utility') {
-    return (
-      <group>
-        <Box args={[width, height * 0.7, depth]} position={[0, -height * 0.15, 0]} castShadow receiveShadow>
-          <meshStandardMaterial color="#475569" roughness={0.8} />
-        </Box>
-        <Cylinder args={[Math.min(width, depth) * 0.2, Math.min(width, depth) * 0.25, height * 0.8, 16]} position={[-width * 0.25, height * 0.1, 0]} castShadow>
-           <meshStandardMaterial color="#64748b" />
-        </Cylinder>
-        <Cylinder args={[Math.min(width, depth) * 0.2, Math.min(width, depth) * 0.25, height * 0.8, 16]} position={[width * 0.25, height * 0.1, 0]} castShadow>
-           <meshStandardMaterial color="#64748b" />
-        </Cylinder>
-        <Box args={[width * 0.4, height * 0.4, depth * 1.05]} position={[0, -height * 0.15, 0]}>
-           <meshStandardMaterial color="#f59e0b" emissive="#f59e0b" emissiveIntensity={1} />
-        </Box>
-      </group>
-    );
-  } else if (type === 'admin') {
-    return (
-      <group>
-        <Box args={[width, height * 1.5, depth]} position={[0, height * 0.25, 0]} castShadow receiveShadow>
-          <meshStandardMaterial color="#bae6fd" roughness={0.7} opacity={0.8} transparent emissive="#0ea5e9" emissiveIntensity={0.05} />
-        </Box>
-        <Box args={[width * 1.05, height * 1.55, depth * 0.8]} position={[0, height * 0.25, 0]} castShadow>
-           <meshStandardMaterial color="#1e293b" />
-        </Box>
-        <Cylinder args={[0.05, 0.05, height * 0.8]} position={[0, height + 0.4, 0]}>
-           <meshStandardMaterial color="#ef4444" emissive="#ef4444" />
-        </Cylinder>
-      </group>
-    );
-  } else if (type === 'library') {
-    return (
-      <group>
-        {/* Modern Solid Base */}
-        <Box args={[width * 0.9, height * 0.8, depth * 0.9]} position={[0, -height * 0.1, 0]} castShadow receiveShadow>
-          <meshStandardMaterial color="#cbd5e1" roughness={0.8} />
-        </Box>
-        {/* Glass upper section */}
-        <Box args={[width * 1.05, height * 1.2, depth * 1.05]} position={[0, height * 0.9, 0]} castShadow>
-          <meshStandardMaterial color="#0ea5e9" transparent opacity={0.3} metalness={0.6} roughness={0.2} />
-        </Box>
-        {/* Inner solid core for depth */}
-        <Box args={[width * 0.8, height * 1.15, depth * 0.8]} position={[0, height * 0.9, 0]}>
-          <meshStandardMaterial color="#475569" roughness={0.9} />
-        </Box>
-        {/* Modern slanted roof feature */}
-        <Box args={[width * 1.1, height * 0.2, depth * 1.1]} position={[0, height * 1.6, 0]} rotation={[0.08, 0, 0]} castShadow receiveShadow>
-          <meshStandardMaterial color="#1e293b" roughness={0.8} />
-        </Box>
-      </group>
-    );
-  } else if (type === 'auditorium') {
-    return (
-      <group>
-        <Box args={[width, height * 0.5, depth]} position={[0, -height * 0.25, 0]} castShadow receiveShadow>
-          <meshStandardMaterial color="#cbd5e1" />
-        </Box>
-        {/* Full Dome Roof */}
-        <Sphere args={[Math.min(width, depth)/2, 32, 16, 0, Math.PI * 2, 0, Math.PI / 2]} position={[0, 0, 0]} castShadow>
-          <meshStandardMaterial color="#94a3b8" metalness={0.5} roughness={0.2} />
-        </Sphere>
-      </group>
-    );
-  } else if (type === 'sports') {
-    if (nameLow.includes('pool')) {
-      return (
-        <group>
-          {/* Deck */}
-          <Box args={[width, 0.2, depth]} position={[0, -height/2 + 0.1, 0]} receiveShadow>
-            <meshStandardMaterial color="#cbd5e1" />
-          </Box>
-          {/* Water */}
-          <Box args={[width * 0.8, 0.15, depth * 0.8]} position={[0, -height/2 + 0.15, 0]} receiveShadow>
-            <meshStandardMaterial color="#0ea5e9" opacity={0.7} transparent metalness={0.8} roughness={0.1} />
-          </Box>
-        </group>
-      );
-    } else if (nameLow.includes('tennis')) {
-      return (
-        <group>
-          {/* Court */}
-          <Box args={[width, 0.1, depth]} position={[0, -height/2 + 0.05, 0]} receiveShadow>
-            <meshStandardMaterial color="#166534" />
-          </Box>
-          {/* Net */}
-          <Box args={[width * 0.8, 0.4, 0.05]} position={[0, -height/2 + 0.25, 0]} castShadow>
-            <meshStandardMaterial color="#f8fafc" opacity={0.8} transparent />
-          </Box>
-        </group>
-      );
-    } else if (nameLow.includes('cricket')) {
-      return (
-        <group>
-          {/* Grass */}
-          <Box args={[width, 0.1, depth]} position={[0, -height/2 + 0.05, 0]} receiveShadow>
-            <meshStandardMaterial color="#22c55e" />
-          </Box>
-          {/* Pitch */}
-          <Box args={[width * 0.2, 0.15, depth * 0.8]} position={[0, -height/2 + 0.08, 0]} receiveShadow>
-            <meshStandardMaterial color="#d4a373" />
-          </Box>
-          {/* Nets */}
-          <Box args={[width * 0.3, 1.5, depth * 0.9]} position={[0, -height/2 + 0.8, 0]}>
-             <meshStandardMaterial color="#94a3b8" wireframe />
-          </Box>
-          {/* Stumps */}
-          {[-0.1, 0, 0.1].map((ox, i) => (
-             <Cylinder key={'s1'+i} args={[0.02, 0.02, 0.4]} position={[ox, -height/2 + 0.2, depth * 0.35]}>
-               <meshStandardMaterial color="#ffffff" />
-             </Cylinder>
-          ))}
-          {[-0.1, 0, 0.1].map((ox, i) => (
-             <Cylinder key={'s2'+i} args={[0.02, 0.02, 0.4]} position={[ox, -height/2 + 0.2, -depth * 0.35]}>
-               <meshStandardMaterial color="#ffffff" />
-             </Cylinder>
-          ))}
-        </group>
-      );
-    } else if (nameLow.includes('hockey')) {
-      return (
-        <group>
-          {/* Turf */}
-          <Box args={[width, 0.1, depth]} position={[0, -height/2 + 0.05, 0]} receiveShadow>
-            <meshStandardMaterial color="#15803d" />
-          </Box>
-          {/* Goals */}
-          <Box args={[width * 0.2, 0.8, 0.2]} position={[0, -height/2 + 0.45, depth/2 - 0.5]}>
-             <meshStandardMaterial color="#ffffff" wireframe />
-          </Box>
-          <Box args={[width * 0.2, 0.8, 0.2]} position={[0, -height/2 + 0.45, -depth/2 + 0.5]}>
-             <meshStandardMaterial color="#ffffff" wireframe />
-          </Box>
-        </group>
-      );
-    } else if (nameLow.includes('indoor')) {
-      return (
-        <group>
-          {/* Closed Stadium */}
-          <Box args={[width, height * 1.2, depth]} position={[0, height * 0.1, 0]} castShadow receiveShadow>
-            <meshStandardMaterial color="#cbd5e1" metalness={0.5} />
-          </Box>
-          {/* Curved Roof */}
-          <Cylinder args={[Math.min(width, depth)/2, Math.min(width, depth)/2, Math.max(width, depth), 32, 1, false, 0, Math.PI]} position={[0, height * 0.7, 0]} rotation={[width > depth ? 0 : Math.PI / 2, 0, Math.PI / 2]} castShadow>
-             <meshStandardMaterial color="#94a3b8" />
-          </Cylinder>
-        </group>
-      );
-    } else {
-      // Sports Ground or default park-like sports area
-      return (
-        <group>
-          <Box args={[width, 0.1, depth]} position={[0, -height/2 + 0.05, 0]} receiveShadow>
-            <meshStandardMaterial color="#22c55e" />
-          </Box>
-          {/* Running Track (Ovalish) */}
-          <Cylinder args={[Math.min(width, depth)*0.4, Math.min(width, depth)*0.4, 0.15, 32]} position={[0, -height/2 + 0.08, 0]}>
-             <meshStandardMaterial color="#b91c1c" />
-          </Cylinder>
-          {/* Inner Grass */}
-          <Cylinder args={[Math.min(width, depth)*0.3, Math.min(width, depth)*0.3, 0.2, 32]} position={[0, -height/2 + 0.1, 0]}>
-             <meshStandardMaterial color="#22c55e" />
-          </Cylinder>
-        </group>
-      );
-    }
-  } else if (type === 'park') {
-    return (
-      <group>
-        <Box args={[width, 0.2, depth]} position={[0, -height/2 + 0.1, 0]} receiveShadow>
-          <meshStandardMaterial color="#22c55e" />
-        </Box>
-        {/* Many trees for Eco Park */}
-        <ParkTrees width={width} height={height} depth={depth} count={nameLow.includes('eco') ? 15 : 4} />
-        {/* Butterflies */}
-        <Butterflies />
-      </group>
-    );
-  } else if (type === 'food') {
-    return (
-      <group>
-        <Box args={[width, height * 0.6, depth]} position={[0, -height * 0.2, 0]} castShadow receiveShadow>
-          <meshStandardMaterial color="#fef3c7" />
-        </Box>
-        {/* Awnings */}
-        <Box args={[width * 1.05, 0.2, depth * 1.05]} position={[0, height * 0.1, 0]} castShadow>
-          <meshStandardMaterial color="#f97316" />
-        </Box>
-      </group>
-    );
-  } else if (type === 'hostel') {
-    return (
-      <group>
-        {/* Main Walls - matte finish to eliminate harsh specular glare */}
-        <Box args={[width, height * 1.2, depth]} position={[0, height * 0.1, 0]} castShadow receiveShadow>
-          <meshStandardMaterial color="#cbd5e1" roughness={0.95} metalness={0.0} />
-        </Box>
-        {/* Lower Balcony Band */}
-        <Box args={[width * 1.04, height * 0.15, depth * 1.04]} position={[0, height * 0.05, 0]} castShadow>
-          <meshStandardMaterial color="#94a3b8" roughness={0.9} metalness={0.0} />
-        </Box>
-        {/* Upper Balcony Band (kept safely below the roof line to prevent coplanar z-fighting) */}
-        <Box args={[width * 1.04, height * 0.15, depth * 1.04]} position={[0, height * 0.4, 0]} castShadow>
-          <meshStandardMaterial color="#94a3b8" roughness={0.9} metalness={0.0} />
-        </Box>
-        {/* Dark Matte Roof Parapet - absorbs light and eliminates all top glare */}
-        <Box args={[width * 1.02, 0.25, depth * 1.02]} position={[0, height * 0.7 + 0.1, 0]} castShadow receiveShadow>
-          <meshStandardMaterial color="#334155" roughness={1.0} metalness={0.0} />
-        </Box>
-        {/* Dark Recessed Roof Surface */}
-        <Box args={[width * 0.94, 0.26, depth * 0.94]} position={[0, height * 0.7 + 0.11, 0]} receiveShadow>
-          <meshStandardMaterial color="#1e293b" roughness={1.0} metalness={0.0} />
-        </Box>
-      </group>
-    );
-  } else {
-    // Default Classroom / Generic
-    return (
-      <group>
-        <Box args={[width, height, depth]} castShadow receiveShadow>
-          <meshStandardMaterial color={baseColor} />
-        </Box>
-        <Box args={[width * 1.1, 0.2, depth * 1.1]} position={[0, height / 2 + 0.1, 0]} castShadow>
-          <meshStandardMaterial color="#334155" />
-        </Box>
-        <Box args={[width * 1.02, height * 0.4, depth * 0.8]} position={[0, height * 0.1, 0]}>
-           <meshStandardMaterial color="#bae6fd" roughness={0.8} emissive="#bae6fd" emissiveIntensity={0.05} />
-        </Box>
-      </group>
-    );
-  }
-});
+const BuildingModel = ProfessionalBuildingModel;
 
 const SciFiGate = ({ position, scale = 1, rotation = [0, 0, 0] }: { position: [number, number, number], scale?: number, rotation?: [number, number, number] }) => {
   return (
@@ -1456,18 +1160,19 @@ const EnvironmentMap = React.memo(({
   onMapRightClick?: (p: THREE.Vector3) => void;
 }) => {
   const { gridSize } = mapData;
-  const margin = 10; // Space between grid edge and compound wall
+  const margin = 10;
   const compSizeX = gridSize.x + margin * 2;
   const compSizeY = gridSize.y + margin * 2;
-  const wallThickness = 1.5;
-  const wallHeight = 6;
+  const wallThickness = 1.2;
+  const wallHeight = 2.4;
   const halfX = compSizeX / 2;
   const halfY = compSizeY / 2;
-  const wallColor = isNight ? '#0f172a' : '#e2e8f0';
+  const wallColor = isNight ? '#0f172a' : '#334155';
+  const groundColor = isNight ? '#0d2818' : '#1e3f20';
 
   return (
     <group>
-      {/* Campus grass ground — clickable for targeting */}
+      {/* Campus manicured lawn ground */}
       <Plane
         args={[compSizeX, compSizeY]}
         rotation={[-Math.PI / 2, 0, 0]}
@@ -1486,26 +1191,46 @@ const EnvironmentMap = React.memo(({
         onPointerOver={() => { if (isTargeting) document.body.style.cursor = 'crosshair'; }}
         onPointerOut={() => { if (isTargeting) document.body.style.cursor = 'auto'; }}
       >
-        <meshStandardMaterial color={isNight ? '#14532d' : '#4ade80'} roughness={0.9} />
+        <meshStandardMaterial color={groundColor} roughness={0.95} />
       </Plane>
 
-      {/* Compound Boundary Walls */}
+      {/* Modern Perimeter Boundary Wall with Coping Cap */}
       {/* Back Wall */}
-      <Box args={[compSizeX + wallThickness*2, wallHeight, wallThickness]} position={[0, wallHeight/2, halfY + wallThickness/2]} castShadow receiveShadow>
-        <meshStandardMaterial color={wallColor} />
-      </Box>
+      <group position={[0, wallHeight / 2, halfY + wallThickness / 2]}>
+        <Box args={[compSizeX + wallThickness * 2, wallHeight, wallThickness]} castShadow receiveShadow>
+          <meshStandardMaterial color={wallColor} roughness={0.9} />
+        </Box>
+        <Box args={[compSizeX + wallThickness * 2 + 0.2, 0.15, wallThickness + 0.2]} position={[0, wallHeight / 2 + 0.075, 0]}>
+          <meshStandardMaterial color="#475569" roughness={0.7} />
+        </Box>
+      </group>
       {/* Front Wall */}
-      <Box args={[compSizeX + wallThickness*2, wallHeight, wallThickness]} position={[0, wallHeight/2, -halfY - wallThickness/2]} castShadow receiveShadow>
-        <meshStandardMaterial color={wallColor} />
-      </Box>
+      <group position={[0, wallHeight / 2, -halfY - wallThickness / 2]}>
+        <Box args={[compSizeX + wallThickness * 2, wallHeight, wallThickness]} castShadow receiveShadow>
+          <meshStandardMaterial color={wallColor} roughness={0.9} />
+        </Box>
+        <Box args={[compSizeX + wallThickness * 2 + 0.2, 0.15, wallThickness + 0.2]} position={[0, wallHeight / 2 + 0.075, 0]}>
+          <meshStandardMaterial color="#475569" roughness={0.7} />
+        </Box>
+      </group>
       {/* Right Wall */}
-      <Box args={[wallThickness, wallHeight, compSizeY]} position={[halfX + wallThickness/2, wallHeight/2, 0]} castShadow receiveShadow>
-        <meshStandardMaterial color={wallColor} />
-      </Box>
+      <group position={[halfX + wallThickness / 2, wallHeight / 2, 0]}>
+        <Box args={[wallThickness, wallHeight, compSizeY]} castShadow receiveShadow>
+          <meshStandardMaterial color={wallColor} roughness={0.9} />
+        </Box>
+        <Box args={[wallThickness + 0.2, 0.15, compSizeY + 0.2]} position={[0, wallHeight / 2 + 0.075, 0]}>
+          <meshStandardMaterial color="#475569" roughness={0.7} />
+        </Box>
+      </group>
       {/* Left Wall */}
-      <Box args={[wallThickness, wallHeight, compSizeY]} position={[-halfX - wallThickness/2, wallHeight/2, 0]} castShadow receiveShadow>
-        <meshStandardMaterial color={wallColor} />
-      </Box>
+      <group position={[-halfX - wallThickness / 2, wallHeight / 2, 0]}>
+        <Box args={[wallThickness, wallHeight, compSizeY]} castShadow receiveShadow>
+          <meshStandardMaterial color={wallColor} roughness={0.9} />
+        </Box>
+        <Box args={[wallThickness + 0.2, 0.15, compSizeY + 0.2]} position={[0, wallHeight / 2 + 0.075, 0]}>
+          <meshStandardMaterial color="#475569" roughness={0.7} />
+        </Box>
+      </group>
     </group>
   );
 });
@@ -1572,9 +1297,12 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [showReasoningLog, setShowReasoningLog] = useState(false);
   const [isCCMinimized, setIsCCMinimized] = useState(false);
-
-  // Day mode permanently enabled
-  const isNight = false;
+  // Interactive visual layers & time-of-day controls
+  const [isNight, setIsNight] = useState(false);
+  const [showLabels, setShowLabels] = useState(true);
+  const [showLighting, setShowLighting] = useState(true);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [activeCategoryFilter, setActiveCategoryFilter] = useState<string>('all');
   
   const [aiExplanations, setAiExplanations] = useState<string[]>([]);
   const [selectedRoom, setSelectedRoom] = useState<Room | null>(null);
@@ -1651,7 +1379,7 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
       setIsOn(isOnProp);
     }
   }, [isOnProp]);
-  const [activeCCTab, setActiveCCTab] = useState<'dashboard' | 'tools' | 'locations'>('dashboard');
+  const [activeCCTab, setActiveCCTab] = useState<'dashboard' | 'tools' | 'obstacles' | 'locations'>('dashboard');
   const [modalType, setModalType] = useState<'food' | 'medical' | null>(null);
 
   const handleDeliverySubmit = (missionText: string) => {
