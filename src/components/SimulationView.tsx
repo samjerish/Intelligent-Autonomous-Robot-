@@ -1447,7 +1447,7 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
   const isRecalculating = useRef(false);
 
   const [battery, setBattery] = useState(100);
-  const [robotState, setRobotState] = useState<RobotState>('idle');
+  const [robotState, setRobotState] = useState<RobotState>('patrol');
   const [isOn, setIsOn] = useState(isOnProp !== undefined ? isOnProp : true);
 
   useEffect(() => {
@@ -1460,7 +1460,7 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
   const [showRobotVisionPIP, setShowRobotVisionPIP] = useState(false);
 
   const batteryRef = useRef(100);
-  const robotStateRef = useRef<RobotState>('idle');
+  const robotStateRef = useRef<RobotState>('patrol');
   const originalMissionRef = useRef<{
     path?: GridPoint[];
     index?: number;
@@ -2381,7 +2381,7 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
     window.dispatchEvent(new CustomEvent('local_ctr_messages_update', { detail: ctrMessages }));
   }, [ctrMessages]);
 
-  const resetSimulation = () => {
+  const resetSimulation = (asMission: boolean = false) => {
     if (!mapData) return;
     if (isEmergencyActive) {
       addExplanation("Action held: Active emergency / crowd protocol in progress. Missions cannot override emergency.");
@@ -2401,46 +2401,56 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
     originalMissionRef.current = null;
     currentTaskIndexRef.current = 0;
     
-    const target = mapData.tasks?.[0]?.location || mapData.end;
-    let initialPath: GridPoint[] = [];
-    
-    const fPath = calculatePath(currentLoc, target, [...(mapData.obstacles || []), ...userBlockers], mapData);
-    let sPath = calculateLongPath(currentLoc, target, [...(mapData.obstacles || []), ...userBlockers], mapData);
-    if (sPath.length === 0) sPath = calculatePath(currentLoc, target, [...(mapData.obstacles || []), ...userBlockers], mapData);
-    
-    if (selectedStrategyId === 'fastest') {
-      initialPath = fPath;
-      setActivePathColor('#ef4444');
-    } else if (selectedStrategyId === 'standard') {
-      initialPath = sPath;
-      setActivePathColor('#3b82f6');
+    if (asMission && mapData.tasks && mapData.tasks.length > 0) {
+      const target = mapData.tasks[0]?.location || mapData.end;
+      let initialPath: GridPoint[] = [];
+      
+      const fPath = calculatePath(currentLoc, target, [...(mapData.obstacles || []), ...userBlockers], mapData);
+      let sPath = calculateLongPath(currentLoc, target, [...(mapData.obstacles || []), ...userBlockers], mapData);
+      if (sPath.length === 0) sPath = calculatePath(currentLoc, target, [...(mapData.obstacles || []), ...userBlockers], mapData);
+      
+      if (selectedStrategyId === 'fastest') {
+        initialPath = fPath;
+        setActivePathColor('#ef4444');
+      } else if (selectedStrategyId === 'standard') {
+        initialPath = sPath;
+        setActivePathColor('#3b82f6');
+      } else {
+        initialPath = fPath;
+        setActivePathColor('#00ffff');
+      }
+      
+      if (initialPath.length > 0) {
+        destinationTargetRef.current = target;
+        const targetRoom = mapData.rooms?.find(r => Math.abs(r.door.x - target.x) <= 2 && Math.abs(r.door.y - target.y) <= 2);
+        originalMissionRef.current = { 
+          path: [...initialPath], 
+          index: 0,
+          destination: target,
+          destinationName: targetRoom?.name || 'Mission Destination',
+          tasks: mapData.tasks,
+          taskIndex: 0,
+          previousState: 'mission',
+          strategyId: selectedStrategyId
+        };
+        setPath(initialPath);
+        addExplanation(`Planned mission route to ${targetRoom?.name || 'target'}. Estimated distance: ${initialPath.length}m.`);
+        setRobotState('mission');
+        setIsPlaying(true);
+      }
     } else {
-      initialPath = fPath;
-      setActivePathColor('#00ffff');
-    }
-    
-    if (initialPath.length > 0 && mapData.tasks && mapData.tasks.length > 0) {
-      destinationTargetRef.current = target;
-      const targetRoom = mapData.rooms?.find(r => Math.abs(r.door.x - target.x) <= 2 && Math.abs(r.door.y - target.y) <= 2);
-      originalMissionRef.current = { 
-        path: [...initialPath], 
-        index: 0,
-        destination: target,
-        destinationName: targetRoom?.name || 'Mission Destination',
-        tasks: mapData.tasks,
-        taskIndex: 0,
-        previousState: 'mission',
-        strategyId: selectedStrategyId
-      };
-      setPath(initialPath);
-      addExplanation(`Planned route to destination. Estimated distance: ${initialPath.length}m.`);
-      setRobotState('mission');
-      setIsPlaying(true);
-    } else {
+      // Robot remains in Patrol Mode by default until other modes/missions are activated
+      destinationTargetRef.current = null;
+      originalMissionRef.current = null;
+      setRobotState('patrol');
       setPath([]);
-      setRobotState('idle');
+      setIsPlaying(false);
+      addExplanation("Robot in Autonomous Patrol Mode. Ready for campus patrols and emergency response.");
     }
-    initializeDynamicObstacles(initialPath);
+    // Only initialize dynamic obstacles if they don't already exist (so they never disappear)
+    if (dynamicObstaclesRef.current.length === 0) {
+      initializeDynamicObstacles();
+    }
   };
 
   const handleLowBattery = () => {
