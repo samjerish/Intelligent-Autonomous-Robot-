@@ -235,7 +235,8 @@ export function MobileRobotVision({ visionFrame, sendCommand, telemetry, isConne
             src={visionFrame.image}
             alt="Robot Real-Time Vision Feed"
             style={{ filter: getFilterStyle() }}
-            className="w-full h-full object-cover transition-all duration-300"
+            className="w-full h-full object-cover select-none"
+            decoding="sync"
           />
         ) : (
           /* High-Tech Standby Scanner HUD */
@@ -278,7 +279,7 @@ export function MobileRobotVision({ visionFrame, sendCommand, telemetry, isConne
               <span className={`w-2 h-2 rounded-full ${isConnected ? 'bg-red-500 animate-ping' : 'bg-gray-500'}`}></span>
               <span className="font-bold text-white tracking-widest">LIVE FPV</span>
               <span className="text-gray-400">|</span>
-              <span className="text-cyan-400 font-mono">10 FPS</span>
+              <span className="text-cyan-400 font-mono">20 FPS</span>
             </div>
 
             {/* Mini Compass Heading */}

@@ -72,7 +72,8 @@ export function MobileDashboard({ telemetry, isConnected, sendCommand, obstacleC
               <img 
                 src={visionFrame.image} 
                 alt="Robot Vision Preview" 
-                className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" 
+                className="w-full h-full object-cover" 
+                decoding="sync"
               />
             ) : (
               <div className="flex flex-col items-center justify-center text-cyan-400/60 gap-1 font-mono text-[10px]">
