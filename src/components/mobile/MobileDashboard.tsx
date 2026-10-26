@@ -39,7 +39,7 @@ export function MobileDashboard({ telemetry, isConnected, sendCommand, obstacleC
           <div>
             <div className="text-xs text-gray-400 font-mono mb-1">SYSTEM STATE</div>
             <div className={`font-bold text-lg uppercase tracking-wider ${isConnected ? 'text-cyan-400' : 'text-red-500'}`}>
-              {isConnected ? telemetry.state : 'OFFLINE'}
+              {isConnected ? activeTelemetry.state : 'OFFLINE'}
             </div>
           </div>
           <div className="text-right">
@@ -132,8 +132,8 @@ export function MobileDashboard({ telemetry, isConnected, sendCommand, obstacleC
           <StatCard 
             icon={<Battery />} 
             label="BATTERY" 
-            value={`${telemetry.battery.toFixed(1)}%`} 
-            valueClass={getBatteryColor(telemetry.battery)} 
+            value={`${batteryVal.toFixed(1)}%`} 
+            valueClass={getBatteryColor(batteryVal)} 
           />
           <StatCard 
             icon={<Sliders />} 
@@ -144,13 +144,13 @@ export function MobileDashboard({ telemetry, isConnected, sendCommand, obstacleC
           <StatCard 
             icon={<Gauge />} 
             label="SPEED" 
-            value={`${telemetry.speed.toFixed(1)} m/s`} 
+            value={`${speedVal.toFixed(1)} m/s`} 
             valueClass="text-yellow-400" 
           />
           <StatCard 
             icon={<Navigation />} 
             label="LOCATION" 
-            value={`${telemetry.position.x.toFixed(0)}, ${telemetry.position.y.toFixed(0)}`} 
+            value={`${posX.toFixed(0)}, ${posY.toFixed(0)}`} 
             valueClass="text-white font-mono text-xs" 
           />
         </div>
