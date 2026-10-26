@@ -1126,7 +1126,7 @@ export const DetailedRobot = ({
 const Robot = ({
   path, currentIndex, isPlaying, gridSize, isMapView, speed, dynamicObstaclesRef,
   onReachNode, onMissionComplete, onObstacleDetected: _onObstacleDetected, robotPosRef, robotRotRef, isEmergency = false,
-  robotState: _robotState, robotGroupRef, isFPV
+  robotState, robotGroupRef, isFPV
 }: {
   path: GridPoint[];
   currentIndex: number;
