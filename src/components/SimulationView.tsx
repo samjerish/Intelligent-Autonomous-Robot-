@@ -295,8 +295,9 @@ const MovingEntity = ({
           const crossY = (moveDir.x * toRobotNorm.z) - (moveDir.z * toRobotNorm.x);
           steerSide = crossY > 0.05 ? -1 : 1;
 
-          // Keep moving forward smoothly; slightly reduce speed for safe passing
-          speedMultiplier = distToRobot < 1.0 ? 0.75 : 0.9;
+          // Keep moving forward smoothly; slightly reduce speed for safe passing unless robot has already yielded
+          const isRobotYielding = robotStateRef?.current === 'reversing' || robotStateRef?.current === 'waiting_for_clearance';
+          speedMultiplier = isRobotYielding ? 1.0 : (distToRobot < 1.0 ? 0.75 : 0.9);
 
           // Attempt topological road network diversion if near intersection
           const now = performance.now();
