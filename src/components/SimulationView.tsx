@@ -3378,6 +3378,8 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
             battery={battery}
             robotState={robotState}
             fireHazards={fireHazards}
+            crowds={crowds}
+            markedEmergencyPoint={markedEmergencyPoint}
             dynamicObstaclesRef={dynamicObstaclesRef}
             userBlockers={userBlockers}
             isNight={isNight}
@@ -3434,9 +3436,12 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
                 });
                 return;
               }
-              setIsEmergencyTargeting(false);
-              document.body.style.cursor = 'auto';
-              handleEmergencyCall(gridP);
+              if (isEmergencyTargeting) {
+                setIsEmergencyTargeting(false);
+                document.body.style.cursor = 'auto';
+                handleEmergencyCall(gridP, `COORDINATES [${gridP.x}, ${gridP.y}]`);
+                return;
+              }
             }} 
             onMapRightClick={(p) => {
               const gridP = getGridPointFromVector3(p, gridSize);
@@ -3476,7 +3481,17 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
               <group 
                 key={room.id} 
                 position={[x, 0, z]} 
-                onClick={(e) => { e.stopPropagation(); setSelectedRoom(room); }}
+                onClick={(e) => { 
+                  e.stopPropagation(); 
+                  if (isEmergencyTargeting) {
+                    setIsEmergencyTargeting(false);
+                    document.body.style.cursor = 'auto';
+                    const target = room.door || room.start;
+                    handleEmergencyCall(target, room.name);
+                    return;
+                  }
+                  setSelectedRoom(room); 
+                }}
               >
                 <BuildingModel room={room} width={width} height={height} depth={depth} />
                 {showBuildingLabels && (
@@ -3498,6 +3513,12 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
             isPlacingBlocker={isPlacingBlocker}
           />
           <CrowdsRender crowds={crowds} gridSize={gridSize} />
+          {/* Properly Marked 3D Emergency Location Point */}
+          <EmergencyMarkerRender 
+            markedPoint={markedEmergencyPoint} 
+            gridSize={gridSize} 
+            onClear={handleClearEmergencyTarget} 
+          />
           {/* 3D Animated Simulated Fire Hazards */}
           {fireHazards.map((hazard) => (
             <FireSimulationNode
