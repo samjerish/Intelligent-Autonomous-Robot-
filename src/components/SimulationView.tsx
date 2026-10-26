@@ -547,6 +547,109 @@ const CrowdsRender = React.memo(({ crowds, gridSize }: { crowds: GridPoint[], gr
   );
 });
 
+interface EmergencyMarkerRenderProps {
+  markedPoint: { position: GridPoint; label: string; type: string } | null;
+  gridSize: GridPoint;
+  onClear?: () => void;
+}
+
+const EmergencyMarkerRender = React.memo(({ markedPoint, gridSize, onClear }: EmergencyMarkerRenderProps) => {
+  const beaconRef = useRef<THREE.Group>(null);
+  const ringRef = useRef<THREE.Mesh>(null);
+  const lightRef = useRef<THREE.PointLight>(null);
+
+  useFrame(({ clock }) => {
+    const t = clock.getElapsedTime();
+    if (beaconRef.current) {
+      beaconRef.current.position.y = 1.9 + Math.sin(t * 4) * 0.25;
+      beaconRef.current.rotation.y = t * 1.5;
+    }
+    if (ringRef.current) {
+      ringRef.current.rotation.z = -t * 0.8;
+      const s = 1 + Math.sin(t * 3) * 0.15;
+      ringRef.current.scale.set(s, s, s);
+    }
+    if (lightRef.current) {
+      lightRef.current.intensity = 2.5 + Math.sin(t * 8) * 1.5;
+    }
+  });
+
+  if (!markedPoint || !markedPoint.position) return null;
+
+  const [x, , z] = getGridPosition(markedPoint.position, gridSize, 0);
+
+  return (
+    <group position={[x, 0, z]}>
+      {/* Strobe Point Light */}
+      <pointLight ref={lightRef} position={[0, 2.5, 0]} color="#ec4899" distance={15} decay={2} />
+
+      {/* Vertical Holographic Light Pillar */}
+      <mesh position={[0, 3, 0]}>
+        <cylinderGeometry args={[0.15, 0.5, 6, 16]} />
+        <meshBasicMaterial color="#ec4899" transparent opacity={0.35} />
+      </mesh>
+
+      {/* Ground Concentric Shockwave & Target Rings */}
+      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.04, 0]}>
+        <ringGeometry args={[0.3, 2.2, 32]} />
+        <meshBasicMaterial color="#ec4899" transparent opacity={0.25} side={THREE.DoubleSide} />
+      </mesh>
+
+      <mesh ref={ringRef} rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.05, 0]}>
+        <ringGeometry args={[1.5, 1.8, 32]} />
+        <meshBasicMaterial color="#f43f5e" transparent opacity={0.7} side={THREE.DoubleSide} />
+      </mesh>
+
+      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.06, 0]}>
+        <circleGeometry args={[0.4, 16]} />
+        <meshBasicMaterial color="#ec4899" transparent opacity={0.9} side={THREE.DoubleSide} />
+      </mesh>
+
+      {/* Floating 3D Emergency Octahedron Beacon */}
+      <group ref={beaconRef}>
+        <mesh castShadow>
+          <octahedronGeometry args={[0.65, 0]} />
+          <meshStandardMaterial 
+            color="#ec4899" 
+            emissive="#f43f5e" 
+            emissiveIntensity={1.2} 
+            metalness={0.8} 
+            roughness={0.2} 
+          />
+        </mesh>
+        <mesh>
+          <octahedronGeometry args={[0.85, 0]} />
+          <meshBasicMaterial color="#ffffff" wireframe transparent opacity={0.4} />
+        </mesh>
+      </group>
+
+      {/* Floating Holographic Cybernetic HUD Label */}
+      <Html position={[0, 3.8, 0]} center distanceFactor={26} zIndexRange={[50, 0]}>
+        <div className="bg-black/95 border-2 border-pink-500 rounded-xl px-3 py-1.5 shadow-[0_0_25px_rgba(236,72,153,0.8)] backdrop-blur-md flex flex-col items-center pointer-events-auto select-none whitespace-nowrap animate-in fade-in zoom-in-95 duration-200">
+          <div className="flex items-center gap-1.5 text-pink-400 font-mono font-black text-xs uppercase tracking-wider">
+            <span className="w-2 h-2 rounded-full bg-pink-500 animate-ping" />
+            <span>🚨 EMERGENCY TARGET</span>
+          </div>
+          <div className="text-[10px] font-mono text-gray-200 font-bold mt-0.5">
+            GRID ({markedPoint.position.x}, {markedPoint.position.y}) • {markedPoint.label || 'PRIORITY DISPATCH'}
+          </div>
+          {onClear && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                onClear();
+              }}
+              className="mt-1 px-2 py-0.5 rounded bg-pink-500/20 hover:bg-pink-500/40 border border-pink-500/50 text-pink-200 text-[9px] font-mono font-bold uppercase transition-all"
+            >
+              Clear Marker
+            </button>
+          )}
+        </div>
+      </Html>
+    </group>
+  );
+});
+
 
 
 const PoliceVehicle = ({ policeState, policeStateRef, gridSize, isMapView, onReachDestination }: any) => {
@@ -1224,6 +1327,11 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
   const [isIdleMode, setIsIdleMode] = useState(false);
   const [userBlockers, setUserBlockers] = useState<GridPoint[]>([]);
   const [crowds, setCrowds] = useState<GridPoint[]>([]);
+  const [markedEmergencyPoint, setMarkedEmergencyPoint] = useState<{
+    position: GridPoint;
+    label: string;
+    type: string;
+  } | null>(null);
 
   const [policeState, setPoliceState] = useState<PoliceState>({ active: false, path: [], targetPos: null, phase: 'idle' });
   const policeStateRef = useRef<PoliceState>(policeState);
@@ -1986,13 +2094,9 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
       } else if (lowerMsg.startsWith('emergency at ') || lowerMsg.startsWith('emergency in ')) {
         const roomName = lowerMsg.replace(/^(emergency at |emergency in )/, '').trim();
         const targetRoom = mapData?.rooms?.find(r => r.name.toLowerCase().includes(roomName));
-        if (robotState === 'charging') {
-          reply = `I am currently charging. Cannot respond to emergency.`;
-        } else if (robotState === 'mission' || robotState === 'emergency_response') {
-          reply = `I must complete my current task first before accepting new emergencies.`;
-        } else if (targetRoom) {
+        if (targetRoom) {
           reply = `EMERGENCY ACCEPTED. Dispatched to ${targetRoom.name} immediately.`;
-          handleEmergencyCall(targetRoom.door || targetRoom.start);
+          handleEmergencyCall(targetRoom.door || targetRoom.start, targetRoom.name);
         } else {
           reply = `I could not find a building matching "${roomName}".`;
         }
