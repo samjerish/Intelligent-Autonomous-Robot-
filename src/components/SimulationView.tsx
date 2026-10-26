@@ -3052,7 +3052,7 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
         addExplanation('Clearance verified! Path to destination is clear. Resuming autonomous navigation forward.');
         setPath(forwardPath);
         setCurrentPosIndex(0);
-        setRobotState(orig ? 'mission' : 'patrol');
+        setRobotState(orig?.previousState === 'mission' ? 'mission' : 'patrol');
         setIsPlaying(true);
         setTimeout(() => { isRecalculating.current = false; }, 800);
         return;
@@ -3063,15 +3063,6 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
       }
 
       if (checkCount >= maxChecks) {
-        // Nudge any adjacent dynamic obstacles away to break corridor jams
-        dynamicObstaclesRef.current.forEach(obs => {
-          if (obs.currentPosVector && robotPosRef.current) {
-            if (obs.currentPosVector.distanceTo(robotPosRef.current) < 2.5) {
-              obs.path.reverse();
-              obs.currentIndex = 0;
-            }
-          }
-        });
         const unconstrainedPath = calculatePath(currentLoc, targetLoc, [...(mapData.obstacles || []), ...userBlockers], mapData, false);
         if (unconstrainedPath.length > 0) {
           if (clearanceCheckRef.current) {
@@ -3081,11 +3072,11 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
           addExplanation('Waited for obstacles to clear. Resuming route directly to destination.');
           setPath(unconstrainedPath);
           setCurrentPosIndex(0);
-          setRobotState(orig ? 'mission' : 'patrol');
+          setRobotState(orig?.previousState === 'mission' ? 'mission' : 'patrol');
           setIsPlaying(true);
         } else {
           checkCount = 0;
-          addExplanation('Corridor still congested. Continuing safe wait for obstacle passage...');
+          addExplanation('Corridor congested. Continuing safe wait for obstacle passage...');
         }
         setTimeout(() => { isRecalculating.current = false; }, 800);
       }
@@ -3117,27 +3108,23 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
     
     destinationTargetRef.current = targetLoc;
 
-    // Save original mission if we are not already in temporary detour state
+    // Save original state & path if not already in temporary detour state
     if (robotState !== 'charging' && robotState !== 'emergency_response') {
-      originalMissionRef.current = { path: [...path], index: currentPosIndex };
+      if (!originalMissionRef.current) {
+        originalMissionRef.current = { 
+          path: [...path], 
+          index: currentPosIndex,
+          previousState: robotState 
+        };
+      }
     }
     
-    // Gather all active dynamic obstacles
+    // Gather active dynamic obstacle positions without deleting or modifying them
     const dynamicPositions = dynamicObstaclesRef.current.map(o => o.pos);
     const allObstacles = [...(mapData.obstacles || []), ...userBlockers, obsPos, ...dynamicPositions];
 
-    // Proactive Obstacle Diversion (Detour & Rerouting directly to destination):
-    // The robot NEVER freezes in place or neglects the mission!
-
-    // Disperse/nudge opposing dynamic obstacles slightly so they don't lock horns
-    dynamicObstaclesRef.current.forEach(obs => {
-      if (obs.currentPosVector && robotPosRef.current && obs.currentPosVector.distanceTo(robotPosRef.current) < 2.0) {
-        obs.path.reverse();
-        obs.currentIndex = 0;
-      }
-    });
-
-    // 1. Attempt road diversion: alternate street corridor to mission destination
+    // Proactive Obstacle Diversion: smoothly route around obstacles without obstacles disappearing
+    // 1. Attempt road diversion: alternate street corridor to destination
     let diversionPath = calculatePath(currentLoc, targetLoc, allObstacles, mapData, true);
 
     // 2. Attempt shoulder/sidewalk bypass: immediately skirt around obstacle and rejoin road
@@ -3186,14 +3173,15 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
       setPath(diversionPath);
       setCurrentPosIndex(0);
       setIsPlaying(true);
+      // Retain current mode (patrol stays patrol, mission stays mission)
       if (robotState !== 'emergency_response' && robotState !== 'crowd_control' && robotState !== 'returning_home') {
-        setRobotState(orig?.previousState === 'mission' || currentTaskIndexRef.current < (mapData.tasks?.length || 0) ? 'mission' : 'patrol');
+        setRobotState(prev => (prev === 'mission' ? 'mission' : 'patrol'));
       }
       setActivePathColor('#06b6d4'); // Dynamic diversion cyan
-      addExplanation(`⚠️ Obstacle detected at (${obsPos.x}, ${obsPos.y}). Taking immediate diversion around obstacle to continue mission (${diversionPath.length}m route).`);
+      addExplanation(`⚠️ Obstacle detected at (${obsPos.x}, ${obsPos.y}). Taking proper diversion around obstacle to destination (${diversionPath.length}m route).`);
     } else {
-      // In the rare event of all sides physically walled off, nudge obstacle and recalculate direct path
-      addExplanation(`⚠️ Congested corridor. Rerouting directly to destination...`);
+      // In the rare event of all sides physically walled off, recalculate direct path
+      addExplanation(`⚠️ Congested corridor. Rerouting around obstruction...`);
       const directFallback = calculatePath(currentLoc, targetLoc, [...(mapData.obstacles || []), ...userBlockers], mapData, false);
       if (directFallback.length > 0) {
         setPath(directFallback);
@@ -3207,24 +3195,14 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
     }, 600);
   };
 
-
   const startSimulation = () => { 
-    if (mapData && path.length > 0) {
-      setRobotState(prev => {
-         if (prev === 'emergency_response') return prev;
-         return (prev === 'idle') ? 'patrol' : prev; // default to patrol instead of mission
-      });
-      
-      // Hide the popup if we are starting a movement during an emergency
-      setRobotState(prev => {
-         if (prev === 'emergency_response') {
-           window.dispatchEvent(new CustomEvent('local_emergency_request', { detail: null }));
-         }
-         return prev;
-      });
-      
-      setIsPlaying(true);
-      addExplanation('Executing mission. Moving to target.');
+    if (mapData) {
+      if (isEmergencyActive) {
+        addExplanation('Cannot execute mission: Active emergency has priority.');
+        return;
+      }
+      // Explicit mission execution requested by operator
+      resetSimulation(true);
     }
   };
 
