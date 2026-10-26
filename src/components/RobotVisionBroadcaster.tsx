@@ -16,6 +16,7 @@ interface DetectedBox {
 interface RobotVisionBroadcasterProps {
   robotPosRef: React.MutableRefObject<THREE.Vector3 | null>;
   robotRotRef: React.MutableRefObject<number>;
+  robotGroupRef?: React.MutableRefObject<THREE.Group | null>;
   speed?: number;
   battery?: number;
   robotState?: string;
@@ -30,6 +31,7 @@ interface RobotVisionBroadcasterProps {
 export const RobotVisionBroadcaster: React.FC<RobotVisionBroadcasterProps> = ({
   robotPosRef,
   robotRotRef,
+  robotGroupRef,
   speed = 0,
   battery = 100,
   robotState = 'IDLE',
@@ -141,15 +143,15 @@ export const RobotVisionBroadcaster: React.FC<RobotVisionBroadcasterProps> = ({
     const pipCanvas = document.getElementById('robot-pip-canvas') as HTMLCanvasElement | null;
     const hasMobileClient = now - lastRequestTime.current < 15000;
 
-    // Camera mounted forward on robot sensor head at eye-level:
-    // y = 1.65m (head level), z = 0.45m forward from robot center (in front of visor)
-    const targetCamX = pos.x + forwardX * 0.45;
-    const targetCamY = pos.y + 1.65;
-    const targetCamZ = pos.z + forwardZ * 0.45;
+    // Camera mounted forward OUTSIDE the robot at eye-level:
+    // 0.95m forward in front of the robot chassis, 1.25m height (forward perception sensor mast)
+    const targetCamX = pos.x + forwardX * 0.95;
+    const targetCamY = pos.y + 1.25;
+    const targetCamZ = pos.z + forwardZ * 0.95;
 
     const targetLook = new THREE.Vector3(
       targetCamX + forwardX * 18,
-      targetCamY - 0.22, // slight downward pitch looking onto road and horizon
+      targetCamY - 0.28, // slight downward pitch looking onto road and horizon
       targetCamZ + forwardZ * 18
     );
 
@@ -183,12 +185,23 @@ export const RobotVisionBroadcaster: React.FC<RobotVisionBroadcasterProps> = ({
     // Skip offscreen GPU render if neither PIP nor mobile is requesting vision
     if (!pipCanvas && !hasMobileClient) return;
 
+    // Temporarily hide robot body mesh so camera NEVER sees inside or clips the robot
+    const wasVisible = robotGroupRef?.current ? robotGroupRef.current.visible : true;
+    if (robotGroupRef?.current) {
+      robotGroupRef.current.visible = false;
+    }
+
     // Render FPV scene into offscreen render target
     const currentRenderTarget = gl.getRenderTarget();
     gl.setRenderTarget(renderTarget);
     gl.render(scene, fpvCamera);
     gl.readRenderTargetPixels(renderTarget, 0, 0, 480, 360, readBuf);
     gl.setRenderTarget(currentRenderTarget);
+
+    // Restore robot body visibility immediately after FPV capture
+    if (robotGroupRef?.current) {
+      robotGroupRef.current.visible = wasVisible;
+    }
 
     // Fast vertical flip from WebGL buffer to 2D canvas using persistent buffer
     if (ctx) {
