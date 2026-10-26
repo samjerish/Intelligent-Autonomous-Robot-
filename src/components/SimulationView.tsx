@@ -2562,6 +2562,8 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
   useEffect(() => {
     const handleRemoteApprove = () => {
       if (!mapData) return;
+      setMarkedEmergencyPoint(null);
+      emergencyLocationRef.current = null;
       if (turnOffAfterEmergencyRef.current) {
          addExplanation("Emergency override complete. Returning to Robot Home to power off.");
          turnOffAfterEmergencyRef.current = false;
@@ -2574,6 +2576,20 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
            setPath(homePath);
            setCurrentPosIndex(0);
            setRobotState('returning_home');
+           setIsPlaying(true);
+         }
+      } else if (originalMissionRef.current && originalMissionRef.current.path && originalMissionRef.current.path.length > 0) {
+         addExplanation("Emergency resolved! Resuming prior suspended mission.");
+         const currentLoc = path[path.length - 1] || mapData.start;
+         const targetGoal = originalMissionRef.current.path[originalMissionRef.current.path.length - 1];
+         const resumePath = calculatePath(currentLoc, targetGoal, [...(mapData.obstacles || []), ...userBlockers], mapData);
+         if (resumePath.length > 0) {
+           setPath(resumePath);
+           setCurrentPosIndex(0);
+           setRobotState('mission');
+           setIsPlaying(true);
+         } else {
+           setRobotState('patrol');
            setIsPlaying(true);
          }
       } else {
@@ -2597,14 +2613,23 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
       addExplanation("Holding position at emergency location.");
     };
 
+    const handleRemoteEmergencyTarget = (e: any) => {
+      const data = e.detail;
+      if (data && typeof data.x === 'number' && typeof data.y === 'number') {
+        handleEmergencyCall({ x: data.x, y: data.y, f: data.f || 0 }, data.label || 'MOBILE DISPATCH');
+      }
+    };
+
     window.addEventListener('remote_emergency_approve', handleRemoteApprove);
     window.addEventListener('remote_emergency_deny', handleRemoteDeny);
+    window.addEventListener('remote_emergency_target', handleRemoteEmergencyTarget);
 
     return () => {
       window.removeEventListener('remote_emergency_approve', handleRemoteApprove);
       window.removeEventListener('remote_emergency_deny', handleRemoteDeny);
+      window.removeEventListener('remote_emergency_target', handleRemoteEmergencyTarget);
     };
-  }, [mapData, isOn, robotState, path, currentPosIndex]);
+  }, [mapData, isOn, robotState, path, currentPosIndex, userBlockers]);
 
   const waitForObstacleToClear = () => {
     if (clearanceCheckRef.current) {
@@ -2798,8 +2823,8 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
     if (robotState === 'charging') {
       handleChargeComplete();
     } else if (robotState === 'emergency_response') {
-      if (activeFireTargetRef.current || fireHazards.length > 0) {
-        const fireLoc = activeFireTargetRef.current || (fireHazards[0]?.position);
+      if (activeFireTargetRef.current) {
+        const fireLoc = activeFireTargetRef.current;
         setIsPlaying(false);
         setRobotState('extinguishing');
         addExplanation(`🚒 ARRIVED AT FIRE SCENE! Calling Fire Extinguisher Unit & deploying extinguishing foam...`);
@@ -2821,7 +2846,7 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
         // Extinguish fire with high-pressure foam for 3.5 seconds
         setTimeout(() => {
           if (fireLoc) {
-            setFireHazards(fireHazards.filter(h => Math.abs(h.position.x - fireLoc.x) > 3 || Math.abs(h.position.y - fireLoc.y) > 3));
+            setFireHazards(prev => prev.filter(h => Math.abs(h.position.x - fireLoc.x) > 3 || Math.abs(h.position.y - fireLoc.y) > 3));
           } else {
             setFireHazards([]);
           }
@@ -2857,8 +2882,12 @@ export const SimulationView: React.FC<SimulationViewProps> = ({
           }, 1200);
         }, 3500);
         return;
+      } else {
+        const dest = markedEmergencyPoint?.position || emergencyLocationRef.current;
+        addExplanation(`🚨 ARRIVED AT EMERGENCY SCENE (${dest?.x ?? 'Target'}, ${dest?.y ?? ''})! Holding position with Emergency First-Response Unit.`);
+        setIsPlaying(false);
+        handleEmergencyComplete();
       }
-      handleEmergencyComplete();
     } else if (robotState === 'emergency_to_ctr') {
        if (emergencyLocationRef.current && mapData) {
           addExplanation(`Mission target reached. Waiting 2.5 seconds before returning to emergency location...`);
